@@ -1,0 +1,15 @@
+# node() resolves the concrete type from the nodeId; the non-matching
+# fragment (User) must drop out of the compiled selection.
+{
+  node(nodeId: "WyJQb3N0IiwxXQ==") {
+    __typename
+    nodeId
+    ... on Post {
+      title
+      author { id email }
+    }
+    ... on User {
+      email
+    }
+  }
+}

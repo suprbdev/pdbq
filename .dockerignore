@@ -1,0 +1,15 @@
+# Keep the build context to what `go build ./cmd/pdbq` actually needs.
+.git
+.github
+.dockerignore
+Dockerfile
+compose*.yaml
+Makefile
+README.md
+bin/
+db/
+docs/
+examples/
+test/
+*.cache
+pdbq.yaml

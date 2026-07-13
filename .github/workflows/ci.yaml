@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  lint-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+      - name: Vet
+        run: go vet ./...
+      - name: Unit + golden tests (race)
+        run: go test -race ./...
+      - name: Benchmarks compile
+        run: go test -bench=. -benchtime=1x -run=^$ ./internal/compile/
+
+  e2e:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: pdbq
+          POSTGRES_PASSWORD: pdbq
+          POSTGRES_DB: pdbq_test
+        ports: ["5433:5432"]
+        options: >-
+          --health-cmd "pg_isready -U pdbq"
+          --health-interval 2s
+          --health-timeout 2s
+          --health-retries 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+      - name: Load fixture schema
+        run: |
+          sudo apt-get install -y --no-install-recommends postgresql-client
+          PGPASSWORD=pdbq psql -h localhost -p 5433 -U pdbq -d pdbq_test -f db/init/01-schema.sql
+      - name: E2E tests
+        env:
+          PDBQ_TEST_DATABASE_URL: postgres://pdbq:pdbq@localhost:5433/pdbq_test
+        run: go test -race -count=1 ./test/
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image
+        run: docker build .

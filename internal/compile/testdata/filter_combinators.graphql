@@ -1,0 +1,12 @@
+# variables: {"moods": ["HAPPY", "OK"]}
+query ($moods: [Mood!]) {
+  allUsers(filter: {
+    and: [
+      {mood: {in: $moods}}
+      {or: [{email: {endsWith: "@example.com"}}, {tags: {contains: ["admin"]}}]}
+      {not: {settings: {hasKey: "banned"}}}
+    ]
+  }) {
+    nodes { id }
+  }
+}

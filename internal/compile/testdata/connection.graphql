@@ -1,0 +1,8 @@
+{
+  allUsers(first: 2, after: "WyJVc2VyIiwzXQ==") {
+    totalCount
+    nodes { nodeId id email }
+    edges { cursor node { id } }
+    pageInfo { hasNextPage hasPreviousPage startCursor endCursor }
+  }
+}

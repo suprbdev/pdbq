@@ -1,0 +1,18 @@
+mutation {
+  addNumbers(input: {a: 2, b: 40, clientMutationId: "cm-1"}) {
+    __typename
+    result
+    clientMutationId
+  }
+  publishPost(input: {postId: 7}) {
+    result {
+      title
+      author {
+        email
+      }
+    }
+  }
+  retryProbe(input: {}) {
+    clientMutationId
+  }
+}

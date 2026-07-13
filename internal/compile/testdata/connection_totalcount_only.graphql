@@ -1,0 +1,5 @@
+{
+  allUsers(first: 1) {
+    totalCount
+  }
+}

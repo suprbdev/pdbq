@@ -1,0 +1,10 @@
+# metrics is a PK-less view: cursors stay in the legacy "o:<n>" offset format
+# and there is no nodeId field.
+{
+  allMetrics(first: 2, after: "bzoy") {
+    totalCount
+    nodes { name value }
+    edges { cursor node { name } }
+    pageInfo { hasNextPage hasPreviousPage startCursor endCursor }
+  }
+}

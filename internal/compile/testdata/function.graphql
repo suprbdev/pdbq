@@ -1,0 +1,7 @@
+{
+  searchPosts(term: "graphql") {
+    id
+    title
+    author { email }
+  }
+}

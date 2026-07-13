@@ -1,0 +1,15 @@
+{
+  userById(id: 1) {
+    id
+    home: address {
+      street
+      city
+      mood
+      __typename
+    }
+    prevAddresses {
+      city
+      mood
+    }
+  }
+}

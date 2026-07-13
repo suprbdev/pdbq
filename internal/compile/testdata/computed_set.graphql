@@ -1,0 +1,10 @@
+{
+  userById(id: 1) {
+    email
+    tagWords
+    recentPosts(n: 3) {
+      title
+      author { email }
+    }
+  }
+}

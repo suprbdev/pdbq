@@ -1,0 +1,7 @@
+# variables: {"id": 42}
+query ($id: Int!) {
+  first: userById(id: $id) {
+    theEmail: email
+    __typename
+  }
+}

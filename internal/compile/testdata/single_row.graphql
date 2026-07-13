@@ -1,0 +1,8 @@
+{
+  userById(id: 1) {
+    id
+    email
+    fullName
+    createdAt
+  }
+}

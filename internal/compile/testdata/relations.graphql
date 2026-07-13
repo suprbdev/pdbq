@@ -1,0 +1,19 @@
+{
+  allUsers(first: 2) {
+    nodes {
+      id
+      email
+      postsByAuthorId(first: 5, orderBy: [ID_DESC]) {
+        totalCount
+        nodes {
+          id
+          title
+          author {
+            id
+            email
+          }
+        }
+      }
+    }
+  }
+}

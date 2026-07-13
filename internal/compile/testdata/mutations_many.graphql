@@ -1,0 +1,17 @@
+mutation {
+  createUsers(input: [
+    {email: "a@b.c", fullName: "Ada", mood: HAPPY}
+    {email: "b@c.d"}
+  ], clientMutationId: "cm-many") {
+    users { id email }
+    affectedCount
+    clientMutationId
+  }
+  updateUsers(filter: {mood: {eq: SAD}}, patch: {mood: OK}) {
+    users { id mood }
+    affectedCount
+  }
+  deleteUsers(filter: {email: {endsWith: "@spam.example"}}) {
+    affectedCount
+  }
+}

@@ -1,0 +1,8 @@
+# mixed ASC/DESC order with a keyset after-cursor: exercises the expanded
+# lexicographic predicate with a nullable DESC column.
+{
+  allPosts(first: 3, after: "WyJQb3N0IiwzXQ==", orderBy: [TITLE_ASC, AUTHOR_ID_DESC]) {
+    nodes { id title }
+    pageInfo { hasNextPage endCursor }
+  }
+}

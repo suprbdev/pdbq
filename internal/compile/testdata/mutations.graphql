@@ -1,0 +1,14 @@
+mutation {
+  createUser(input: {email: "a@b.c", fullName: "Ada", mood: HAPPY, clientMutationId: "cm-1"}) {
+    user { nodeId id email mood }
+    clientMutationId
+  }
+  updateUserById(id: 1, patch: {fullName: "Grace", clientMutationId: "cm-2"}) {
+    user { id fullName }
+    clientMutationId
+  }
+  deleteUserById(id: 2, clientMutationId: "cm-3") {
+    user { id }
+    clientMutationId
+  }
+}

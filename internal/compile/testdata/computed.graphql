@@ -1,0 +1,9 @@
+query {
+  allUsers(first: 2) {
+    nodes { id fullName postCount }
+  }
+  postById(id: 1) {
+    id
+    excerpt(maxChars: 10)
+  }
+}

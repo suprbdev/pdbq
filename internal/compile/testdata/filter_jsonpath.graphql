@@ -1,0 +1,5 @@
+query {
+  allUsers(filter: {settings: {pathExists: "$.theme", pathMatch: "$.age > 18"}}) {
+    nodes { id }
+  }
+}

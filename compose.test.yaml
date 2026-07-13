@@ -1,0 +1,17 @@
+# Test database only — used by `make test-e2e` and CI.
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: pdbq
+      POSTGRES_PASSWORD: pdbq
+      POSTGRES_DB: pdbq_test
+    ports:
+      - "5433:5432"
+    volumes:
+      - ./db/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pdbq"]
+      interval: 2s
+      timeout: 2s
+      retries: 15

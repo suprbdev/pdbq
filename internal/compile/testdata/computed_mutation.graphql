@@ -1,0 +1,8 @@
+mutation {
+  updatePostById(id: 1, patch: {body: "Updated body text"}) {
+    post { id excerpt(maxChars: 5) }
+  }
+  createUser(input: {email: "new@example.com"}) {
+    user { id postCount }
+  }
+}

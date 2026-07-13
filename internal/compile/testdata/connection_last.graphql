@@ -1,0 +1,9 @@
+# backward pagination: last + before reverse the scan and re-reverse rows in
+# the outer aggregates.
+{
+  allPosts(last: 2, before: "WyJQb3N0Iiw5XQ==", orderBy: [TITLE_ASC]) {
+    nodes { id title }
+    edges { cursor node { id } }
+    pageInfo { hasNextPage hasPreviousPage startCursor endCursor }
+  }
+}

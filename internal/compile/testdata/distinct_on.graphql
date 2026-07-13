@@ -1,0 +1,8 @@
+{
+  allUsers(distinctOn: [MOOD], orderBy: [MOOD_DESC], first: 5) {
+    totalCount
+    nodes { id mood }
+    edges { cursor }
+    pageInfo { hasNextPage endCursor }
+  }
+}

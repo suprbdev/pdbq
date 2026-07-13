@@ -1,0 +1,9 @@
+mutation {
+  updateUserByEmail(email: "a@b.c", patch: {fullName: "Grace"}) {
+    user { id email fullName }
+  }
+  deleteUserByEmail(email: "b@c.d") {
+    user { id }
+    clientMutationId
+  }
+}

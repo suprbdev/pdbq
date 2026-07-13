@@ -1,0 +1,10 @@
+# variables: {"addr": {"street": "1 Main St", "city": "Springfield", "mood": "HAPPY"}}
+mutation ($addr: AddressInput) {
+  createUser(input: {email: "c@d.e", address: $addr, prevAddresses: [{city: "Shelbyville"}]}) {
+    user {
+      id
+      address { street city mood }
+      prevAddresses { city }
+    }
+  }
+}

@@ -1,0 +1,36 @@
+# Local development stack: Postgres with the fixture schema + pdbq in watch
+# mode. Run from the repo root: docker compose up
+#
+# No ports are published here — create a compose.override.yaml (gitignored,
+# picked up automatically) mapping them to whatever fits your local setup;
+# see docs/quickstart.md for an example.
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: pdbq
+      POSTGRES_PASSWORD: pdbq
+      POSTGRES_DB: pdbq
+    volumes:
+      - ./db/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pdbq"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
+
+  pdbq:
+    image: suprbdev/pdbq:latest
+    build:
+      context: .
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PDBQ_DATABASE_URL: postgres://pdbq:pdbq@db:5432/pdbq
+      PDBQ_WATCH_ENABLED: "true"
+      PDBQ_RLS_ENABLED: "false" # dev stack; see docs/rls.md for production
+      PDBQ_SERVER_GRAPHIQL: "true" # dev stack; off by default
+      PDBQ_SERVER_EXPOSE__SCHEMA: "true" # dev stack; off by default
+      PDBQ_ERRORS_DETAIL: dev
+      PDBQ_LOG_LEVEL: debug
