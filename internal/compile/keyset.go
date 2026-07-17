@@ -2,6 +2,7 @@ package compile
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/vektah/gqlparser/v2/ast"
@@ -121,36 +122,53 @@ func (s *stmt) planPage(t *introspect.Table, f *ast.Field, typeName string) (pag
 	return p, nil
 }
 
-// anchorSQL builds the CROSS JOIN fetching the cursor row's order-column
-// values (k1..kN, parallel to terms); the keyset predicate compares against
-// them. A deleted cursor row yields zero anchor rows and thus an empty page.
-func (s *stmt) anchorSQL(t *introspect.Table, terms []orderTerm, keys []any) (string, string, error) {
-	anc := s.alias("anc")
-	cols := make([]string, len(terms))
+// anchorVals renders one SQL value expression per order term for the cursor
+// row identified by keys. Terms on primary-key columns take the decoded
+// cursor value as a plain parameter — the planner can use it as a btree
+// start condition, and no join exists to break the ordered path. Other terms
+// become uncorrelated scalar subqueries (InitPlans) fetching the anchor
+// row's value; a deleted cursor row makes them yield NULL, so the predicate
+// matches nothing and the page comes back empty.
+func (s *stmt) anchorVals(t *introspect.Table, terms []orderTerm, keys []any) ([]string, error) {
+	pk := t.PrimaryKey.Columns
+	if len(pk) != len(keys) {
+		return nil, fmt.Errorf("compile: cursor has %d key values, want %d", len(keys), len(pk))
+	}
+	vals := make([]string, len(terms))
+	subWhere := "" // shared across subqueries: the params are allocated once
 	for i, term := range terms {
-		cols[i] = fmt.Sprintf("%s AS k%d", orderExprSQL(t, term, "__a"), i+1)
+		if term.fn == nil {
+			if j := slices.Index(pk, term.col); j >= 0 {
+				vals[i] = s.param(s.keyParam(t.Column(term.col), keys[j]))
+				continue
+			}
+		}
+		if subWhere == "" {
+			conds, err := s.keyCondsFromValues(t, pk, keys, "__a")
+			if err != nil {
+				return nil, err
+			}
+			subWhere = strings.Join(conds, " AND ")
+		}
+		vals[i] = fmt.Sprintf("(SELECT %s FROM %s AS __a WHERE %s)",
+			orderExprSQL(t, term, "__a"), s.sourceRef(t), subWhere)
 	}
-	conds, err := s.keyCondsFromValues(t, t.PrimaryKey.Columns, keys, "__a")
-	if err != nil {
-		return "", "", err
-	}
-	join := fmt.Sprintf("CROSS JOIN (\n  SELECT %s\n  FROM %s AS __a\n  WHERE %s\n) AS %s",
-		strings.Join(cols, ", "), s.sourceRef(t), strings.Join(conds, " AND "), anc)
-	return join, anc, nil
+	return vals, nil
 }
 
 // keysetPredicate renders the expanded lexicographic "strictly after the
-// anchor row" comparison. Mixed ASC/DESC directions forbid a tuple compare,
-// so terms nest as s1 OR (e1 AND (s2 OR (e2 AND ...))). NULL ordering follows
-// PostgreSQL defaults (ASC = NULLS LAST, DESC = NULLS FIRST); flip selects
-// the "strictly before" form.
-func keysetPredicate(alias, anc string, terms []orderTerm, t *introspect.Table, flip bool) string {
+// anchor row" comparison against the anchor value expressions from
+// anchorVals (parallel to terms). Mixed ASC/DESC directions forbid a tuple
+// compare, so terms nest as s1 OR (e1 AND (s2 OR (e2 AND ...))). NULL
+// ordering follows PostgreSQL defaults (ASC = NULLS LAST, DESC = NULLS
+// FIRST); flip selects the "strictly before" form.
+func keysetPredicate(alias string, vals []string, terms []orderTerm, t *introspect.Table, flip bool) string {
 	pred := ""
 	for i := len(terms) - 1; i >= 0; i-- {
 		term := terms[i]
 		desc := term.desc != flip
 		col := orderExprSQL(t, term, alias)
-		k := fmt.Sprintf("%s.k%d", anc, i+1)
+		k := vals[i]
 		c := t.Column(term.col)
 		// Computed terms are always treated as nullable: the function may
 		// return NULL for any row.

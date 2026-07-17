@@ -420,22 +420,19 @@ func (s *stmt) connectionJSON(t *introspect.Table, f *ast.Field, extraCond strin
 	if extraCond != "" {
 		conds = append(conds, strings.ReplaceAll(extraCond, "%%ALIAS%%", alias))
 	}
-	anchors := ""
 	if plan.predKeyset && plan.hasAfter {
-		join, anc, err := s.anchorSQL(t, terms, plan.afterKeys)
+		vals, err := s.anchorVals(t, terms, plan.afterKeys)
 		if err != nil {
 			return "", err
 		}
-		anchors += "\n" + join
-		conds = append(conds, keysetPredicate(alias, anc, terms, t, false))
+		conds = append(conds, keysetPredicate(alias, vals, terms, t, false))
 	}
 	if plan.predKeyset && plan.hasBefore {
-		join, anc, err := s.anchorSQL(t, terms, plan.beforeKeys)
+		vals, err := s.anchorVals(t, terms, plan.beforeKeys)
 		if err != nil {
 			return "", err
 		}
-		anchors += "\n" + join
-		conds = append(conds, keysetPredicate(alias, anc, terms, t, true))
+		conds = append(conds, keysetPredicate(alias, vals, terms, t, true))
 	}
 	where, err := s.whereClause(t, f, alias, strings.Join(conds, " AND "))
 	if err != nil {
@@ -463,8 +460,8 @@ func (s *stmt) connectionJSON(t *introspect.Table, f *ast.Field, extraCond strin
 		}
 		distinct = "DISTINCT ON (" + strings.Join(refs, ", ") + ") "
 	}
-	inner := fmt.Sprintf("SELECT %s%s\nFROM %s AS %s%s%s%s%s%s%s",
-		distinct, strings.Join(selectCols, ", "), s.sourceRef(t), alias, anchors,
+	inner := fmt.Sprintf("SELECT %s%s\nFROM %s AS %s%s%s%s%s%s",
+		distinct, strings.Join(selectCols, ", "), s.sourceRef(t), alias,
 		joinLaterals(innerLaterals), where, order, limit, pageOffset)
 	if len(dcols) > 0 {
 		// Renumber the distinct survivors so offset cursors stay dense.

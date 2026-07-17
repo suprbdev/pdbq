@@ -1,0 +1,9 @@
+# PK-only order with a keyset after-cursor: the anchor value is the cursor
+# key itself, so the predicate is a plain parameter comparison (a btree start
+# condition) with no anchor subquery.
+{
+  allPosts(first: 3, after: "WyJQb3N0IiwzXQ==", orderBy: [ID_ASC]) {
+    nodes { id }
+    pageInfo { hasNextPage endCursor }
+  }
+}

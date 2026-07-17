@@ -72,7 +72,10 @@ cursors (and have no `nodeId`). Notes:
   `last`/`before`.
 - A cursor stays decodable if `orderBy` changes, but the page is then
   relative to the anchor row under the *new* order.
-- If the anchor row was deleted, the page comes back empty.
+- If the anchor row was deleted: with an ordering entirely on primary-key
+  columns (including the default order) pagination continues past where the
+  row used to be; an ordering involving other columns needs the anchor row's
+  values, so the page comes back empty.
 - `hasNextPage`/`hasPreviousPage` are exact in the direction being paginated
   (one extra row is fetched); the opposite side reflects the supplied
   cursors.
