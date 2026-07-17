@@ -1,5 +1,10 @@
 # pdbq
 
+[![CI](https://github.com/suprbdev/pdbq/actions/workflows/ci.yaml/badge.svg)](https://github.com/suprbdev/pdbq/actions/workflows/ci.yaml)
+[![Release](https://img.shields.io/github/v/release/suprbdev/pdbq)](https://github.com/suprbdev/pdbq/releases/latest)
+[![Go Reference](https://pkg.go.dev/badge/github.com/suprbdev/pdbq.svg)](https://pkg.go.dev/github.com/suprbdev/pdbq)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 Zero-boilerplate GraphQL API for PostgreSQL, in the spirit of PostGraphile:
 point it at a live database and it introspects `pg_catalog`, generates a
 GraphQL schema (types, relations, filters, pagination, CRUD mutations), and
@@ -44,6 +49,29 @@ time=... msg=listening addr=:8080 graphiql=true
 - **Pipe-friendly CLI** — `echo '{users {email}}' | pdbq query -` prints
   JSON and exits non-zero on GraphQL errors.
 
+## Installation
+
+Prebuilt binaries for Linux, macOS and Windows (amd64/arm64) are on the
+[releases page](https://github.com/suprbdev/pdbq/releases/latest), with a
+`checksums.txt` for verification:
+
+```console
+$ curl -fsSL https://github.com/suprbdev/pdbq/releases/latest/download/pdbq_0.1.0_linux_amd64.tar.gz | tar xz
+$ ./pdbq --version
+```
+
+Or pull the (multi-arch, distroless) Docker image:
+
+```console
+$ docker run --rm ghcr.io/suprbdev/pdbq:latest --version
+```
+
+Or build from source:
+
+```console
+$ go install github.com/suprbdev/pdbq/cmd/pdbq@latest
+```
+
 ## Quickstart
 
 ```console
@@ -54,7 +82,6 @@ $ open http://localhost:8080 # GraphiQL (port mapping via compose.override.yaml,
 Or against your own database:
 
 ```console
-$ go install github.com/suprbdev/pdbq/cmd/pdbq@latest
 $ pdbq config init          # writes a starter pdbq.yaml
 $ pdbq serve
 ```
