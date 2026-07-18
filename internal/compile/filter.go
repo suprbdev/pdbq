@@ -291,14 +291,18 @@ func escapeLike(v string) string {
 // the given column: enum names map to their PostgreSQL labels, JSON values
 // are re-encoded as text for jsonb params.
 func (s *stmt) coerce(col *introspect.Column, v any) any {
+	return coerceInput(s.c.Built, col, v)
+}
+
+func coerceInput(built *schema.Built, col *introspect.Column, v any) any {
 	if col == nil || v == nil {
 		return v
 	}
 	base := strings.TrimPrefix(col.PGType, "_")
-	if e := s.c.Built.Catalog.Enum(col.TypeSchema, base); e != nil {
+	if e := built.Catalog.Enum(col.TypeSchema, base); e != nil {
 		if name, ok := v.(string); ok {
-			enumType := s.c.Built.EnumTypeForPG[col.TypeSchema+"."+base]
-			if vals, ok := s.c.Built.EnumValues[enumType]; ok {
+			enumType := built.EnumTypeForPG[col.TypeSchema+"."+base]
+			if vals, ok := built.EnumValues[enumType]; ok {
 				if pg, ok := vals[name]; ok {
 					return pg
 				}
@@ -312,7 +316,7 @@ func (s *stmt) coerce(col *introspect.Column, v any) any {
 	}
 	if col.IsArray {
 		if list, ok := v.([]any); ok {
-			return s.coerceSlice(col, list)
+			return coerceInputSlice(built, col, list)
 		}
 	}
 	return v
@@ -328,11 +332,15 @@ func (s *stmt) coerceList(col *introspect.Column, v any) any {
 }
 
 func (s *stmt) coerceSlice(col *introspect.Column, list []any) []any {
+	return coerceInputSlice(s.c.Built, col, list)
+}
+
+func coerceInputSlice(built *schema.Built, col *introspect.Column, list []any) []any {
 	elem := *col
 	elem.IsArray = false
 	out := make([]any, len(list))
 	for i, item := range list {
-		out[i] = s.coerce(&elem, item)
+		out[i] = coerceInput(built, &elem, item)
 	}
 	return out
 }

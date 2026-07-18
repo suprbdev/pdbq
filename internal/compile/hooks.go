@@ -5,6 +5,7 @@ import (
 
 	"github.com/vektah/gqlparser/v2/ast"
 
+	"github.com/suprbdev/pdbq/internal/introspect"
 	"github.com/suprbdev/pdbq/internal/schema"
 )
 
@@ -51,6 +52,15 @@ func (c *Compiler) MutationWithCTEs(req *Request, f *ast.Field, meta *schema.Fie
 // FieldMeta exposes metadata lookup to plugins.
 func (c *Compiler) FieldMeta(typeName, fieldName string) *schema.FieldMeta {
 	return c.fieldMeta(typeName, fieldName)
+}
+
+// CoerceInput converts a GraphQL input value into a driver-friendly parameter
+// for the given column — enum value names map to their PostgreSQL labels,
+// json/jsonb values are re-encoded as text, array elements coerce recursively.
+// CompileHook plugins building their own DML must route column values through
+// this before ParamSet.Add, or enum/jsonb params reach the driver raw.
+func CoerceInput(built *schema.Built, col *introspect.Column, v any) any {
+	return coerceInput(built, col, v)
 }
 
 // QuoteIdent is exported for plugins building SQL fragments.

@@ -316,6 +316,12 @@ func (g *cteGen) name(prefix string) string {
 	return fmt.Sprintf("__%s_%d", prefix, g.n)
 }
 
+// addParam coerces v for the named column (enum labels, jsonb encoding)
+// before registering it as a placeholder.
+func (g *cteGen) addParam(t *introspect.Table, colName string, v any) string {
+	return g.ps.Add(compile.CoerceInput(g.req.Built, t.Column(colName), v))
+}
+
 // insertChain emits CTEs to insert one row into t from input, resolving
 // forward nested fields (parents first), then emits child CTEs for reverse
 // nested fields. Returns the CTE name holding the inserted row.
@@ -334,7 +340,7 @@ func (g *cteGen) insertChain(t *introspect.Table, inputType string, input map[st
 		}
 		if col, ok := binding[fname]; ok {
 			cols = append(cols, compile.QuoteIdent(col))
-			vals = append(vals, g.ps.Add(input[fname]))
+			vals = append(vals, g.addParam(t, col, input[fname]))
 		}
 	}
 	// Forward nested: resolve/insert parents first.
@@ -406,7 +412,7 @@ func (g *cteGen) resolveParent(spec *nestedSpec, nested map[string]any, depth in
 			if !ok {
 				continue
 			}
-			conds = append(conds, compile.QuoteIdent(col)+" = "+g.ps.Add(connect[fname]))
+			conds = append(conds, compile.QuoteIdent(col)+" = "+g.addParam(spec.Target, col, connect[fname]))
 		}
 		if len(conds) == 0 {
 			return "", fmt.Errorf("nested-mutations: empty connect for %s", spec.FK.RefTable)
@@ -440,7 +446,7 @@ func (g *cteGen) insertChildren(spec *nestedSpec, nested map[string]any, parentC
 			}
 			if col, ok := binding[fname]; ok {
 				cols = append(cols, compile.QuoteIdent(col))
-				vals = append(vals, g.ps.Add(row[fname]))
+				vals = append(vals, g.addParam(spec.Owner, col, row[fname]))
 			}
 		}
 		for i, col := range spec.FK.Columns {

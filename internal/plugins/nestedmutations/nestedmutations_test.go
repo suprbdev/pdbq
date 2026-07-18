@@ -97,6 +97,50 @@ func TestNestedConnectAndChildren(t *testing.T) {
 	}
 }
 
+func TestNestedCreateMapsEnumLabels(t *testing.T) {
+	reg, built := setupWith(t, plugin.NewRegistry(nestedmutations.New(nil)))
+
+	// Forward nested create: enum on the parent row.
+	stmt := compileRoot(t, reg, built, `mutation {
+		createPost(input: {title: "Hi", author: {create: {email: "x@y.z", mood: HAPPY}}}) {
+			post { id }
+		}
+	}`)
+	assertEnumArg(t, stmt)
+
+	// Root row with reverse nested children: enum on the root row itself
+	// (posts carry no enum column in the fixture; insertChildren shares the
+	// same coercion helper).
+	stmt = compileRoot(t, reg, built, `mutation {
+		createUser(input: {
+			email: "a@b.c",
+			mood: HAPPY,
+			postsByAuthorId: {create: [{title: "One"}]}
+		}) {
+			user { id }
+		}
+	}`)
+	assertEnumArg(t, stmt)
+}
+
+// assertEnumArg checks the GraphQL enum value HAPPY was mapped to the
+// PostgreSQL label "happy" in the parameter list.
+func assertEnumArg(t *testing.T, stmt *compile.Statement) {
+	t.Helper()
+	mapped := false
+	for _, a := range stmt.Args {
+		switch a {
+		case "HAPPY":
+			t.Errorf("enum value passed raw as %q; want pg label: args=%v", a, stmt.Args)
+		case "happy":
+			mapped = true
+		}
+	}
+	if !mapped {
+		t.Errorf("pg enum label \"happy\" missing from args: %v", stmt.Args)
+	}
+}
+
 func TestPlainCreateStillUsesBaseCompiler(t *testing.T) {
 	reg := plugin.NewRegistry(nestedmutations.New(nil))
 	reg, built := setupWith(t, reg)
