@@ -1,7 +1,8 @@
 GO      ?= go
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+IMAGE   ?= suprbdev/pdbq
 
-.PHONY: help build dev test test-e2e bench lint docs docker-build compose-up compose-down example-config fuzz release
+.PHONY: help build dev test test-e2e bench lint docs docker-build docker-push compose-up compose-down example-config fuzz release
 
 .DEFAULT_GOAL := help
 
@@ -55,6 +56,17 @@ release: ## Cut a new release (prompts for version, tags, pushes)
 
 docker-build: ## Build the pdbq Docker image
 	docker build -t pdbq:$(VERSION) .
+
+# Requires `docker login` and a buildx builder (docker buildx create --use).
+# VERSION must be an exact release tag — run from a tagged checkout or pass
+# VERSION=vX.Y.Z explicitly.
+docker-push: ## Build and push multi-arch image to Docker Hub ($(IMAGE):latest + :vX.Y.Z)
+	@echo "$(VERSION)" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$$' || { echo "error: VERSION '$(VERSION)' is not a clean vX.Y.Z tag — checkout a release tag or pass VERSION=vX.Y.Z"; exit 1; }
+	docker buildx build \
+		--platform linux/amd64,linux/arm64 \
+		--build-arg VERSION=$(VERSION) \
+		-t $(IMAGE):latest -t $(IMAGE):$(VERSION) \
+		--push .
 
 compose-up: ## Start the local stack detached
 	docker compose up -d --build
