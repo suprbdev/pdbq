@@ -65,6 +65,26 @@ func TestCostResolvesVariableFirst(t *testing.T) {
 	}
 }
 
+func TestCostFirstOneCheaperThanUnpaginated(t *testing.T) {
+	def := cost(t, `{ allUsers(first: 10) { nodes { postsByAuthorId { nodes { id } } } } }`, nil)
+	one := cost(t, `{ allUsers(first: 10) { nodes { postsByAuthorId(first: 1) { nodes { id } } } } }`, nil)
+	if one >= def {
+		t.Fatalf("cost(first:1)=%d not < cost(no first)=%d; explicit small page must not cost more", one, def)
+	}
+}
+
+func TestCostPaginationNotChargedTwice(t *testing.T) {
+	// The page multiplier applies once at the connection field; nodes under
+	// it must not add the ×10 list default on top. An explicit first equal
+	// to the default-page assumption (10) therefore costs the same as no
+	// first at all.
+	def := cost(t, `{ allUsers { nodes { id } } }`, nil)
+	ten := cost(t, `{ allUsers(first: 10) { nodes { id } } }`, nil)
+	if ten != def {
+		t.Fatalf("cost(first:10)=%d != cost(no first)=%d; pagination charged twice", ten, def)
+	}
+}
+
 func TestCostNestedPaginationCompounds(t *testing.T) {
 	flat := cost(t, `{ allUsers(first: 100) { nodes { id } } }`, nil)
 	nested := cost(t, `{ allUsers(first: 100) { nodes { postsByAuthorId(first: 100) { nodes { id } } } } }`, nil)

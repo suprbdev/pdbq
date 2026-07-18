@@ -329,8 +329,10 @@ func (e *Executor) executeField(ctx context.Context, q querier, op *Operation, f
 }
 
 // checkLimits enforces max depth and a simple cost heuristic (each field
-// costs 1; a field with a first/last argument multiplies its subtree by the
-// requested page size, other list-ish fields by 10).
+// costs 1; a paginated field multiplies its subtree by the requested
+// first/last page size — assuming 10 when neither is given — and its direct
+// list children (nodes/edges) are not multiplied again; list fields outside
+// a paginated container multiply by 10).
 func (e *Executor) checkLimits(doc *ast.QueryDocument, op *ast.OperationDefinition, vars map[string]any) error {
 	maxDepth, maxCost := e.Opts.MaxDepth, e.Opts.MaxCost
 	if maxDepth <= 0 {
@@ -364,19 +366,31 @@ func (e *Executor) checkLimits(doc *ast.QueryDocument, op *ast.OperationDefiniti
 }
 
 func measure(sel ast.SelectionSet, frags ast.FragmentDefinitionList, vars map[string]any, pageCap, depth int) (int, int) {
+	return measureSel(sel, frags, vars, pageCap, depth, false)
+}
+
+// measureSel walks one selection set. paginated is true when the enclosing
+// field already applied a page-size multiplier (a connection): its direct
+// list children (nodes/edges) then count once instead of the ×10 list
+// default, so pagination is not charged twice.
+func measureSel(sel ast.SelectionSet, frags ast.FragmentDefinitionList, vars map[string]any, pageCap, depth int, paginated bool) (int, int) {
 	maxDepth, cost := depth, 0
 	for _, item := range sel {
 		switch v := item.(type) {
 		case *ast.Field:
-			d, c := measure(v.SelectionSet, frags, vars, pageCap, depth+1)
-			mult := 1
+			mult, childPaginated := 1, false
 			if n, ok := pageArg(v, vars); ok {
 				// first/last drive how many rows this subtree repeats for;
 				// clamp to the page-size cap the compiler enforces anyway.
 				mult = min(max(n, 1), pageCap)
-			} else if v.Definition != nil && v.Definition.Type.NamedType == "" {
-				mult = 10 // list field without explicit pagination
+				childPaginated = true
+			} else if hasPageArgs(v) {
+				mult = 10 // connection without explicit first/last
+				childPaginated = true
+			} else if !paginated && v.Definition != nil && v.Definition.Type.NamedType == "" {
+				mult = 10 // list field outside a paginated container
 			}
+			d, c := measureSel(v.SelectionSet, frags, vars, pageCap, depth+1, childPaginated)
 			cost += 1 + mult*c
 			if len(v.SelectionSet) == 0 {
 				d = depth
@@ -385,14 +399,14 @@ func measure(sel ast.SelectionSet, frags ast.FragmentDefinitionList, vars map[st
 				maxDepth = d
 			}
 		case *ast.InlineFragment:
-			d, c := measure(v.SelectionSet, frags, vars, pageCap, depth)
+			d, c := measureSel(v.SelectionSet, frags, vars, pageCap, depth, paginated)
 			cost += c
 			if d > maxDepth {
 				maxDepth = d
 			}
 		case *ast.FragmentSpread:
 			if def := frags.ForName(v.Name); def != nil {
-				d, c := measure(def.SelectionSet, frags, vars, pageCap, depth)
+				d, c := measureSel(def.SelectionSet, frags, vars, pageCap, depth, paginated)
 				cost += c
 				if d > maxDepth {
 					maxDepth = d
@@ -401,6 +415,17 @@ func measure(sel ast.SelectionSet, frags ast.FragmentDefinitionList, vars map[st
 		}
 	}
 	return maxDepth, cost
+}
+
+// hasPageArgs reports whether the field is pagination-capable (declares a
+// first or last argument), i.e. compiles to a paginated row set even when
+// the query omits an explicit page size.
+func hasPageArgs(f *ast.Field) bool {
+	if f.Definition == nil {
+		return false
+	}
+	return f.Definition.Arguments.ForName("first") != nil ||
+		f.Definition.Arguments.ForName("last") != nil
 }
 
 // pageArg extracts a field's first/last argument as an int, resolving
