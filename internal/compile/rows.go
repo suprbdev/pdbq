@@ -482,7 +482,10 @@ func (s *stmt) connectionJSON(t *introspect.Table, f *ast.Field, extraCond strin
 	// (a totalCount-only selection has no aggregates; an unused parameter
 	// would make pgx reject the statement with an argument-count mismatch).
 	if plan.predKeyset && plan.limit >= 0 && (nodesSel != nil || wantEdges || wantPageInfo) {
-		trimParam = s.param(plan.limit)
+		// __rn numbers rows in the ordered scan BEFORE OFFSET trims, so rows
+		// surviving `LIMIT limit+1 OFFSET offset` carry __rn in
+		// [offset+1, offset+limit+1] — the trim threshold is offset+limit.
+		trimParam = s.param(plan.offset + plan.limit)
 		aggFilter = fmt.Sprintf(" FILTER (WHERE %s.__rn <= %s)", sub, trimParam)
 	}
 	agg := func(expr string) string {
@@ -550,12 +553,19 @@ func (s *stmt) connectionJSON(t *introspect.Table, f *ast.Field, extraCond strin
 		if plan.predKeyset {
 			// Exact in the paging direction (limit+1 fetch); the opposite
 			// side falls back to what the supplied cursors imply.
+			// count(*) counts post-OFFSET fetched rows (max limit+1), while
+			// the shared trim placeholder holds offset+limit — add the offset
+			// to the count so the comparison stays `fetched > limit`.
+			countExpr := "count(*)"
+			if plan.offset > 0 {
+				countExpr = fmt.Sprintf("(count(*) + %d)", plan.offset)
+			}
 			switch {
 			case plan.reversed:
 				hasNext = boolLit(plan.hasBefore)
-				hasPrev = fmt.Sprintf("(count(*) > %s)", trimOrParam(&trimParam, s, plan.limit))
+				hasPrev = fmt.Sprintf("(%s > %s)", countExpr, trimOrParam(&trimParam, s, plan.offset+plan.limit))
 			case plan.limit >= 0:
-				hasNext = fmt.Sprintf("(count(*) > %s)", trimOrParam(&trimParam, s, plan.limit))
+				hasNext = fmt.Sprintf("(%s > %s)", countExpr, trimOrParam(&trimParam, s, plan.offset+plan.limit))
 				hasPrev = boolLit(plan.hasAfter || plan.offset > 0)
 			default:
 				hasNext = boolLit(plan.hasBefore)

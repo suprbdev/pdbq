@@ -147,6 +147,53 @@ func TestQueries(t *testing.T) {
 		}
 	})
 
+	t.Run("offset pagination", func(t *testing.T) {
+		// Regression: the keyset trim filter compared __rn (numbered before
+		// OFFSET applies) against `limit`, so first+offset returned
+		// max(0, first-offset) rows instead of first.
+		type conn struct {
+			Nodes []struct {
+				Email string `json:"email"`
+			} `json:"nodes"`
+			PageInfo struct {
+				HasNextPage     bool `json:"hasNextPage"`
+				HasPreviousPage bool `json:"hasPreviousPage"`
+			} `json:"pageInfo"`
+		}
+		page := func(offset int) conn {
+			res := post(t, hs.URL, fmt.Sprintf(`{
+				allUsers(orderBy: [EMAIL_ASC], first: 1, offset: %d) {
+					nodes { email }
+					pageInfo { hasNextPage hasPreviousPage }
+				}
+			}`, offset), nil)
+			requireNoErrors(t, res)
+			var c conn
+			mustUnmarshal(t, res.Data["allUsers"], &c)
+			return c
+		}
+		for i, want := range []struct {
+			email            string
+			hasNext, hasPrev bool
+		}{
+			{"ada@example.com", true, false},
+			{"alan@example.com", true, true},
+			{"grace@example.com", false, true},
+		} {
+			c := page(i)
+			if len(c.Nodes) != 1 || c.Nodes[0].Email != want.email {
+				t.Fatalf("offset %d: want [%s], got %+v", i, want.email, c.Nodes)
+			}
+			if c.PageInfo.HasNextPage != want.hasNext || c.PageInfo.HasPreviousPage != want.hasPrev {
+				t.Errorf("offset %d: pageInfo got next=%v prev=%v want next=%v prev=%v",
+					i, c.PageInfo.HasNextPage, c.PageInfo.HasPreviousPage, want.hasNext, want.hasPrev)
+			}
+		}
+		if c := page(3); len(c.Nodes) != 0 {
+			t.Errorf("offset past end: want 0 rows, got %+v", c.Nodes)
+		}
+	})
+
 	t.Run("set-returning computed columns", func(t *testing.T) {
 		res := post(t, hs.URL, `{userByEmail(email: "ada@example.com") {
 			tagWords
