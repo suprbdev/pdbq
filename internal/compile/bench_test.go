@@ -33,7 +33,7 @@ func BenchmarkCompile(b *testing.B) {
 		"single_row":       `{userById(id: 1) {id email fullName}}`,
 		"nested_relations": `{allUsers(first: 10) {nodes {id email postsByAuthorId(first: 5) {nodes {id title author {id}}}}}}`,
 		"connection":       `{allUsers(first: 10) {totalCount nodes {id} pageInfo {hasNextPage endCursor}}}`,
-		"filters":          `{allUsers(filter: {and: [{email: {like: "%x%"}}, {or: [{id: {gt: 5}}, {mood: {eq: HAPPY}}]}]}) {nodes {id}}}`,
+		"filters":          `{allUsers(filter: {and: [{email: {like: "%x%"}}, {or: [{id: {greaterThan: 5}}, {mood: {equalTo: HAPPY}}]}]}) {nodes {id}}}`,
 		"node":             `{node(nodeId: "WyJQb3N0IiwxXQ==") {nodeId ... on Post {title}}}`,
 	}
 	for name, q := range shapes {

@@ -4,7 +4,7 @@ query ($moods: [Mood!]) {
     and: [
       {mood: {in: $moods}}
       {or: [{email: {endsWith: "@example.com"}}, {tags: {contains: ["admin"]}}]}
-      {not: {settings: {hasKey: "banned"}}}
+      {not: {settings: {containsKey: "banned"}}}
     ]
   }) {
     nodes { id }

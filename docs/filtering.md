@@ -6,10 +6,10 @@ matching the Postgres type:
 
 | Postgres type | Operators |
 |---|---|
-| all scalars | `eq ne in notIn isNull lt lte gt gte` |
-| text/citext | + `like ilike startsWith endsWith` |
-| arrays | `eq ne contains containedBy overlaps isNull` |
-| json/jsonb | `eq contains containedBy hasKey pathExists pathMatch isNull` |
+| all scalars | `equalTo notEqualTo in notIn isNull lessThan lessThanOrEqualTo greaterThan greaterThanOrEqualTo` |
+| text/citext | + `like likeInsensitive startsWith endsWith` |
+| arrays | `equalTo notEqualTo contains containedBy overlaps isNull` |
+| json/jsonb | `equalTo contains containedBy containsKey pathExists pathMatch isNull` |
 | enums | scalar set, with GraphQL enum values |
 
 `startsWith`/`endsWith` escape `%`/`_`/`\` in the operand; every operand is
@@ -31,7 +31,7 @@ operator set.
     and: [
       {mood: {in: [HAPPY, OK]}}
       {or: [{email: {endsWith: "@example.com"}}, {tags: {contains: ["admin"]}}]}
-      {not: {settings: {hasKey: "banned"}}}
+      {not: {settings: {containsKey: "banned"}}}
     ]
   }) { nodes { email } }
 }

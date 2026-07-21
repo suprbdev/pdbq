@@ -3,7 +3,7 @@
     first: 10
     offset: 5
     orderBy: [TITLE_ASC]
-    filter: {title: {startsWith: "Hello"}, id: {gt: 1}}
+    filter: {title: {startsWith: "Hello"}, id: {greaterThan: 1}}
   ) {
     nodes {
       id

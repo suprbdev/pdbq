@@ -27,7 +27,7 @@ time=... msg=listening addr=:8080 graphiql=true
   from a verified JWT or trusted gateway headers.
 - **Filters with an indexed-only policy** — only indexed columns are
   filterable out of the box (`filters.indexed_only: false` opens it up),
-  with per-type operator sets (`ilike` for text, `@>` for arrays/jsonb, ...).
+  with per-type operator sets (`likeInsensitive` for text, `@>` for arrays/jsonb, ...).
 - **Relay connections everywhere** — every collection (`allUsers`, backward
   relations) is a cursor connection with `first`/`last`/`offset`/`before`/
   `after`, keyset-backed cursors, `totalCount` and `pageInfo`; every row type

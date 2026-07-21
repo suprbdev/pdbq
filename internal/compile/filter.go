@@ -190,7 +190,7 @@ func (s *stmt) computedCond(t *introspect.Table, fn *introspect.Function, v any,
 	return s.refOps(ret, computedCallSQL(fn, t, alias), v)
 }
 
-// columnOps compiles one column's operator object ({eq: .., gt: ..}).
+// columnOps compiles one column's operator object ({equalTo: .., greaterThan: ..}).
 func (s *stmt) columnOps(col *introspect.Column, v any, alias string) (string, error) {
 	return s.refOps(col, alias+"."+quoteIdent(col.Name), v)
 }
@@ -219,9 +219,9 @@ func (s *stmt) refOps(col *introspect.Column, ref string, v any) (string, error)
 
 func (s *stmt) oneOp(col *introspect.Column, ref, op string, val any) (string, error) {
 	switch op {
-	case "eq":
+	case "equalTo":
 		return ref + " = " + s.param(s.coerce(col, val)), nil
-	case "ne":
+	case "notEqualTo":
 		return ref + " <> " + s.param(s.coerce(col, val)), nil
 	case "in":
 		return ref + " = ANY(" + s.param(s.coerceList(col, val)) + ")", nil
@@ -232,17 +232,17 @@ func (s *stmt) oneOp(col *introspect.Column, ref, op string, val any) (string, e
 			return ref + " IS NULL", nil
 		}
 		return ref + " IS NOT NULL", nil
-	case "lt":
+	case "lessThan":
 		return ref + " < " + s.param(s.coerce(col, val)), nil
-	case "lte":
+	case "lessThanOrEqualTo":
 		return ref + " <= " + s.param(s.coerce(col, val)), nil
-	case "gt":
+	case "greaterThan":
 		return ref + " > " + s.param(s.coerce(col, val)), nil
-	case "gte":
+	case "greaterThanOrEqualTo":
 		return ref + " >= " + s.param(s.coerce(col, val)), nil
 	case "like":
 		return ref + " LIKE " + s.param(val), nil
-	case "ilike":
+	case "likeInsensitive":
 		return ref + " ILIKE " + s.param(val), nil
 	case "startsWith":
 		str, _ := val.(string)
@@ -262,7 +262,7 @@ func (s *stmt) oneOp(col *introspect.Column, ref, op string, val any) (string, e
 		return ref + " <@ " + s.param(s.coerceList(col, val)), nil
 	case "overlaps":
 		return ref + " && " + s.param(s.coerceList(col, val)), nil
-	case "hasKey":
+	case "containsKey":
 		return ref + " ? " + s.param(val), nil
 	case "pathExists":
 		return jsonbExpr(col, ref) + " @? " + s.param(val) + "::jsonpath", nil

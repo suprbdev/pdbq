@@ -22,7 +22,7 @@ func FuzzFilter(f *testing.F) {
 		allUsers(filter: {
 			and: [
 				{email: {like: $e, startsWith: $e}}
-				{or: [{id: {gt: $n}}, {tags: {contains: $tag}}]}
+				{or: [{id: {greaterThan: $n}}, {tags: {contains: $tag}}]}
 				{settings: {pathExists: $e, pathMatch: $e}}
 			]
 		}) { nodes { id } }

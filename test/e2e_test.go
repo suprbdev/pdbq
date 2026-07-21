@@ -471,7 +471,7 @@ func TestAdvancedFilters(t *testing.T) {
 	hs := testServer(t, nil)
 
 	t.Run("forward relation filter", func(t *testing.T) {
-		got := emails(t, hs.URL, `{allPosts(filter: {author: {email: {eq: "grace@example.com"}}}) { nodes { title } }}`, "allPosts", "title")
+		got := emails(t, hs.URL, `{allPosts(filter: {author: {email: {equalTo: "grace@example.com"}}}) { nodes { title } }}`, "allPosts", "title")
 		if len(got) != 1 || got[0] != "Compilers 101" {
 			t.Errorf("author filter: got %v", got)
 		}
@@ -486,14 +486,14 @@ func TestAdvancedFilters(t *testing.T) {
 		if len(got) != 2 || got[0] != "alan@example.com" || got[1] != "grace@example.com" {
 			t.Errorf("none: got %v", got)
 		}
-		got = emails(t, hs.URL, `{allUsers(filter: {postsByAuthorId: {every: {title: {ne: "Unpublished draft"}}}}, orderBy: [EMAIL_ASC]) { nodes { email } }}`, "allUsers", "email")
+		got = emails(t, hs.URL, `{allUsers(filter: {postsByAuthorId: {every: {title: {notEqualTo: "Unpublished draft"}}}}, orderBy: [EMAIL_ASC]) { nodes { email } }}`, "allUsers", "email")
 		if len(got) != 2 || got[0] != "alan@example.com" || got[1] != "grace@example.com" {
 			t.Errorf("every: got %v", got)
 		}
 	})
 
 	t.Run("computed column filter and order", func(t *testing.T) {
-		got := emails(t, hs.URL, `{allUsers(filter: {postCount: {gte: "2"}}) { nodes { email } }}`, "allUsers", "email")
+		got := emails(t, hs.URL, `{allUsers(filter: {postCount: {greaterThanOrEqualTo: "2"}}) { nodes { email } }}`, "allUsers", "email")
 		if len(got) != 1 || got[0] != "ada@example.com" {
 			t.Errorf("postCount filter: got %v", got)
 		}
@@ -530,7 +530,7 @@ func TestAdvancedFilters(t *testing.T) {
 		hs := testServer(t, func(cfg *config.Config) {
 			cfg.Plugins.Disabled = append(cfg.Plugins.Disabled, "advanced-filters")
 		})
-		res := post(t, hs.URL, `{allUsers(filter: {postCount: {gte: "2"}}) { nodes { email } }}`, nil)
+		res := post(t, hs.URL, `{allUsers(filter: {postCount: {greaterThanOrEqualTo: "2"}}) { nodes { email } }}`, nil)
 		if len(res.Errors) == 0 {
 			t.Error("postCount filter should be rejected when advanced-filters is disabled")
 		}

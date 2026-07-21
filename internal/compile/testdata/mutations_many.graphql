@@ -7,7 +7,7 @@ mutation {
     affectedCount
     clientMutationId
   }
-  updateUsers(filter: {mood: {eq: SAD}}, patch: {mood: OK}) {
+  updateUsers(filter: {mood: {equalTo: SAD}}, patch: {mood: OK}) {
     users { id mood }
     affectedCount
   }

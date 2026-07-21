@@ -139,7 +139,7 @@ func TestSmartCommentTags(t *testing.T) {
 func TestForwardRelationFilter(t *testing.T) {
 	built := setup(t, nil)
 	stmt := compileRoot(t, built, `{
-		allPosts(filter: {author: {email: {eq: "ada@example.com"}}}) { nodes { id } }
+		allPosts(filter: {author: {email: {equalTo: "ada@example.com"}}}) { nodes { id } }
 	}`)
 	sql := stmt.SQL
 	for _, want := range []string{
@@ -161,8 +161,8 @@ func TestBackwardRelationQuantifiers(t *testing.T) {
 	stmt := compileRoot(t, built, `{
 		allUsers(filter: {postsByAuthorId: {
 			some:  {title: {startsWith: "A"}}
-			none:  {title: {eq: "x"}}
-			every: {title: {ne: "draft"}}
+			none:  {title: {equalTo: "x"}}
+			every: {title: {notEqualTo: "draft"}}
 		}}) { nodes { id } }
 	}`)
 	sql := stmt.SQL
@@ -181,7 +181,7 @@ func TestNestedRelationFilter(t *testing.T) {
 	built := setup(t, nil)
 	// Two levels: users having a post whose author (self-join back) matches.
 	stmt := compileRoot(t, built, `{
-		allUsers(filter: {postsByAuthorId: {some: {author: {mood: {eq: HAPPY}}}}}) { nodes { id } }
+		allUsers(filter: {postsByAuthorId: {some: {author: {mood: {equalTo: HAPPY}}}}}) { nodes { id } }
 	}`)
 	if got := strings.Count(stmt.SQL, "EXISTS (SELECT 1 FROM"); got != 2 {
 		t.Errorf("want 2 nested EXISTS, got %d:\n%s", got, stmt.SQL)
@@ -201,7 +201,7 @@ func TestNestedRelationFilter(t *testing.T) {
 func TestComputedFilterAndOrder(t *testing.T) {
 	built := setup(t, nil)
 	stmt := compileRoot(t, built, `{
-		allUsers(filter: {postCount: {gt: "1"}}, orderBy: [POST_COUNT_DESC], first: 2) {
+		allUsers(filter: {postCount: {greaterThan: "1"}}, orderBy: [POST_COUNT_DESC], first: 2) {
 			nodes { id }
 		}
 	}`)
@@ -247,7 +247,7 @@ func TestRelationFilterOnBackwardRelationField(t *testing.T) {
 	// Relation filter applied inside a nested child connection.
 	stmt := compileRoot(t, built, `{
 		userById(id: 1) {
-			postsByAuthorId(filter: {author: {email: {eq: "x"}}}) { nodes { id } }
+			postsByAuthorId(filter: {author: {email: {equalTo: "x"}}}) { nodes { id } }
 		}
 	}`)
 	if !strings.Contains(stmt.SQL, `EXISTS (SELECT 1 FROM "public"."users" AS`) {

@@ -41,27 +41,28 @@ func scalarFor(pgType string) string {
 func filterOps(gqlType string, pgType string, isArray bool) []filterOp {
 	if isArray {
 		return []filterOp{
-			{"eq", "[" + gqlType + "!]"}, {"ne", "[" + gqlType + "!]"},
+			{"equalTo", "[" + gqlType + "!]"}, {"notEqualTo", "[" + gqlType + "!]"},
 			{"contains", "[" + gqlType + "!]"}, {"containedBy", "[" + gqlType + "!]"},
 			{"overlaps", "[" + gqlType + "!]"}, {"isNull", "Boolean"},
 		}
 	}
 	if pgType == "jsonb" || pgType == "json" {
 		return []filterOp{
-			{"eq", "JSON"}, {"contains", "JSON"}, {"containedBy", "JSON"},
-			{"hasKey", "String"}, {"isNull", "Boolean"},
+			{"equalTo", "JSON"}, {"contains", "JSON"}, {"containedBy", "JSON"},
+			{"containsKey", "String"}, {"isNull", "Boolean"},
 			{"pathExists", "String"}, {"pathMatch", "String"},
 		}
 	}
 	base := []filterOp{
-		{"eq", gqlType}, {"ne", gqlType},
+		{"equalTo", gqlType}, {"notEqualTo", gqlType},
 		{"in", "[" + gqlType + "!]"}, {"notIn", "[" + gqlType + "!]"},
 		{"isNull", "Boolean"},
-		{"lt", gqlType}, {"lte", gqlType}, {"gt", gqlType}, {"gte", gqlType},
+		{"lessThan", gqlType}, {"lessThanOrEqualTo", gqlType},
+		{"greaterThan", gqlType}, {"greaterThanOrEqualTo", gqlType},
 	}
 	if gqlType == "String" {
 		base = append(base,
-			filterOp{"like", "String"}, filterOp{"ilike", "String"},
+			filterOp{"like", "String"}, filterOp{"likeInsensitive", "String"},
 			filterOp{"startsWith", "String"}, filterOp{"endsWith", "String"})
 	}
 	return base

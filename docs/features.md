@@ -68,10 +68,10 @@ Checklist of PostgreSQL and GraphQL features pdbq supports. Checked = implemente
 ## Filtering & ordering
 
 - [x] `<Type>Filter` input per table with `and` / `or` / `not` combinators, arbitrarily nested
-- [x] Scalar operators: `eq ne in notIn isNull lt lte gt gte`
-- [x] Text operators: `like ilike startsWith endsWith` (operands escaped)
+- [x] Scalar operators: `equalTo notEqualTo in notIn isNull lessThan lessThanOrEqualTo greaterThan greaterThanOrEqualTo`
+- [x] Text operators: `like likeInsensitive startsWith endsWith` (operands escaped)
 - [x] Array operators: `contains containedBy overlaps`
-- [x] `jsonb` operators: `contains containedBy hasKey pathExists pathMatch`
+- [x] `jsonb` operators: `contains containedBy containsKey pathExists pathMatch`
 - [x] Enum filtering with GraphQL enum values
 - [x] Indexed-only policy (default): only indexed/PK/unique columns filterable and orderable
 - [x] Per-table column allowlist override (`filters.allow_columns`)
@@ -80,7 +80,7 @@ Checklist of PostgreSQL and GraphQL features pdbq supports. Checked = implemente
 - [x] Filters/ordering on backward relation fields, not just root lists
 - [x] `jsonb` path operators (`@?`/`@@` via `pathExists`/`pathMatch`)
 - [ ] Range operators (`&&`, `@>` element, `<<`, `>>`) (v1.x, alongside structured range types)
-- [x] Filtering across relations (`posts: {some: {title: {eq: ...}}}`) — built-in `advanced-filters` plugin: forward FK takes the parent's filter, reverse FK a `{some|none|every}` wrapper, compiled to EXISTS subqueries
+- [x] Filtering across relations (`posts: {some: {title: {equalTo: ...}}}`) — built-in `advanced-filters` plugin: forward FK takes the parent's filter, reverse FK a `{some|none|every}` wrapper, compiled to EXISTS subqueries
 - [x] Filtering/ordering on computed columns — built-in `advanced-filters` plugin (single-row-argument stable functions; not index-backed)
 - [x] `distinctOn` (column-enum arg on connections → `SELECT DISTINCT ON`; distinct-aware `totalCount`; first/offset pagination only)
 

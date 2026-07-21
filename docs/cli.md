@@ -19,7 +19,7 @@ falling back to plain strings) or `--vars-file file.json` (`-` = stdin).
 
 ```console
 $ echo '{allUsers(first: 5) {nodes {email}}}' | pdbq query -
-$ pdbq query 'query($m: Mood!){allUsers(filter:{mood:{eq:$m}}){nodes {email}}}' --var m='"HAPPY"'
+$ pdbq query 'query($m: Mood!){allUsers(filter:{mood:{equalTo:$m}}){nodes {email}}}' --var m='"HAPPY"'
 $ jq '.data.allUsers.nodes[].email' < <(pdbq query '{allUsers {nodes {email}}}')
 ```
 
