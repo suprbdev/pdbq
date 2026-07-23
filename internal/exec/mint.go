@@ -41,7 +41,7 @@ func (e *Executor) mintField(raw json.RawMessage, op *Operation, f *ast.Field, m
 	if err := json.Unmarshal(raw, &payload); err != nil {
 		return raw, fmt.Errorf("mint: payload: %w", err)
 	}
-	for _, sub := range collectRootFields(f.SelectionSet, op.Document.Fragments) {
+	for _, sub := range collectRootFields(f.SelectionSet, op.Document.Fragments, op.Vars) {
 		if sub.Name != "result" {
 			continue
 		}

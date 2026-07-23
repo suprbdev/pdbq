@@ -175,18 +175,28 @@ func (s *stmt) argValue(f *ast.Field, name string) (any, bool) {
 
 // expandFor resolves fragment spreads and inline fragments to a flat field
 // list, keeping only fragments whose type condition matches typeName (either
-// exactly or via an interface typeName implements, e.g. `... on Node`).
+// exactly or via an interface typeName implements, e.g. `... on Node`) and
+// dropping selections excluded by @skip/@include.
 func (s *stmt) expandFor(sel ast.SelectionSet, typeName string) []*ast.Field {
 	var out []*ast.Field
 	for _, item := range sel {
 		switch v := item.(type) {
 		case *ast.Field:
+			if SkipByDirectives(v.Directives, s.req.Vars) {
+				continue
+			}
 			out = append(out, v)
 		case *ast.InlineFragment:
+			if SkipByDirectives(v.Directives, s.req.Vars) {
+				continue
+			}
 			if s.fragmentApplies(v.TypeCondition, typeName) {
 				out = append(out, s.expandFor(v.SelectionSet, typeName)...)
 			}
 		case *ast.FragmentSpread:
+			if SkipByDirectives(v.Directives, s.req.Vars) {
+				continue
+			}
 			if def := s.req.Fragments.ForName(v.Name); def != nil && s.fragmentApplies(def.TypeCondition, typeName) {
 				out = append(out, s.expandFor(def.SelectionSet, typeName)...)
 			}

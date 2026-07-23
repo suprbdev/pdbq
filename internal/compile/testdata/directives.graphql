@@ -1,0 +1,19 @@
+# variables: {"withPosts": false, "skipEmail": true}
+query ($withPosts: Boolean!, $skipEmail: Boolean!) {
+  userById(id: 1) {
+    id
+    email @skip(if: $skipEmail)
+    createdAt @include(if: false)
+    ... @include(if: $withPosts) {
+      postsByAuthorId(first: 5) {
+        totalCount
+      }
+    }
+  }
+  allUsers(first: 1) {
+    nodes {
+      id @skip(if: true)
+      fullName @include(if: $withPosts)
+    }
+  }
+}

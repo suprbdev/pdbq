@@ -24,7 +24,10 @@ func (s *stmt) rowJSON(t *introspect.Table, sel ast.SelectionSet, alias string, 
 	typeName := s.c.Built.TypeForTable[t.Schema+"."+t.Name]
 	fields := s.expandFor(sel, typeName)
 	if len(fields) == 0 {
-		return "", nil, fmt.Errorf("compile: %s: empty selection set", typeName)
+		// Validation guarantees a non-empty selection set, so this only
+		// happens when @skip/@include or non-matching fragments removed every
+		// field — per spec the result is an empty object, not an error.
+		return "'{}'::jsonb", nil, nil
 	}
 	var pairs []string // key expr, value expr alternating
 	var laterals []string
@@ -216,7 +219,8 @@ func (s *stmt) compositeJSON(ref string, comp *introspect.Composite, isArray boo
 	}
 	fields := s.expandFor(sel, typeName)
 	if len(fields) == 0 {
-		return "", fmt.Errorf("compile: %s: empty selection set", typeName)
+		// Every field removed by @skip/@include: empty object per spec.
+		return fmt.Sprintf("CASE WHEN (%s)::text IS NULL THEN NULL ELSE '{}'::jsonb END", ref), nil
 	}
 	var pairs []string
 	for _, f := range fields {

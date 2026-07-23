@@ -166,7 +166,7 @@ func (e *Executor) Execute(ctx context.Context, req Request) *Result {
 }
 
 func (e *Executor) executeOperation(ctx context.Context, op *Operation, res *Result) {
-	rootFields := collectRootFields(op.Definition.SelectionSet, op.Document.Fragments)
+	rootFields := collectRootFields(op.Definition.SelectionSet, op.Document.Fragments, op.Vars)
 	needTx := op.ForceTx ||
 		e.Opts.TxPerRequest ||
 		(op.Type == ast.Mutation && e.Opts.TxMutations) ||
@@ -378,6 +378,11 @@ func measureSel(sel ast.SelectionSet, frags ast.FragmentDefinitionList, vars map
 	for _, item := range sel {
 		switch v := item.(type) {
 		case *ast.Field:
+			// Selections excluded by @skip/@include never compile, so they
+			// cost nothing (charging them could reject a valid query).
+			if compile.SkipByDirectives(v.Directives, vars) {
+				continue
+			}
 			mult, childPaginated := 1, false
 			if n, ok := pageArg(v, vars); ok {
 				// first/last drive how many rows this subtree repeats for;
@@ -399,12 +404,18 @@ func measureSel(sel ast.SelectionSet, frags ast.FragmentDefinitionList, vars map
 				maxDepth = d
 			}
 		case *ast.InlineFragment:
+			if compile.SkipByDirectives(v.Directives, vars) {
+				continue
+			}
 			d, c := measureSel(v.SelectionSet, frags, vars, pageCap, depth, paginated)
 			cost += c
 			if d > maxDepth {
 				maxDepth = d
 			}
 		case *ast.FragmentSpread:
+			if compile.SkipByDirectives(v.Directives, vars) {
+				continue
+			}
 			if def := frags.ForName(v.Name); def != nil {
 				d, c := measureSel(def.SelectionSet, frags, vars, pageCap, depth, paginated)
 				cost += c
@@ -459,17 +470,29 @@ func pageArg(f *ast.Field, vars map[string]any) (int, bool) {
 	return 0, false
 }
 
-func collectRootFields(sel ast.SelectionSet, frags ast.FragmentDefinitionList) []*ast.Field {
+// collectRootFields flattens the operation's selection set to executable root
+// fields, dropping selections excluded by @skip/@include (an excluded root
+// field is simply absent from the response).
+func collectRootFields(sel ast.SelectionSet, frags ast.FragmentDefinitionList, vars map[string]any) []*ast.Field {
 	var out []*ast.Field
 	for _, item := range sel {
 		switch v := item.(type) {
 		case *ast.Field:
+			if compile.SkipByDirectives(v.Directives, vars) {
+				continue
+			}
 			out = append(out, v)
 		case *ast.InlineFragment:
-			out = append(out, collectRootFields(v.SelectionSet, frags)...)
+			if compile.SkipByDirectives(v.Directives, vars) {
+				continue
+			}
+			out = append(out, collectRootFields(v.SelectionSet, frags, vars)...)
 		case *ast.FragmentSpread:
+			if compile.SkipByDirectives(v.Directives, vars) {
+				continue
+			}
 			if def := frags.ForName(v.Name); def != nil {
-				out = append(out, collectRootFields(def.SelectionSet, frags)...)
+				out = append(out, collectRootFields(def.SelectionSet, frags, vars)...)
 			}
 		}
 	}

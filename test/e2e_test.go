@@ -118,6 +118,26 @@ func TestQueries(t *testing.T) {
 		}
 	})
 
+	t.Run("skip and include directives", func(t *testing.T) {
+		res := post(t, hs.URL, `query ($more: Boolean!) {
+			userByEmail(email: "ada@example.com") {
+				fullName
+				mood @skip(if: true)
+				tags @include(if: $more)
+			}
+			allPosts(first: 1) @skip(if: true) { totalCount }
+		}`, map[string]any{"more": false})
+		requireNoErrors(t, res)
+		got := normalize(t, res.Data["userByEmail"])
+		want := `{"fullName":"Ada Lovelace"}`
+		if got != normalizeStr(t, want) {
+			t.Errorf("got %s want %s", got, want)
+		}
+		if _, present := res.Data["allPosts"]; present {
+			t.Errorf("allPosts should be absent when the root field is skipped, got %s", res.Data["allPosts"])
+		}
+	})
+
 	t.Run("relations and filters", func(t *testing.T) {
 		res := post(t, hs.URL, `{
 			allUsers(filter: {email: {endsWith: "@example.com"}}, orderBy: [EMAIL_ASC], first: 2) {

@@ -9,6 +9,8 @@ import (
 	"strings"
 
 	"github.com/vektah/gqlparser/v2/ast"
+
+	"github.com/suprbdev/pdbq/internal/compile"
 )
 
 // IntrospectionQuery is the standard full introspection document (the shape
@@ -163,18 +165,28 @@ func (in *introspector) complete(v any, f *ast.Field) (any, error) {
 }
 
 // expand flattens fragments, keeping only selections whose type condition
-// matches the concrete introspection type (they have no interfaces).
+// matches the concrete introspection type (they have no interfaces) and
+// dropping selections excluded by @skip/@include.
 func (in *introspector) expand(sel ast.SelectionSet, typeName string) []*ast.Field {
 	var out []*ast.Field
 	for _, item := range sel {
 		switch v := item.(type) {
 		case *ast.Field:
+			if compile.SkipByDirectives(v.Directives, in.vars) {
+				continue
+			}
 			out = append(out, v)
 		case *ast.InlineFragment:
+			if compile.SkipByDirectives(v.Directives, in.vars) {
+				continue
+			}
 			if v.TypeCondition == "" || v.TypeCondition == typeName {
 				out = append(out, in.expand(v.SelectionSet, typeName)...)
 			}
 		case *ast.FragmentSpread:
+			if compile.SkipByDirectives(v.Directives, in.vars) {
+				continue
+			}
 			if def := in.frags.ForName(v.Name); def != nil && (def.TypeCondition == "" || def.TypeCondition == typeName) {
 				out = append(out, in.expand(def.SelectionSet, typeName)...)
 			}
