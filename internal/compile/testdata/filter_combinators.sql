@@ -3,7 +3,7 @@ SELECT jsonb_build_object('nodes', coalesce(jsonb_agg(__s_2.ndata ORDER BY __s_2
 FROM (
   SELECT jsonb_build_object('id', __t_1."id") AS ndata, row_number() OVER (ORDER BY __t_1."id" ASC) AS __rn
   FROM "public"."users" AS __t_1
-  WHERE (__t_1."mood" = ANY($1) AND (__t_1."email" LIKE $2 OR __t_1."tags" @> $3) AND NOT (__t_1."settings" ? $4))
+  WHERE (__t_1."mood" = ANY($1::text[]::"public"."mood"[]) AND (__t_1."email" LIKE $2 OR __t_1."tags" @> $3) AND NOT (__t_1."settings" ? $4))
   ORDER BY __t_1."id" ASC
   LIMIT $5
 ) AS __s_2

@@ -224,9 +224,9 @@ func (s *stmt) oneOp(col *introspect.Column, ref, op string, val any) (string, e
 	case "notEqualTo":
 		return ref + " <> " + s.param(s.coerce(col, val)), nil
 	case "in":
-		return ref + " = ANY(" + s.param(s.coerceList(col, val)) + ")", nil
+		return ref + " = ANY(" + s.listParam(col, val) + ")", nil
 	case "notIn":
-		return ref + " <> ALL(" + s.param(s.coerceList(col, val)) + ")", nil
+		return ref + " <> ALL(" + s.listParam(col, val) + ")", nil
 	case "isNull":
 		if b, _ := val.(bool); b {
 			return ref + " IS NULL", nil
@@ -254,14 +254,14 @@ func (s *stmt) oneOp(col *introspect.Column, ref, op string, val any) (string, e
 		if col.PGType == "jsonb" || col.PGType == "json" {
 			return ref + " @> " + s.param(toJSONParam(val)) + "::jsonb", nil
 		}
-		return ref + " @> " + s.param(s.coerceList(col, val)), nil
+		return ref + " @> " + s.listParam(col, val), nil
 	case "containedBy":
 		if col.PGType == "jsonb" || col.PGType == "json" {
 			return ref + " <@ " + s.param(toJSONParam(val)) + "::jsonb", nil
 		}
-		return ref + " <@ " + s.param(s.coerceList(col, val)), nil
+		return ref + " <@ " + s.listParam(col, val), nil
 	case "overlaps":
-		return ref + " && " + s.param(s.coerceList(col, val)), nil
+		return ref + " && " + s.listParam(col, val), nil
 	case "containsKey":
 		return ref + " ? " + s.param(val), nil
 	case "pathExists":
@@ -322,6 +322,32 @@ func coerceInput(built *schema.Built, col *introspect.Column, v any) any {
 	return v
 }
 
+// listParam renders a list-valued input ([X!] for in/notIn/array ops) as a
+// parameter expression. Lists targeting an enum element type are passed as
+// text[] and cast to the enum array type in SQL: PostgreSQL would otherwise
+// describe the parameter with the enum-array OID, for which pgx has no encode
+// plan for a Go slice (scalar enum params work because strings fall back to
+// the text format).
+func (s *stmt) listParam(col *introspect.Column, val any) string {
+	p := s.param(s.coerceList(col, val))
+	if cast, ok := enumArrayCast(s.c.Built, col); ok {
+		return p + cast
+	}
+	return p
+}
+
+// enumArrayCast returns the "::text[]::<schema>.<enum>[]" cast suffix for
+// columns whose element type is an enum, or ok=false otherwise. The cast
+// depends only on the column's type, never on input values, preserving the
+// SQL-text-is-a-pure-function-of-query-shape invariant.
+func enumArrayCast(built *schema.Built, col *introspect.Column) (string, bool) {
+	base := strings.TrimPrefix(col.PGType, "_")
+	if built.Catalog.Enum(col.TypeSchema, base) == nil {
+		return "", false
+	}
+	return "::text[]::" + quoteIdent(col.TypeSchema) + "." + quoteIdent(base) + "[]", true
+}
+
 // coerceList coerces a list-valued input ([X!] for in/notIn/array ops).
 func (s *stmt) coerceList(col *introspect.Column, v any) any {
 	list, ok := v.([]any)
@@ -350,6 +376,11 @@ func coerceInputSlice(built *schema.Built, col *introspect.Column, list []any) [
 func (s *stmt) valueExpr(col *introspect.Column, v any) string {
 	if comp := s.compositeFor(col); comp != nil && v != nil {
 		return s.compositeParam(comp, col, v)
+	}
+	if col.IsArray && v != nil {
+		if cast, ok := enumArrayCast(s.c.Built, col); ok {
+			return s.param(s.coerce(col, v)) + cast
+		}
 	}
 	return s.param(s.coerce(col, v))
 }

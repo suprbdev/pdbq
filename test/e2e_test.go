@@ -167,6 +167,20 @@ func TestQueries(t *testing.T) {
 		}
 	})
 
+	t.Run("enum list filters", func(t *testing.T) {
+		// Regression: pgx has no encode plan for a Go slice targeting an
+		// enum-array OID, so enum lists must be shipped as text[] and cast
+		// to the enum array type inside the compiled SQL.
+		got := emails(t, hs.URL, `{allUsers(filter: {mood: {in: [HAPPY]}}, orderBy: [EMAIL_ASC]) { nodes { email } }}`, "allUsers", "email")
+		if len(got) != 2 || got[0] != "ada@example.com" || got[1] != "alan@example.com" {
+			t.Errorf("mood in: got %v", got)
+		}
+		got = emails(t, hs.URL, `{allUsers(filter: {mood: {notIn: [SAD, OK]}}, orderBy: [EMAIL_ASC]) { nodes { email } }}`, "allUsers", "email")
+		if len(got) != 2 || got[0] != "ada@example.com" || got[1] != "alan@example.com" {
+			t.Errorf("mood notIn: got %v", got)
+		}
+	})
+
 	t.Run("offset pagination", func(t *testing.T) {
 		// Regression: the keyset trim filter compared __rn (numbered before
 		// OFFSET applies) against `limit`, so first+offset returned
