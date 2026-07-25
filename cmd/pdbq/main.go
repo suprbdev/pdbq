@@ -41,6 +41,7 @@ func configFlags(cmd *cobra.Command) {
 	fs.Bool("server.expose_schema", false, "serve generated SDL at /schema.graphql")
 	fs.StringSlice("server.cors_origins", nil, "allowed CORS origins for /graphql ('*' for any)")
 	fs.Bool("server.compression", false, "gzip responses when the client accepts it")
+	fs.Bool("server.read_only", false, "reject every mutation operation (read-only mode)")
 	fs.StringSlice("schema.schemas", nil, "PostgreSQL schemas to expose")
 	fs.String("schema.cache_path", "", "boot from schema cache file")
 	fs.Bool("rls.enabled", true, "enable RLS role switching")

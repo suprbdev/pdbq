@@ -40,6 +40,8 @@ server:
   persisted_queries_path: ""
   # Reject requests that do not reference a persisted query via the persistedQuery extension (requires apq or persisted_queries_path).
   persisted_only: false
+  # Reject every mutation operation (read-only mode) for maintenance, demos or defense in depth. Also toggleable at runtime when embedding pdbq as a library (App.SetReadOnly).
+  read_only: false
 
 schema:
   # PostgreSQL schemas to expose.

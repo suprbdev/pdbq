@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"strconv"
 	"strings"
+	"sync/atomic"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -76,6 +77,11 @@ type Options struct {
 	ClaimsPrefix string
 	// DevErrors exposes full PG error details in GraphQL errors.
 	DevErrors bool
+	// ReadOnly, when non-nil and true, rejects mutation operations before
+	// they compile or touch the database. It is a shared pointer so the
+	// embedding App can flip it at runtime and the state survives watch-mode
+	// executor swaps.
+	ReadOnly *atomic.Bool
 	// Mint signs function results of one composite type into JWTs.
 	Mint   MintOptions
 	Logger *slog.Logger
@@ -134,6 +140,9 @@ func (e *Executor) Execute(ctx context.Context, req Request) *Result {
 	}
 	if opDef.Operation == ast.Subscription {
 		return errResult(gqlerror.Errorf("subscriptions are not supported"))
+	}
+	if opDef.Operation == ast.Mutation && e.Opts.ReadOnly != nil && e.Opts.ReadOnly.Load() {
+		return errResult(gqlerror.Errorf("server is in read-only mode: mutations are disabled"))
 	}
 	if err := e.checkLimits(doc, opDef, vars); err != nil {
 		return errResult(err)

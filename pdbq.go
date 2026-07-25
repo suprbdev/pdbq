@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -36,6 +37,11 @@ type App struct {
 	pool  *pgxpool.Pool
 	built *schema.Built
 	exec  *exec.Executor
+
+	// readOnly lives on the App (not in exec.Options as a value) so a single
+	// flag is shared by every executor the App builds — flipping it at
+	// runtime survives watch-mode schema swaps.
+	readOnly atomic.Bool
 }
 
 // Option customizes an App.
@@ -65,8 +71,17 @@ func New(cfg config.Config, opts ...Option) *App {
 	for _, o := range opts {
 		o(a)
 	}
+	a.readOnly.Store(cfg.Server.ReadOnly)
 	return a
 }
+
+// SetReadOnly toggles read-only mode at runtime: when on, every mutation
+// operation is rejected before it compiles or touches the database. Safe for
+// concurrent use; the setting persists across watch-mode schema swaps.
+func (a *App) SetReadOnly(v bool) { a.readOnly.Store(v) }
+
+// ReadOnly reports whether read-only mode is currently on.
+func (a *App) ReadOnly() bool { return a.readOnly.Load() }
 
 func builtinPlugins(cfg config.Config) []plugin.Plugin {
 	return []plugin.Plugin{
@@ -225,6 +240,7 @@ func (a *App) Executor(built *schema.Built) *exec.Executor {
 		DevErrors:    a.Config.Errors.Detail == "dev",
 		Mint:         mint,
 		Logger:       a.Log,
+		ReadOnly:     &a.readOnly,
 	})
 }
 
