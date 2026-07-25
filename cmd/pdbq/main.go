@@ -338,7 +338,8 @@ func configCmd() *cobra.Command {
 			}
 			starter := `# pdbq configuration. Run "pdbq config example" for the full annotated reference.
 database:
-  url: "postgres://postgres:postgres@localhost:5432/postgres"
+  # Fill in real credentials, or delete the url and set PDBQ_DATABASE_URL.
+  url: "postgres://USER:PASSWORD@HOST:5432/DB"
 server:
   addr: ":8080"
 schema:
