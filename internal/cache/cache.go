@@ -14,6 +14,11 @@ import (
 	"github.com/suprbdev/pdbq/internal/introspect"
 )
 
+// maxCacheBytes caps how much a cache file may decompress to. A real catalog
+// is a few MB even for huge schemas; the limit only guards against a
+// corrupted or malicious file acting as a gzip bomb.
+var maxCacheBytes int64 = 256 << 20
+
 // envelope wraps the catalog with versioning + hash metadata.
 type envelope struct {
 	FormatVersion int                 `json:"format_version"`
@@ -59,9 +64,12 @@ func Load(path string) (*introspect.Catalog, error) {
 		return nil, fmt.Errorf("cache: not a pdbq schema cache (gzip): %w", err)
 	}
 	defer zr.Close()
-	raw, err := io.ReadAll(zr)
+	raw, err := io.ReadAll(io.LimitReader(zr, maxCacheBytes+1))
 	if err != nil {
 		return nil, fmt.Errorf("cache: read: %w", err)
+	}
+	if int64(len(raw)) > maxCacheBytes {
+		return nil, fmt.Errorf("cache: decompressed size exceeds %d bytes (corrupted file?)", maxCacheBytes)
 	}
 	var env envelope
 	if err := json.Unmarshal(raw, &env); err != nil {

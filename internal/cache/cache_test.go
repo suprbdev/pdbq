@@ -1,6 +1,8 @@
 package cache
 
 import (
+	"compress/gzip"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -57,4 +59,40 @@ func TestLoadRejectsGarbage(t *testing.T) {
 	if _, err := Load(path); err == nil {
 		t.Fatal("expected error for non-gzip input")
 	}
+}
+
+func TestLoadRejectsDecompressionBomb(t *testing.T) {
+	orig := maxCacheBytes
+	maxCacheBytes = 1 << 20 // shrink so the test stays fast
+	defer func() { maxCacheBytes = orig }()
+	path := filepath.Join(t.TempDir(), "bomb.cache")
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	zw := gzip.NewWriter(f)
+	// A stream of zeros compresses ~1000:1, so an over-limit payload is a
+	// tiny file on disk — exactly the gzip-bomb shape Load must refuse.
+	if _, err := io.CopyN(zw, zeroReader{}, maxCacheBytes+2); err != nil {
+		t.Fatal(err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	_, err = Load(path)
+	if err == nil || !strings.Contains(err.Error(), "exceeds") {
+		t.Fatalf("err = %v, want decompressed-size error", err)
+	}
+}
+
+type zeroReader struct{}
+
+func (zeroReader) Read(p []byte) (int, error) {
+	for i := range p {
+		p[i] = 0
+	}
+	return len(p), nil
 }
