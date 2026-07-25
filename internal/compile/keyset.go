@@ -34,12 +34,12 @@ func (s *stmt) planPage(t *introspect.Table, f *ast.Field, typeName string) (pag
 	firstV, hasFirst := s.argValue(f, "first")
 	lastV, hasLast := s.argValue(f, "last")
 	if hasFirst && hasLast {
-		return p, fmt.Errorf("compile: first and last cannot be combined")
+		return p, errUser("first and last cannot be combined")
 	}
 	if hasFirst {
 		if n, ok := toInt(firstV); ok {
 			if n < 0 {
-				return p, fmt.Errorf("compile: first must be >= 0")
+				return p, errUser("first must be >= 0")
 			}
 			p.limit = int(n)
 		}
@@ -47,7 +47,7 @@ func (s *stmt) planPage(t *introspect.Table, f *ast.Field, typeName string) (pag
 	if hasLast {
 		if n, ok := toInt(lastV); ok {
 			if n < 0 {
-				return p, fmt.Errorf("compile: last must be >= 0")
+				return p, errUser("last must be >= 0")
 			}
 			p.limit = int(n)
 			p.reversed = true
@@ -61,7 +61,7 @@ func (s *stmt) planPage(t *introspect.Table, f *ast.Field, typeName string) (pag
 	if v, ok := s.argValue(f, "offset"); ok {
 		if n, ok := toInt(v); ok {
 			if n < 0 {
-				return p, fmt.Errorf("compile: offset must be >= 0")
+				return p, errUser("offset must be >= 0")
 			}
 			p.offset = int(n)
 		}
@@ -78,10 +78,10 @@ func (s *stmt) planPage(t *introspect.Table, f *ast.Field, typeName string) (pag
 		}
 		if cv.keyset {
 			if t.PrimaryKey == nil {
-				return nil, fmt.Errorf("compile: keyset cursor on a table without a primary key")
+				return nil, errUser("keyset cursor on a table without a primary key")
 			}
 			if cv.typeName != typeName {
-				return nil, fmt.Errorf("compile: cursor for wrong type")
+				return nil, errUser("cursor for wrong type")
 			}
 		}
 		return &cv, nil
@@ -106,17 +106,17 @@ func (s *stmt) planPage(t *introspect.Table, f *ast.Field, typeName string) (pag
 	}
 	if before != nil {
 		if !before.keyset {
-			return p, fmt.Errorf("compile: before requires a keyset cursor")
+			return p, errUser("before requires a keyset cursor")
 		}
 		p.hasBefore = true
 		p.beforeKeys = before.keys
 	}
 	if p.reversed || p.hasBefore {
 		if !p.predKeyset {
-			return p, fmt.Errorf("compile: backward pagination requires a primary key")
+			return p, errUser("backward pagination requires a primary key")
 		}
 		if p.offset > 0 {
-			return p, fmt.Errorf("compile: offset cannot be combined with last or before")
+			return p, errUser("offset cannot be combined with last or before")
 		}
 	}
 	return p, nil
@@ -132,7 +132,7 @@ func (s *stmt) planPage(t *introspect.Table, f *ast.Field, typeName string) (pag
 func (s *stmt) anchorVals(t *introspect.Table, terms []orderTerm, keys []any) ([]string, error) {
 	pk := t.PrimaryKey.Columns
 	if len(pk) != len(keys) {
-		return nil, fmt.Errorf("compile: cursor has %d key values, want %d", len(keys), len(pk))
+		return nil, errUser("cursor has %d key values, want %d", len(keys), len(pk))
 	}
 	vals := make([]string, len(terms))
 	subWhere := "" // shared across subqueries: the params are allocated once

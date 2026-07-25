@@ -19,7 +19,7 @@ const jsonbBuildObjectChunk = 40 // pairs (80 args)
 // the LEFT JOIN LATERAL clauses it needs against `alias`.
 func (s *stmt) rowJSON(t *introspect.Table, sel ast.SelectionSet, alias string, depth int) (string, []string, error) {
 	if depth > s.maxDepth {
-		return "", nil, fmt.Errorf("compile: selection depth exceeds limit (%d)", s.maxDepth)
+		return "", nil, errUser("selection depth exceeds limit (%d)", s.maxDepth)
 	}
 	typeName := s.c.Built.TypeForTable[t.Schema+"."+t.Name]
 	fields := s.expandFor(sel, typeName)
@@ -203,7 +203,7 @@ func (s *stmt) compositeFor(c *introspect.Column) *introspect.Composite {
 // for a row whose attributes are all NULL.
 func (s *stmt) compositeJSON(ref string, comp *introspect.Composite, isArray bool, sel ast.SelectionSet, depth int) (string, error) {
 	if depth > s.maxDepth {
-		return "", fmt.Errorf("compile: selection depth exceeds limit (%d)", s.maxDepth)
+		return "", errUser("selection depth exceeds limit (%d)", s.maxDepth)
 	}
 	typeName := s.c.Built.CompositeTypeForPG[comp.Schema+"."+comp.Name]
 	if isArray {
@@ -351,7 +351,7 @@ func (s *stmt) connectionJSON(t *introspect.Table, f *ast.Field, extraCond strin
 		// DISTINCT ON changes row identity, so keyset cursors over base rows
 		// no longer address result rows: force plain offset pagination.
 		if plan.hasAfter && plan.predKeyset || plan.hasBefore || plan.reversed {
-			return "", fmt.Errorf("compile: distinctOn supports only first/offset pagination")
+			return "", errUser("distinctOn supports only first/offset pagination")
 		}
 		plan.emitKeyset = false
 		plan.predKeyset = false

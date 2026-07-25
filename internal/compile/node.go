@@ -14,7 +14,7 @@ import (
 func (s *stmt) nodeQuery(f *ast.Field) (string, error) {
 	v, ok := s.argValue(f, "nodeId")
 	if !ok {
-		return "", fmt.Errorf("compile: node: missing nodeId argument")
+		return "", errUser("node: missing nodeId argument")
 	}
 	sv, _ := v.(string)
 	typeName, keys, err := decodeNodeID(sv)

@@ -453,7 +453,7 @@ func (s *stmt) distinctCols(f *ast.Field) ([]string, error) {
 		name, _ := item.(string)
 		spec, ok := specs[name]
 		if !ok || spec.Column == "" {
-			return nil, fmt.Errorf("compile: unknown distinctOn value %q", name)
+			return nil, errUser("unknown distinctOn value %q", name)
 		}
 		cols = append(cols, spec.Column)
 	}
@@ -500,7 +500,7 @@ func (s *stmt) pageClause(f *ast.Field, extraOffset int) (string, error) {
 	if v, ok := s.argValue(f, "first"); ok {
 		if n, ok := toInt(v); ok {
 			if n < 0 {
-				return "", fmt.Errorf("compile: first must be >= 0")
+				return "", errUser("first must be >= 0")
 			}
 			if int(n) < limit {
 				limit = int(n)
@@ -512,7 +512,7 @@ func (s *stmt) pageClause(f *ast.Field, extraOffset int) (string, error) {
 	if v, ok := s.argValue(f, "offset"); ok {
 		if n, ok := toInt(v); ok {
 			if n < 0 {
-				return "", fmt.Errorf("compile: offset must be >= 0")
+				return "", errUser("offset must be >= 0")
 			}
 			off += int(n)
 		}
@@ -530,15 +530,15 @@ func encodeCursorSQL(rnExpr string, offset int) string {
 func decodeCursor(cur string) (int, error) {
 	raw, err := base64.StdEncoding.DecodeString(cur)
 	if err != nil {
-		return 0, fmt.Errorf("compile: malformed cursor")
+		return 0, errUser("malformed cursor")
 	}
 	str := string(raw)
 	if !strings.HasPrefix(str, "o:") {
-		return 0, fmt.Errorf("compile: malformed cursor")
+		return 0, errUser("malformed cursor")
 	}
 	n, err := strconv.Atoi(str[2:])
 	if err != nil || n < 0 {
-		return 0, fmt.Errorf("compile: malformed cursor")
+		return 0, errUser("malformed cursor")
 	}
 	return n, nil
 }

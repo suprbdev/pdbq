@@ -583,9 +583,19 @@ func (e *Executor) gqlError(err error, f *ast.Field) *gqlerror.Error {
 		return &gqlerror.Error{Message: msg, Path: path, Extensions: ext}
 	}
 	msg := err.Error()
-	if !e.Opts.DevErrors && !strings.HasPrefix(msg, "compile:") {
-		msg = "internal error"
-		e.Opts.Logger.Error("request failed", "err", err)
+	if !e.Opts.DevErrors {
+		// Only compile errors explicitly marked client-safe pass through in
+		// prod; other compile errors can carry schema internals (table,
+		// column, type names) and are reduced to a generic message.
+		var uerr *compile.UserError
+		if !errors.As(err, &uerr) {
+			e.Opts.Logger.Error("request failed", "err", err)
+			if strings.HasPrefix(msg, "compile:") {
+				msg = "compile: invalid query"
+			} else {
+				msg = "internal error"
+			}
+		}
 	}
 	return &gqlerror.Error{Message: msg, Path: path}
 }

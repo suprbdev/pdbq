@@ -14,7 +14,7 @@ import (
 func (s *stmt) filterCond(t *introspect.Table, filterType string, v any, alias string) (string, error) {
 	m, ok := v.(map[string]any)
 	if !ok {
-		return "", fmt.Errorf("compile: filter must be an object")
+		return "", errUser("filter must be an object")
 	}
 	cols := s.c.Built.InputColumns[filterType]
 	var conds []string
@@ -27,7 +27,7 @@ func (s *stmt) filterCond(t *introspect.Table, filterType string, v any, alias s
 		case "and", "or":
 			items, ok := val.([]any)
 			if !ok {
-				return "", fmt.Errorf("compile: filter %s must be a list", key)
+				return "", errUser("filter %s must be a list", key)
 			}
 			var subs []string
 			for _, item := range items {
@@ -106,7 +106,7 @@ func (s *stmt) filterCond(t *introspect.Table, filterType string, v any, alias s
 func (s *stmt) conditionCond(t *introspect.Table, condType string, v any, alias string) (string, error) {
 	m, ok := v.(map[string]any)
 	if !ok {
-		return "", fmt.Errorf("compile: condition must be an object")
+		return "", errUser("condition must be an object")
 	}
 	cols := s.c.Built.InputColumns[condType]
 	var conds []string
@@ -154,7 +154,7 @@ func (s *stmt) relationCond(rel *schema.FilterRelation, v any, alias string) (st
 	if rel.Exists {
 		b, ok := v.(bool)
 		if !ok {
-			return "", fmt.Errorf("compile: relation existence filter must be a boolean")
+			return "", errUser("relation existence filter must be a boolean")
 		}
 		quant := "some"
 		if !b {
@@ -167,7 +167,7 @@ func (s *stmt) relationCond(rel *schema.FilterRelation, v any, alias string) (st
 	}
 	m, ok := v.(map[string]any)
 	if !ok {
-		return "", fmt.Errorf("compile: relation filter must be an object")
+		return "", errUser("relation filter must be an object")
 	}
 	var conds []string
 	for _, quant := range sortedFilterKeys(m) {
@@ -185,7 +185,7 @@ func (s *stmt) relationCond(rel *schema.FilterRelation, v any, alias string) (st
 				conds = append(conds, cond)
 			}
 		default:
-			return "", fmt.Errorf("compile: unknown relation quantifier %q", quant)
+			return "", errUser("unknown relation quantifier %q", quant)
 		}
 	}
 	return strings.Join(conds, " AND "), nil
@@ -313,7 +313,7 @@ func (s *stmt) oneOp(col *introspect.Column, ref, op string, val any) (string, e
 	case "pathMatch":
 		return jsonbExpr(col, ref) + " @@ " + s.param(val) + "::jsonpath", nil
 	}
-	return "", fmt.Errorf("compile: unknown filter operator %q", op)
+	return "", errUser("unknown filter operator %q", op)
 }
 
 // jsonbExpr renders a column reference as jsonb; json columns are cast because

@@ -33,17 +33,17 @@ func nodeIDSQL(typeName string, t *introspect.Table, alias string) string {
 func decodeNodeID(s string) (string, []any, error) {
 	raw, err := base64.StdEncoding.DecodeString(s)
 	if err != nil {
-		return "", nil, fmt.Errorf("compile: malformed nodeId")
+		return "", nil, errUser("malformed nodeId")
 	}
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.UseNumber()
 	var arr []any
 	if err := dec.Decode(&arr); err != nil || len(arr) < 2 {
-		return "", nil, fmt.Errorf("compile: malformed nodeId")
+		return "", nil, errUser("malformed nodeId")
 	}
 	typeName, ok := arr[0].(string)
 	if !ok || typeName == "" {
-		return "", nil, fmt.Errorf("compile: malformed nodeId")
+		return "", nil, errUser("malformed nodeId")
 	}
 	return typeName, arr[1:], nil
 }
@@ -61,7 +61,7 @@ type cursorVal struct {
 func decodeCursorVal(cur string) (cursorVal, error) {
 	raw, err := base64.StdEncoding.DecodeString(cur)
 	if err != nil {
-		return cursorVal{}, fmt.Errorf("compile: malformed cursor")
+		return cursorVal{}, errUser("malformed cursor")
 	}
 	str := string(raw)
 	if strings.HasPrefix(str, "o:") {
@@ -73,7 +73,7 @@ func decodeCursorVal(cur string) (cursorVal, error) {
 	}
 	typeName, keys, err := decodeNodeID(cur)
 	if err != nil {
-		return cursorVal{}, fmt.Errorf("compile: malformed cursor")
+		return cursorVal{}, errUser("malformed cursor")
 	}
 	return cursorVal{keyset: true, typeName: typeName, keys: keys}, nil
 }
@@ -90,7 +90,7 @@ func (s *stmt) keyParam(col *introspect.Column, v any) any {
 // keyCondsFromValues builds `alias."col" = $n` for decoded key values.
 func (s *stmt) keyCondsFromValues(t *introspect.Table, cols []string, vals []any, alias string) ([]string, error) {
 	if len(cols) != len(vals) {
-		return nil, fmt.Errorf("compile: nodeId has %d key values, want %d", len(vals), len(cols))
+		return nil, errUser("nodeId has %d key values, want %d", len(vals), len(cols))
 	}
 	conds := make([]string, 0, len(cols))
 	for i, cn := range cols {

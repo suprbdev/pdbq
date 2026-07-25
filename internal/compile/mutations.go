@@ -169,11 +169,11 @@ func (s *stmt) payloadSelectMany(t *introspect.Table, f *ast.Field) (string, err
 func (s *stmt) createManyCTE(t *introspect.Table, f *ast.Field) (string, error) {
 	input, ok := s.argValue(f, "input")
 	if !ok {
-		return "", fmt.Errorf("compile: %s: missing input", f.Name)
+		return "", errUser("%s: missing input", f.Name)
 	}
 	rows, ok := input.([]any)
 	if !ok || len(rows) == 0 {
-		return "", fmt.Errorf("compile: %s: input must be a non-empty list", f.Name)
+		return "", errUser("%s: input must be a non-empty list", f.Name)
 	}
 	inputType := argTypeName(f, "input")
 	binding := s.c.Built.InputColumns[inputType]
@@ -191,7 +191,7 @@ func (s *stmt) createManyCTE(t *introspect.Table, f *ast.Field) (string, error) 
 	for i, r := range rows {
 		obj, ok := r.(map[string]any)
 		if !ok {
-			return "", fmt.Errorf("compile: %s: input rows must be objects", f.Name)
+			return "", errUser("%s: input rows must be objects", f.Name)
 		}
 		objs[i] = obj
 		for name := range obj {
@@ -207,7 +207,7 @@ func (s *stmt) createManyCTE(t *introspect.Table, f *ast.Field) (string, error) 
 		}
 	}
 	if len(useFields) == 0 {
-		return "", fmt.Errorf("compile: %s: input rows set no columns", f.Name)
+		return "", errUser("%s: input rows set no columns", f.Name)
 	}
 	cols := make([]string, len(useFields))
 	for i, name := range useFields {
@@ -237,18 +237,18 @@ func (s *stmt) createManyCTE(t *introspect.Table, f *ast.Field) (string, error) 
 func (s *stmt) updateManyCTE(t *introspect.Table, f *ast.Field) (string, error) {
 	patchVal, ok := s.argValue(f, "patch")
 	if !ok {
-		return "", fmt.Errorf("compile: %s: missing patch", f.Name)
+		return "", errUser("%s: missing patch", f.Name)
 	}
 	patch, ok := patchVal.(map[string]any)
 	if !ok || len(patch) == 0 {
-		return "", fmt.Errorf("compile: %s: patch must set at least one column", f.Name)
+		return "", errUser("%s: patch must set at least one column", f.Name)
 	}
 	cols, params, err := s.inputColumns(t, argTypeName(f, "patch"), patch)
 	if err != nil {
 		return "", err
 	}
 	if len(cols) == 0 {
-		return "", fmt.Errorf("compile: %s: patch must set at least one column", f.Name)
+		return "", errUser("%s: patch must set at least one column", f.Name)
 	}
 	sets := make([]string, len(cols))
 	for i, c := range cols {
@@ -277,7 +277,7 @@ func (s *stmt) deleteManyCTE(t *introspect.Table, f *ast.Field) (string, error) 
 func (s *stmt) bulkFilterCond(t *introspect.Table, f *ast.Field) (string, error) {
 	fv, ok := s.argValue(f, "filter")
 	if !ok {
-		return "", fmt.Errorf("compile: %s: missing filter", f.Name)
+		return "", errUser("%s: missing filter", f.Name)
 	}
 	cond, err := s.filterCond(t, argTypeName(f, "filter"), fv, tableRef(t))
 	if err != nil {
@@ -297,11 +297,11 @@ func (s *stmt) rowJSONFromCTE(t *introspect.Table, sel ast.SelectionSet, alias s
 func (s *stmt) insertCTE(t *introspect.Table, f *ast.Field) (string, error) {
 	input, ok := s.argValue(f, "input")
 	if !ok {
-		return "", fmt.Errorf("compile: %s: missing input", f.Name)
+		return "", errUser("%s: missing input", f.Name)
 	}
 	vals, ok := input.(map[string]any)
 	if !ok {
-		return "", fmt.Errorf("compile: %s: input must be an object", f.Name)
+		return "", errUser("%s: input must be an object", f.Name)
 	}
 	inputType := argTypeName(f, "input")
 	cols, params, err := s.inputColumns(t, inputType, vals)
@@ -360,11 +360,11 @@ func (s *stmt) inputColumns(t *introspect.Table, inputType string, vals map[stri
 func (s *stmt) upsertCTE(t *introspect.Table, meta *schema.FieldMeta, f *ast.Field) (string, error) {
 	input, ok := s.argValue(f, "input")
 	if !ok {
-		return "", fmt.Errorf("compile: %s: missing input", f.Name)
+		return "", errUser("%s: missing input", f.Name)
 	}
 	vals, ok := input.(map[string]any)
 	if !ok {
-		return "", fmt.Errorf("compile: %s: input must be an object", f.Name)
+		return "", errUser("%s: input must be an object", f.Name)
 	}
 	inputType := argTypeName(f, "input")
 	cols, params, err := s.inputColumns(t, inputType, vals)
@@ -411,11 +411,11 @@ func (s *stmt) upsertCTE(t *introspect.Table, meta *schema.FieldMeta, f *ast.Fie
 func (s *stmt) updateCTE(t *introspect.Table, meta *schema.FieldMeta, f *ast.Field) (string, error) {
 	patchVal, ok := s.argValue(f, "patch")
 	if !ok {
-		return "", fmt.Errorf("compile: %s: missing patch", f.Name)
+		return "", errUser("%s: missing patch", f.Name)
 	}
 	patch, ok := patchVal.(map[string]any)
 	if !ok || len(patch) == 0 {
-		return "", fmt.Errorf("compile: %s: patch must set at least one column", f.Name)
+		return "", errUser("%s: patch must set at least one column", f.Name)
 	}
 	patchType := argTypeName(f, "patch")
 	cols, params, err := s.inputColumns(t, patchType, patch)
@@ -423,7 +423,7 @@ func (s *stmt) updateCTE(t *introspect.Table, meta *schema.FieldMeta, f *ast.Fie
 		return "", err
 	}
 	if len(cols) == 0 {
-		return "", fmt.Errorf("compile: %s: patch must set at least one column", f.Name)
+		return "", errUser("%s: patch must set at least one column", f.Name)
 	}
 	sets := make([]string, len(cols))
 	for i, c := range cols {
