@@ -115,6 +115,7 @@ func serveCmd() *cobra.Command {
 func queryCmd() *cobra.Command {
 	var vars []string
 	var varsFile, operation string
+	var printSQL bool
 	cmd := &cobra.Command{
 		Use:   "query [QUERY|-]",
 		Short: "Execute a one-off GraphQL query (pipe-friendly; reads stdin with '-' or no arg)",
@@ -139,6 +140,20 @@ func queryCmd() *cobra.Command {
 			}
 			app := pdbq.New(cfg)
 			defer app.Close()
+			if printSQL {
+				stmts, err := app.CompileQuery(signalContext(), query, variables, operation)
+				if err != nil {
+					return err
+				}
+				for _, s := range stmts {
+					argsJSON, err := json.Marshal(s.Args)
+					if err != nil {
+						return fmt.Errorf("marshal args for %s: %w", s.Field, err)
+					}
+					fmt.Printf("-- field: %s\n%s\n-- args: %s\n\n", s.Field, s.SQL, argsJSON)
+				}
+				return nil
+			}
 			res, err := app.Query(signalContext(), query, variables, operation)
 			if err != nil {
 				return err
@@ -157,6 +172,7 @@ func queryCmd() *cobra.Command {
 	cmd.Flags().StringArrayVar(&vars, "var", nil, "variable as key=value (repeatable; value parsed as JSON, falling back to string)")
 	cmd.Flags().StringVar(&varsFile, "vars-file", "", "JSON file with variables ('-' for stdin)")
 	cmd.Flags().StringVar(&operation, "operation", "", "operation name to execute")
+	cmd.Flags().BoolVar(&printSQL, "print-sql", false, "print the compiled SQL and parameters instead of executing")
 	configFlags(cmd)
 	return cmd
 }

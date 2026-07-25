@@ -117,35 +117,49 @@ type Request struct {
 
 // Execute runs one GraphQL request end to end.
 func (e *Executor) Execute(ctx context.Context, req Request) *Result {
-	res := &Result{Data: map[string]json.RawMessage{}}
-
-	doc, err := parser.ParseQuery(&ast.Source{Input: req.Query})
+	ctx, op, err := e.prepare(ctx, req)
 	if err != nil {
 		return errResult(err)
 	}
+	res := &Result{Data: map[string]json.RawMessage{}}
+	e.executeOperation(ctx, op, res)
+	for _, h := range e.Hooks {
+		h.AfterOperation(ctx, op, res)
+	}
+	return res
+}
+
+// prepare runs the pre-execution pipeline shared by Execute and
+// CompileRequest: parse, validate, operation selection, variable coercion,
+// limits, and BeforeOperation hooks.
+func (e *Executor) prepare(ctx context.Context, req Request) (context.Context, *Operation, error) {
+	doc, err := parser.ParseQuery(&ast.Source{Input: req.Query})
+	if err != nil {
+		return ctx, nil, err
+	}
 	if listErr := validator.Validate(e.Built.Schema, doc); len(listErr) > 0 {
-		return &Result{Errors: listErr}
+		return ctx, nil, listErr
 	}
 	opDef := doc.Operations.ForName(req.OperationName)
 	if opDef == nil {
 		if req.OperationName == "" && len(doc.Operations) == 1 {
 			opDef = doc.Operations[0]
 		} else {
-			return errResult(gqlerror.Errorf("operation %q not found", req.OperationName))
+			return ctx, nil, gqlerror.Errorf("operation %q not found", req.OperationName)
 		}
 	}
 	vars, verr := validator.VariableValues(e.Built.Schema, opDef, req.Variables)
 	if verr != nil {
-		return errResult(verr)
+		return ctx, nil, verr
 	}
 	if opDef.Operation == ast.Subscription {
-		return errResult(gqlerror.Errorf("subscriptions are not supported"))
+		return ctx, nil, gqlerror.Errorf("subscriptions are not supported")
 	}
 	if opDef.Operation == ast.Mutation && e.Opts.ReadOnly != nil && e.Opts.ReadOnly.Load() {
-		return errResult(gqlerror.Errorf("server is in read-only mode: mutations are disabled"))
+		return ctx, nil, gqlerror.Errorf("server is in read-only mode: mutations are disabled")
 	}
 	if err := e.checkLimits(doc, opDef, vars); err != nil {
-		return errResult(err)
+		return ctx, nil, err
 	}
 
 	op := &Operation{
@@ -163,15 +177,50 @@ func (e *Executor) Execute(ctx context.Context, req Request) *Result {
 	for _, h := range e.Hooks {
 		ctx2, err := h.BeforeOperation(ctx, op)
 		if err != nil {
-			return errResult(gqlerror.Errorf("%s", err.Error()))
+			return ctx, nil, gqlerror.Errorf("%s", err.Error())
 		}
 		ctx = ctx2
 	}
-	e.executeOperation(ctx, op, res)
-	for _, h := range e.Hooks {
-		h.AfterOperation(ctx, op, res)
+	return ctx, op, nil
+}
+
+// CompiledField is one root field's compiled statement, as produced by
+// CompileRequest.
+type CompiledField struct {
+	Field    string
+	SQL      string
+	Args     []any
+	Mutation bool
+}
+
+// CompileRequest runs the request pipeline up to (but not including)
+// execution and returns the compiled statement for every root field. The
+// database is never touched. Introspection root fields (__schema, __type)
+// are resolved in memory and produce no SQL, so they are omitted.
+func (e *Executor) CompileRequest(ctx context.Context, req Request) ([]CompiledField, error) {
+	ctx, op, err := e.prepare(ctx, req)
+	if err != nil {
+		return nil, err
 	}
-	return res
+	var out []CompiledField
+	for _, f := range collectRootFields(op.Definition.SelectionSet, op.Document.Fragments, op.Vars) {
+		if isIntrospectionField(f.Name) {
+			continue
+		}
+		stmt, err := e.Compile(ctx, &compile.Request{
+			Field:       f,
+			Fragments:   op.Document.Fragments,
+			Vars:        op.Vars,
+			Built:       e.Built,
+			MaxDepth:    e.Opts.MaxDepth,
+			MaxPageSize: e.Opts.MaxPageSize,
+		})
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, CompiledField{Field: f.Alias, SQL: stmt.SQL, Args: stmt.Args, Mutation: stmt.Mutation})
+	}
+	return out, nil
 }
 
 func (e *Executor) executeOperation(ctx context.Context, op *Operation, res *Result) {

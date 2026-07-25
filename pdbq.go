@@ -253,6 +253,22 @@ func (a *App) Serve(ctx context.Context) error {
 	return srv.ListenAndServe(ctx)
 }
 
+// CompileQuery compiles a one-off GraphQL request into its per-root-field SQL
+// statements without executing anything (the `pdbq query --print-sql` path).
+// With a schema cache configured it needs no database connection at all.
+func (a *App) CompileQuery(ctx context.Context, query string, vars map[string]any, operation string) ([]exec.CompiledField, error) {
+	cat, err := a.LoadCatalog(ctx)
+	if err != nil {
+		return nil, err
+	}
+	built, err := a.BuildSchema(ctx, cat)
+	if err != nil {
+		return nil, err
+	}
+	ex := a.Executor(built)
+	return ex.CompileRequest(ctx, exec.Request{Query: query, OperationName: operation, Variables: vars})
+}
+
 // Query executes a one-off GraphQL request (the `pdbq query` path).
 func (a *App) Query(ctx context.Context, query string, vars map[string]any, operation string) (*exec.Result, error) {
 	cat, err := a.LoadCatalog(ctx)

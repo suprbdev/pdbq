@@ -27,6 +27,25 @@ Exit codes: `0` success, `1` transport/config error, `2` the response
 contained GraphQL errors — so scripts can distinguish "down" from "bad
 query".
 
+### --print-sql
+
+`--print-sql` prints the compiled SQL statement (one per root field) and its
+parameter list instead of executing the query. All other flags work the same —
+variables are still coerced and land in the parameter list, so what you see is
+exactly what would run:
+
+```console
+$ pdbq query '{allUsers(first: 2) {nodes {email}}}' --print-sql
+-- field: allUsers
+SELECT jsonb_build_object(...) AS data FROM ...
+-- args: [2]
+```
+
+Nothing is executed — mutations are safe to inspect this way. Combined with
+`--schema.cache_path` it needs no database connection at all. Introspection
+root fields (`__schema`, `__type`) are resolved in memory and produce no SQL,
+so they are omitted from the output.
+
 ## pdbq schema
 
 ```console
