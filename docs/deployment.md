@@ -29,6 +29,10 @@ truncating the query string in intermediary log formats.
 
 ## Production checklist
 
+- **Terminate TLS in front of pdbq.** The server speaks plain HTTP only —
+  JWTs, claims and all query data cross the wire in cleartext until a
+  TLS-terminating reverse proxy, load balancer or ingress controller sits in
+  front. Never expose the pdbq port directly to untrusted networks.
 - `rls.enabled: true` with a **non-superuser** connection role that has been
   granted the request roles (`GRANT anonymous, app_user TO pdbq_conn`).
 - `rls.auth.mode: jwt` with a strong `jwt_secret` (or `headers` strictly
