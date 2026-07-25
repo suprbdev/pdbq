@@ -6,7 +6,11 @@
 //     (posts: {author: {mood: {eq: HAPPY}}}), a reverse FK exposes a
 //     {some|none|every} wrapper over the child's filter
 //     (users: {postsByAuthorId: {some: {published: {eq: true}}}}). Both
-//     compile to EXISTS subqueries inside the single statement.
+//     compile to EXISTS subqueries inside the single statement. Each relation
+//     also gets a Boolean existence variant — <rel>Exists for forward FKs
+//     (posts: {authorExists: true}), <rel>Exist for reverse
+//     (users: {postsByAuthorIdExist: false}) — compiling to a bare
+//     (NOT) EXISTS over the join.
 //   - computed-column filtering and ordering: stable/immutable row-type
 //     functions without extra arguments become filter fields and orderBy
 //     enum values (postCount: {gt: "5"}, orderBy: [POST_COUNT_DESC]),
@@ -128,15 +132,22 @@ func (p *Plugin) addRelationFilters(b *schema.Builder) {
 				Schema: t.Schema, Table: fk.RefTable, Column: fk.Columns[0], Columns: fk.Columns,
 				Constraint: fk.Name,
 			})
-			if in.Field(relName) != nil {
-				continue
+			if in.Field(relName) == nil {
+				in.AddField(&schema.InputField{
+					Name:        relName,
+					Type:        parentFilter.Name,
+					Description: "Rows whose referenced " + fk.RefTable + " row matches.",
+					Relation:    &schema.FilterRelation{Forward: true, FK: fk, Table: parent, FilterType: parentFilter.Name},
+				})
 			}
-			in.AddField(&schema.InputField{
-				Name:        relName,
-				Type:        parentFilter.Name,
-				Description: "Rows whose referenced " + fk.RefTable + " row matches.",
-				Relation:    &schema.FilterRelation{Forward: true, FK: fk, Table: parent, FilterType: parentFilter.Name},
-			})
+			if existsName := relName + "Exists"; in.Field(existsName) == nil {
+				in.AddField(&schema.InputField{
+					Name:        existsName,
+					Type:        "Boolean",
+					Description: "True: the referenced " + fk.RefTable + " row exists; false: it does not.",
+					Relation:    &schema.FilterRelation{Forward: true, FK: fk, Table: parent, FilterType: parentFilter.Name, Exists: true},
+				})
+			}
 		}
 		// Reverse: FKs on other tables pointing at t -> quantified child filter.
 		for _, child := range b.Catalog.Tables {
@@ -155,16 +166,23 @@ func (p *Plugin) addRelationFilters(b *schema.Builder) {
 					Schema: child.Schema, Table: child.Name, Columns: fk.Columns,
 					Constraint: fk.Name,
 				})
-				if in.Field(relName) != nil {
-					continue
-				}
 				childType := b.TypeForTable[child.Schema+"."+child.Name]
-				in.AddField(&schema.InputField{
-					Name:        relName,
-					Type:        ensureToMany(b, childType, childFilter.Name),
-					Description: "Quantified filter over referencing " + child.Name + " rows.",
-					Relation:    &schema.FilterRelation{Forward: false, FK: fk, Table: child, FilterType: childFilter.Name},
-				})
+				if in.Field(relName) == nil {
+					in.AddField(&schema.InputField{
+						Name:        relName,
+						Type:        ensureToMany(b, childType, childFilter.Name),
+						Description: "Quantified filter over referencing " + child.Name + " rows.",
+						Relation:    &schema.FilterRelation{Forward: false, FK: fk, Table: child, FilterType: childFilter.Name},
+					})
+				}
+				if existsName := relName + "Exist"; in.Field(existsName) == nil {
+					in.AddField(&schema.InputField{
+						Name:        existsName,
+						Type:        "Boolean",
+						Description: "True: at least one referencing " + child.Name + " row exists; false: none do.",
+						Relation:    &schema.FilterRelation{Forward: false, FK: fk, Table: child, FilterType: childFilter.Name, Exists: true},
+					})
+				}
 			}
 		}
 	}

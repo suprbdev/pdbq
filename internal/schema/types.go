@@ -141,6 +141,10 @@ type FilterRelation struct {
 	Table *introspect.Table
 	// FilterType is Table's <Type>Filter input name.
 	FilterType string
+	// Exists marks the Boolean existence variant (<rel>Exists / <rel>Exist):
+	// the field takes true/false instead of a filter, compiling to a bare
+	// (NOT) EXISTS over the relation join.
+	Exists bool
 }
 
 // Input is an input object type.

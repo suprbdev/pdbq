@@ -116,8 +116,22 @@ func sortedFilterKeys(m map[string]any) []string {
 
 // relationCond compiles a relation filter field. Forward relations take the
 // related table's filter directly; backward relations take a
-// {some|none|every} wrapper over it.
+// {some|none|every} wrapper over it. Existence variants (<rel>Exists /
+// <rel>Exist) take a Boolean: true compiles to a bare EXISTS over the join,
+// false to NOT EXISTS. Like isNull, the Boolean is part of the query shape,
+// not a parameter.
 func (s *stmt) relationCond(rel *schema.FilterRelation, v any, alias string) (string, error) {
+	if rel.Exists {
+		b, ok := v.(bool)
+		if !ok {
+			return "", fmt.Errorf("compile: relation existence filter must be a boolean")
+		}
+		quant := "some"
+		if !b {
+			quant = "none"
+		}
+		return s.relationExists(rel, map[string]any{}, alias, quant)
+	}
 	if rel.Forward {
 		return s.relationExists(rel, v, alias, "some")
 	}

@@ -70,7 +70,10 @@ pattern: the plugin implements only `SchemaHook`, yet changes compiled SQL.
 - It adds relation fields to every `<Type>Filter` input — a forward FK takes
   the parent's filter directly (`PostFilter.author: UserFilter`), a reverse
   FK takes a `{some|none|every}` wrapper (`UserFilter.postsByAuthorId:
-  PostToManyFilter`) — and exposes eligible computed columns (single
+  PostToManyFilter`), and each direction gets a Boolean existence variant
+  (`PostFilter.authorExists: Boolean`, `UserFilter.postsByAuthorIdExist:
+  Boolean`) compiling to a bare `(NOT) EXISTS` — and exposes eligible
+  computed columns (single
   row-argument stable functions) as filter fields and orderBy enum values
   (`postCount: BigIntFilterOps`, `POST_COUNT_DESC`).
 - Each added field carries a binding (`InputField.Relation`,

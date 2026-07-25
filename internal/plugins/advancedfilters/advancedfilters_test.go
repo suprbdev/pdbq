@@ -74,7 +74,9 @@ func TestSchemaSurface(t *testing.T) {
 
 	for _, want := range []string{
 		"author: UserFilter",                // forward relation on PostFilter
+		"authorExists: Boolean",             // forward existence variant
 		"postsByAuthorId: PostToManyFilter", // reverse relation on UserFilter
+		"postsByAuthorIdExist: Boolean",     // reverse existence variant
 		"some: PostFilter",                  // quantifier wrapper
 		"postCount: BigIntFilterOps",        // computed filter (int8 -> BigInt)
 		"POST_COUNT_ASC",                    // computed ordering
@@ -174,6 +176,40 @@ func TestBackwardRelationQuantifiers(t *testing.T) {
 	}
 	if !strings.Contains(sql, "AND NOT (") {
 		t.Errorf("every must negate the inner condition:\n%s", sql)
+	}
+}
+
+func TestRelationExistenceFilter(t *testing.T) {
+	built := setup(t, nil)
+
+	plain := compileRoot(t, built, `{
+		allUsers { nodes { id } }
+	}`)
+	stmt := compileRoot(t, built, `{
+		allUsers(filter: {postsByAuthorIdExist: true}) { nodes { id } }
+	}`)
+	if !strings.Contains(stmt.SQL, `EXISTS (SELECT 1 FROM "public"."posts" AS`) {
+		t.Errorf("exist: true missing EXISTS:\n%s", stmt.SQL)
+	}
+	if strings.Contains(stmt.SQL, "NOT EXISTS") {
+		t.Errorf("exist: true must not compile to NOT EXISTS:\n%s", stmt.SQL)
+	}
+	if len(stmt.Args) != len(plain.Args) {
+		t.Errorf("bare existence filter must not add parameters: %v vs %v", stmt.Args, plain.Args)
+	}
+
+	stmt = compileRoot(t, built, `{
+		allUsers(filter: {postsByAuthorIdExist: false}) { nodes { id } }
+	}`)
+	if !strings.Contains(stmt.SQL, `NOT EXISTS (SELECT 1 FROM "public"."posts" AS`) {
+		t.Errorf("exist: false missing NOT EXISTS:\n%s", stmt.SQL)
+	}
+
+	stmt = compileRoot(t, built, `{
+		allPosts(filter: {authorExists: false}) { nodes { id } }
+	}`)
+	if !strings.Contains(stmt.SQL, `NOT EXISTS (SELECT 1 FROM "public"."users" AS`) {
+		t.Errorf("forward exists: false missing NOT EXISTS:\n%s", stmt.SQL)
 	}
 }
 

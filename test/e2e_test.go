@@ -526,6 +526,21 @@ func TestAdvancedFilters(t *testing.T) {
 		}
 	})
 
+	t.Run("relation existence filter", func(t *testing.T) {
+		got := emails(t, hs.URL, `{allUsers(filter: {postsByAuthorIdExist: true}, orderBy: [EMAIL_ASC]) { nodes { email } }}`, "allUsers", "email")
+		if len(got) != 3 {
+			t.Errorf("exist true: got %v", got)
+		}
+		got = emails(t, hs.URL, `{allUsers(filter: {postsByAuthorIdExist: false}) { nodes { email } }}`, "allUsers", "email")
+		if len(got) != 0 {
+			t.Errorf("exist false: got %v", got)
+		}
+		got = emails(t, hs.URL, `{allPosts(filter: {authorExists: true}) { nodes { title } }}`, "allPosts", "title")
+		if len(got) != 4 {
+			t.Errorf("forward exists true: got %v", got)
+		}
+	})
+
 	t.Run("computed column filter and order", func(t *testing.T) {
 		got := emails(t, hs.URL, `{allUsers(filter: {postCount: {greaterThanOrEqualTo: "2"}}) { nodes { email } }}`, "allUsers", "email")
 		if len(got) != 1 || got[0] != "ada@example.com" {
