@@ -96,6 +96,10 @@ func (a *App) buildServer(ctx context.Context) (*server.Server, error) {
 	if a.Config.RLS.Enabled && a.Config.RLS.Auth.Mode == "headers" && len(a.Config.RLS.Auth.TrustedProxies) == 0 {
 		a.Log.Warn("headers auth mode without rls.auth.trusted_proxies — ANY client reaching this port can forge claims and roles; set trusted_proxies or ensure only the gateway can connect")
 	}
+	if a.Config.RLS.Enabled && len(a.Config.RLS.AllowedRoles) == 0 &&
+		(a.Config.RLS.Auth.Mode == "jwt" || a.Config.RLS.Auth.Mode == "headers") {
+		a.Log.Warn("rls.allowed_roles is empty — any role named in a verified claim will be assumed, including privileged database roles; list the roles clients may request")
+	}
 	cat, err := a.LoadCatalog(ctx)
 	if err != nil {
 		return nil, err

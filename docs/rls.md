@@ -69,6 +69,11 @@ A request whose role claim resolves to anything else is rejected with a 401.
 `rls.default_role` and `rls.anonymous_role` are always allowed — the operator
 configured those deliberately.
 
+Leaving `allowed_roles` empty in `jwt` or `headers` mode means a client that
+controls its claims can name any role granted to the connection role —
+including privileged ones. pdbq logs a startup warning in that configuration;
+set the list explicitly in production.
+
 ## Turning it off
 
 `rls.enabled: false` runs everything as the privileged connection role and
