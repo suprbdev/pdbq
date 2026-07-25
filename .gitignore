@@ -4,3 +4,4 @@ pdbq.yaml
 !examples/pdbq.example.yaml
 # Per-developer port mappings etc.; see docs/quickstart.md.
 compose.override.yaml
+/.worktrees
