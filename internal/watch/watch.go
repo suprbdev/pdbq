@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -31,6 +32,9 @@ type Watcher struct {
 func (w *Watcher) Run(ctx context.Context) error {
 	if w.Log == nil {
 		w.Log = slog.Default()
+	}
+	if !validChannel(w.Channel) {
+		return fmt.Errorf("watch: invalid channel name %q: only letters, digits and underscores are allowed", w.Channel)
 	}
 	if err := w.installTrigger(ctx); err != nil {
 		w.Log.Warn("watch: cannot install DDL event trigger; falling back to polling",
@@ -135,9 +139,23 @@ func (w *Watcher) reintrospect(ctx context.Context) {
 }
 
 func quoteIdent(s string) string {
-	return `"` + s + `"`
+	return `"` + strings.ReplaceAll(s, `"`, `""`) + `"`
 }
 
 func quoteLit(s string) string {
-	return "'" + s + "'"
+	return "'" + strings.ReplaceAll(s, "'", "''") + "'"
+}
+
+// validChannel restricts the NOTIFY channel to [a-zA-Z0-9_]. Escaping alone
+// is not enough: the channel literal is embedded in a $$-quoted plpgsql body,
+// so a value containing "$$" would terminate the dollar quote regardless of
+// quote doubling.
+func validChannel(s string) bool {
+	for _, r := range s {
+		ok := r == '_' || (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9')
+		if !ok {
+			return false
+		}
+	}
+	return s != ""
 }

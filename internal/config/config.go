@@ -226,6 +226,9 @@ func (c *Config) Validate() error {
 	if c.Watch.Enabled && c.Schema.CachePath != "" {
 		errs = append(errs, "watch.enabled cannot be combined with schema.cache_path")
 	}
+	if c.Watch.Enabled && !validChannelName(c.Watch.Channel) {
+		errs = append(errs, fmt.Sprintf("watch.channel: %q invalid: only letters, digits and underscores are allowed", c.Watch.Channel))
+	}
 	if len(c.Schema.Schemas) == 0 {
 		errs = append(errs, "schema.schemas must list at least one schema")
 	}
@@ -250,6 +253,19 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("invalid config:\n  - %s", strings.Join(errs, "\n  - "))
 	}
 	return nil
+}
+
+// validChannelName restricts the watch NOTIFY channel to [a-zA-Z0-9_]; the
+// value is interpolated into trigger DDL (see internal/watch) where broader
+// characters cannot be safely escaped.
+func validChannelName(s string) bool {
+	for _, r := range s {
+		ok := r == '_' || (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9')
+		if !ok {
+			return false
+		}
+	}
+	return s != ""
 }
 
 // DisabledPlugins returns the disabled-plugin set for registry filtering.
