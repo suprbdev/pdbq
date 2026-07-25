@@ -24,23 +24,42 @@ $ pdbq config validate  # check the effective config, exit non-zero on error
 $ pdbq config example   # print the full annotated reference
 ```
 
-## The important knobs
+## The knobs
 
 | Key | Default | Notes |
 |---|---|---|
 | `database.url` | — | required |
+| `database.max_conns` | 10 | maximum pooled connections |
+| `database.connect_timeout` | `10s` | timeout for establishing a connection |
+| `database.statement_timeout` | `30s` | per-statement timeout on every request (`0` disables) |
 | `server.addr` | `:8080` | |
-| `server.max_depth` / `max_cost` | 15 / 10000 | per-operation limits |
-| `server.max_page_size` | 100 | caps `first`/`last`; also the default page size when neither is given |
 | `server.graphiql` | `false` | GraphiQL playground at `/` (enable for dev) |
 | `server.expose_schema` | `false` | SDL at `/schema.graphql` (reveals full schema) |
+| `server.request_timeout` | `30s` | overall HTTP request timeout |
+| `server.max_body_bytes` | 1048576 | maximum request body size (1 MiB) |
+| `server.max_depth` / `max_cost` | 15 / 10000 | per-operation limits |
+| `server.max_page_size` | 100 | caps `first`/`last`; also the default page size when neither is given |
+| `server.cors_origins` | `[]` | allowed CORS origins (exact match, or `*`); empty disables CORS headers |
 | `server.compression` | `false` | gzip responses when the client sends `Accept-Encoding: gzip` |
+| `server.apq` | `false` | Apollo automatic persisted queries (in-memory, register-on-miss) |
+| `server.persisted_queries_path` | — | JSON file of sha256 → document, preloaded as persisted queries |
+| `server.persisted_only` | `false` | reject requests that don't reference a persisted query (requires `apq` or `persisted_queries_path`) |
+| `server.read_only` | `false` | reject every mutation (maintenance, demos, defense in depth) |
 | `schema.schemas` | `[public]` | schema allowlist |
 | `schema.cache_path` | — | boot from `pdbq schema dump` output |
+| `schema.functions` | `true` | expose PostgreSQL functions as custom queries/mutations |
 | `filters.indexed_only` | `true` | see [filtering.md](filtering.md) |
-| `rls.enabled` | `true` | see [rls.md](rls.md) |
+| `filters.allow_columns` | `{}` | per-table extra filterable columns, overriding `indexed_only` |
+| `rls.enabled` | `true` | see [rls.md](rls.md) for the `rls.*` and `rls.auth.*` keys |
 | `transactions.mutations` | `true` | wrap each mutation in a tx |
+| `transactions.per_request` | `false` | one tx for the whole request instead of one per operation |
+| `transactions.isolation` | `read_committed` | or `repeatable_read`, `serializable` |
+| `transactions.max_retries` | 0 | automatic retries on serialization failure/deadlock (40001/40P01) |
 | `watch.enabled` | `false` | dev only; refuses to combine with cache |
+| `watch.poll_interval` | `5s` | fallback polling when event triggers can't be installed |
+| `watch.channel` | `pdbq_ddl` | NOTIFY channel used by the DDL event trigger |
 | `errors.detail` | `prod` | `dev` exposes full PG error detail |
 | `plugins.disabled` | `[]` | e.g. `[simple-names]` |
 | `plugins.settings.<name>` | `{}` | per-plugin config |
+| `log.level` | `info` | `debug`, `info`, `warn`, `error` |
+| `log.format` | `text` | `text` or `json` |
