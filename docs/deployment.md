@@ -22,6 +22,11 @@ Distroless has no shell, so run health checks from the orchestrator against
 | `GET /healthz`, `/readyz` | liveness/readiness |
 | `GET /schema.graphql` | generated SDL (opt-in via `server.expose_schema: true`; off by default) |
 
+GET requests carry the query and variables in the URL, so proxy, load
+balancer, and server access logs along the path will record them. If your
+queries or variables are sensitive, use POST only and consider stripping or
+truncating the query string in intermediary log formats.
+
 ## Production checklist
 
 - `rls.enabled: true` with a **non-superuser** connection role that has been
