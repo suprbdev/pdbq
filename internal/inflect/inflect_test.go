@@ -65,6 +65,7 @@ func TestDefaultNames(t *testing.T) {
 		{KindUpdateMutation, Input{Table: "users", Columns: []string{"id"}}, "updateUserById"},
 		{KindDeleteMutation, Input{Table: "users", Columns: []string{"id"}}, "deleteUserById"},
 		{KindFilterTypeName, Input{Table: "users"}, "UserFilter"},
+		{KindConditionTypeName, Input{Table: "users"}, "UserCondition"},
 		{KindOrderByTypeName, Input{Table: "users"}, "UsersOrderBy"},
 		{KindRelationForward, Input{Table: "users", Column: "author_id"}, "author"},
 		{KindRelationBackward, Input{Table: "posts", Columns: []string{"author_id"}}, "postsByAuthorId"},

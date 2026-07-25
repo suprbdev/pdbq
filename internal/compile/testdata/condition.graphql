@@ -1,0 +1,12 @@
+{
+  allUsers(condition: {mood: HAPPY, email: null}) {
+    nodes {
+      id
+      postsByAuthorId(condition: {title: "Hello"}) {
+        nodes {
+          id
+        }
+      }
+    }
+  }
+}

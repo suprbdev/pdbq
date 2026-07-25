@@ -37,6 +37,24 @@ operator set.
 }
 ```
 
+## The condition shorthand
+
+Every table also gets a `<Type>Condition` input — the zero-ceremony
+equality variant of the filter. One field per filterable column, typed as
+the column's plain input type; every provided field must equal its value
+and all fields are ANDed. An explicit `null` matches SQL `NULL`
+(`IS NULL`).
+
+```graphql
+{
+  allPosts(condition: {authorId: 1, title: "Hello"}) { nodes { id } }
+}
+```
+
+`condition` and `filter` can be passed together; their conditions are
+ANDed. The condition surface follows the same column policy as the filter
+(indexed-only, `allow_columns`, `@omit filter` smart comments).
+
 ## The indexed-only policy
 
 By default **only columns covered by an index** (leading column, plus PK and

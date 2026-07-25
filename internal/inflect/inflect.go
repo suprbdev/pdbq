@@ -21,6 +21,7 @@ const (
 	KindEnumTypeName     Kind = "enum_type_name"      // pg enum -> GraphQL enum type
 	KindEnumValueName    Kind = "enum_value_name"     // pg enum value -> GraphQL enum value
 	KindFilterTypeName     Kind = "filter_type_name"      // UserFilter
+	KindConditionTypeName  Kind = "condition_type_name"   // UserCondition
 	KindOrderByTypeName    Kind = "order_by_type_name"    // UsersOrderBy
 	KindDistinctOnTypeName Kind = "distinct_on_type_name" // UsersDistinctOn
 	KindCreateMutation   Kind = "create_mutation"     // createUser
@@ -81,6 +82,8 @@ func Default(kind Kind, in Input) string {
 		return EnumValue(in.Value)
 	case KindFilterTypeName:
 		return UpperCamel(Singularize(in.Table)) + "Filter"
+	case KindConditionTypeName:
+		return UpperCamel(Singularize(in.Table)) + "Condition"
 	case KindOrderByTypeName:
 		return UpperCamel(Pluralize(Singularize(in.Table))) + "OrderBy"
 	case KindDistinctOnTypeName:

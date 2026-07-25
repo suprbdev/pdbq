@@ -294,10 +294,12 @@ func (b *Builder) addTables() {
 	// Second pass: filters and orderBy enums first, so relation list fields
 	// can reference them.
 	filterNames := map[string]string{}
+	conditionNames := map[string]string{}
 	orderNames := map[string]string{}
 	for _, t := range b.Catalog.Tables {
 		key := tableKey(t.Schema, t.Name)
 		filterNames[key] = b.addFilter(t)
+		conditionNames[key] = b.addCondition(t)
 		orderNames[key] = b.addOrderBy(t)
 		b.addDistinctOn(t)
 	}
@@ -306,7 +308,7 @@ func (b *Builder) addTables() {
 	}
 	for _, t := range b.Catalog.Tables {
 		key := tableKey(t.Schema, t.Name)
-		b.addQueries(t, filterNames[key], orderNames[key])
+		b.addQueries(t, filterNames[key], orderNames[key], conditionNames[key])
 		b.addMutations(t, filterNames[key])
 	}
 }
@@ -369,7 +371,7 @@ func (b *Builder) addRelations(t *introspect.Table) {
 			b.addRootField(obj, &Field{
 				Name: name,
 				Type: b.ensureConnection(other) + "!",
-				Args: b.connectionArgs(other, "", ""),
+				Args: b.connectionArgs(other, "", "", ""),
 				Meta: &FieldMeta{Kind: KindRelationBackward, Table: other, FK: fk},
 			})
 		}
@@ -420,6 +422,29 @@ func (b *Builder) addFilter(t *introspect.Table) string {
 		in.AddField(&InputField{
 			Name:   b.Inflect(inflect.KindFieldName, inflect.Input{Table: t.Name, Column: c.Name}),
 			Type:   opInput,
+			Column: c.Name,
+		})
+	}
+	b.Inputs[name] = in
+	return name
+}
+
+// addCondition creates the <Type>Condition input: one field per filterable
+// column, typed as the column's plain input type. Every provided field is an
+// equality test on its column (an explicit null matches SQL NULL) and all
+// tests are ANDed. Returns the type name or "" when no column qualifies.
+func (b *Builder) addCondition(t *introspect.Table) string {
+	cols := b.filterableColumns(t)
+	if len(cols) == 0 {
+		return ""
+	}
+	typeName := b.TypeForTable[tableKey(t.Schema, t.Name)]
+	name := b.Inflect(inflect.KindConditionTypeName, inflect.Input{Schema: t.Schema, Table: t.Name})
+	in := &Input{Name: name, Description: "Equality condition for " + typeName + ": every provided field must equal its value (all fields are ANDed); an explicit null matches SQL NULL."}
+	for _, c := range cols {
+		in.AddField(&InputField{
+			Name:   b.Inflect(inflect.KindFieldName, inflect.Input{Table: t.Name, Column: c.Name}),
+			Type:   b.gqlInputTypeForColumn(c),
 			Column: c.Name,
 		})
 	}
@@ -501,11 +526,17 @@ func (b *Builder) addOrderBy(t *introspect.Table) string {
 	return name
 }
 
-func (b *Builder) listArgs(t *introspect.Table, filterName, orderName string) []Arg {
+func (b *Builder) listArgs(t *introspect.Table, filterName, orderName, conditionName string) []Arg {
 	if filterName == "" {
 		filterName = b.Inflect(inflect.KindFilterTypeName, inflect.Input{Schema: t.Schema, Table: t.Name})
 		if _, ok := b.Inputs[filterName]; !ok {
 			filterName = ""
+		}
+	}
+	if conditionName == "" {
+		conditionName = b.Inflect(inflect.KindConditionTypeName, inflect.Input{Schema: t.Schema, Table: t.Name})
+		if _, ok := b.Inputs[conditionName]; !ok {
+			conditionName = ""
 		}
 	}
 	if orderName == "" {
@@ -527,11 +558,14 @@ func (b *Builder) listArgs(t *introspect.Table, filterName, orderName string) []
 	if filterName != "" {
 		args = append(args, Arg{Name: "filter", Type: filterName})
 	}
+	if conditionName != "" {
+		args = append(args, Arg{Name: "condition", Type: conditionName})
+	}
 	return args
 }
 
 // connectionArgs is listArgs plus Relay cursor pagination.
-func (b *Builder) connectionArgs(t *introspect.Table, filterName, orderName string) []Arg {
+func (b *Builder) connectionArgs(t *introspect.Table, filterName, orderName, conditionName string) []Arg {
 	args := []Arg{
 		{Name: "first", Type: "Int"},
 		{Name: "last", Type: "Int"},
@@ -539,7 +573,7 @@ func (b *Builder) connectionArgs(t *introspect.Table, filterName, orderName stri
 		{Name: "before", Type: "Cursor"},
 		{Name: "after", Type: "Cursor"},
 	}
-	return append(args, b.listArgs(t, filterName, orderName)[2:]...)
+	return append(args, b.listArgs(t, filterName, orderName, conditionName)[2:]...)
 }
 
 // ensureConnection creates the <Type>Connection and <Type>Edge objects once
@@ -564,7 +598,7 @@ func (b *Builder) ensureConnection(t *introspect.Table) string {
 	return connName
 }
 
-func (b *Builder) addQueries(t *introspect.Table, filterName, orderName string) {
+func (b *Builder) addQueries(t *introspect.Table, filterName, orderName, conditionName string) {
 	typeName := b.TypeForTable[tableKey(t.Schema, t.Name)]
 
 	// Relay-style connection is the collection query.
@@ -573,7 +607,7 @@ func (b *Builder) addQueries(t *introspect.Table, filterName, orderName string) 
 		Name:        b.Inflect(inflect.KindAllRowsField, inflect.Input{Schema: t.Schema, Table: t.Name}),
 		Type:        connName + "!",
 		Description: "Reads a paginated connection of " + typeName + ".",
-		Args:        b.connectionArgs(t, filterName, orderName),
+		Args:        b.connectionArgs(t, filterName, orderName, conditionName),
 		Meta:        &FieldMeta{Kind: KindConnectionQuery, Table: t},
 	})
 

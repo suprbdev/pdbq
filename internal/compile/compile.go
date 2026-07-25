@@ -311,6 +311,15 @@ func (s *stmt) whereClause(t *introspect.Table, f *ast.Field, alias, extraCond s
 			conds = append(conds, cond)
 		}
 	}
+	if cv, ok := s.argValue(f, "condition"); ok {
+		cond, err := s.conditionCond(t, argTypeName(f, "condition"), cv, alias)
+		if err != nil {
+			return "", err
+		}
+		if cond != "" {
+			conds = append(conds, cond)
+		}
+	}
 	if len(conds) == 0 {
 		return "", nil
 	}

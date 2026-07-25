@@ -99,6 +99,36 @@ func (s *stmt) filterCond(t *introspect.Table, filterType string, v any, alias s
 	return strings.Join(conds, " AND "), nil
 }
 
+// conditionCond compiles a <Type>Condition input value: each provided field
+// is an equality test on its column, an explicit null compiles to IS NULL
+// (like isNull, null-ness is part of the query shape, not a parameter), and
+// all tests are ANDed.
+func (s *stmt) conditionCond(t *introspect.Table, condType string, v any, alias string) (string, error) {
+	m, ok := v.(map[string]any)
+	if !ok {
+		return "", fmt.Errorf("compile: condition must be an object")
+	}
+	cols := s.c.Built.InputColumns[condType]
+	var conds []string
+	for _, key := range sortedFilterKeys(m) {
+		colName, ok := cols[key]
+		if !ok {
+			return "", fmt.Errorf("compile: condition field %q has no column mapping", key)
+		}
+		col := t.Column(colName)
+		if col == nil {
+			return "", fmt.Errorf("compile: condition column %q not found", colName)
+		}
+		ref := alias + "." + quoteIdent(col.Name)
+		if m[key] == nil {
+			conds = append(conds, ref+" IS NULL")
+			continue
+		}
+		conds = append(conds, ref+" = "+s.valueExpr(col, m[key]))
+	}
+	return strings.Join(conds, " AND "), nil
+}
+
 // sortedFilterKeys yields deterministic condition order for golden tests.
 func sortedFilterKeys(m map[string]any) []string {
 	keys := make([]string, 0, len(m))

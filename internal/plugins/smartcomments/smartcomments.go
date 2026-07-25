@@ -330,6 +330,7 @@ func (p *Plugin) Inflect(kind inflect.Kind, in inflect.Input, next inflect.Next)
 		in.Columns = p.renamedColumns(in.Schema, in.Table, in.Columns)
 		in.Table = p.renamedTable(in.Schema, in.Table)
 	case inflect.KindTypeName, inflect.KindAllRowsField, inflect.KindFilterTypeName,
+		inflect.KindConditionTypeName,
 		inflect.KindOrderByTypeName, inflect.KindCreateMutation, inflect.KindCreateInput,
 		inflect.KindUpdateInput, inflect.KindPayloadTypeName,
 		inflect.KindCreateManyMutation, inflect.KindUpdateManyMutation, inflect.KindDeleteManyMutation:
@@ -446,6 +447,7 @@ func (p *Plugin) applyTableOmits(b *schema.Builder, t *introspect.Table) {
 	}
 	if omits["filter"] {
 		removeInputType(b, b.Inflect(inflect.KindFilterTypeName, inflect.Input{Schema: t.Schema, Table: t.Name}))
+		removeInputType(b, b.Inflect(inflect.KindConditionTypeName, inflect.Input{Schema: t.Schema, Table: t.Name}))
 	}
 	if omits["order"] {
 		name := b.Inflect(inflect.KindOrderByTypeName, inflect.Input{Schema: t.Schema, Table: t.Name})
@@ -462,6 +464,7 @@ func (p *Plugin) applyColumnTags(b *schema.Builder, t *introspect.Table) {
 	createIn := b.Inputs[b.Inflect(inflect.KindCreateInput, inflect.Input{Schema: t.Schema, Table: t.Name})]
 	updateIn := b.Inputs[b.Inflect(inflect.KindUpdateInput, inflect.Input{Schema: t.Schema, Table: t.Name})]
 	filterIn := b.Inputs[b.Inflect(inflect.KindFilterTypeName, inflect.Input{Schema: t.Schema, Table: t.Name})]
+	conditionIn := b.Inputs[b.Inflect(inflect.KindConditionTypeName, inflect.Input{Schema: t.Schema, Table: t.Name})]
 	orderEnum := b.Enums[b.Inflect(inflect.KindOrderByTypeName, inflect.Input{Schema: t.Schema, Table: t.Name})]
 
 	for _, c := range t.Columns {
@@ -484,6 +487,9 @@ func (p *Plugin) applyColumnTags(b *schema.Builder, t *introspect.Table) {
 		if omitted("filter") && filterIn != nil {
 			removeInputColumn(filterIn, c.Name)
 		}
+		if omitted("filter") && conditionIn != nil {
+			removeInputColumn(conditionIn, c.Name)
+		}
 		if omitted("order") && orderEnum != nil {
 			removeOrderValues(orderEnum, c.Name)
 		}
@@ -495,6 +501,11 @@ func (p *Plugin) applyColumnTags(b *schema.Builder, t *introspect.Table) {
 		if newName := tags.First("name"); newName != "" && orderEnum != nil {
 			renameOrderValues(orderEnum, c.Name, newName)
 		}
+	}
+	// A condition input holds only column fields (no and/or/not), so omitting
+	// every column would leave an empty input type — invalid SDL. Drop it.
+	if conditionIn != nil && len(conditionIn.Fields) == 0 {
+		removeInputType(b, conditionIn.Name)
 	}
 }
 
