@@ -11,6 +11,15 @@
 //     (posts: {authorExists: true}), <rel>Exist for reverse
 //     (users: {postsByAuthorIdExist: false}) — compiling to a bare
 //     (NOT) EXISTS over the join.
+//   - relational ordering: one-level orderBy over related rows, named
+//     REL__COLUMN_{ASC,DESC} with a double underscore separating relation and
+//     column (posts: orderBy: [AUTHOR__NAME_ASC]). Forward FKs sort by the
+//     referenced parent row's column via a correlated scalar subquery;
+//     reverse FKs aggregate the referencing rows' column (MIN for ASC, MAX
+//     for DESC). The related columns respect the filters.indexed_only policy
+//     exactly like the table's own orderBy values. Toggled via
+//     plugins.settings.advanced-filters.relation_order (also off when
+//     relations is off).
 //   - computed-column filtering and ordering: stable/immutable row-type
 //     functions without extra arguments become filter fields and orderBy
 //     enum values (postCount: {gt: "5"}, orderBy: [POST_COUNT_DESC]),
@@ -51,8 +60,9 @@ import (
 )
 
 type Plugin struct {
-	relations bool
-	computed  bool
+	relations     bool
+	computed      bool
+	relationOrder bool
 	// *OptIn flip the per-object default: only @filterable-tagged foreign
 	// keys / computed functions get filter surface.
 	relationsOptIn bool
@@ -61,12 +71,15 @@ type Plugin struct {
 
 // New builds the plugin from its `plugins.settings.advanced-filters` map.
 func New(settings map[string]any) *Plugin {
-	p := &Plugin{relations: true, computed: true}
+	p := &Plugin{relations: true, computed: true, relationOrder: true}
 	if v, ok := settings["relations"].(bool); ok {
 		p.relations = v
 	}
 	if v, ok := settings["computed"].(bool); ok {
 		p.computed = v
+	}
+	if v, ok := settings["relation_order"].(bool); ok {
+		p.relationOrder = v
 	}
 	if v, ok := settings["relations_opt_in"].(bool); ok {
 		p.relationsOptIn = v
@@ -96,6 +109,9 @@ func (p *Plugin) Priority() int { return 150 }
 func (p *Plugin) TransformSchema(_ context.Context, b *schema.Builder) error {
 	if p.relations {
 		p.addRelationFilters(b)
+	}
+	if p.relations && p.relationOrder {
+		p.addRelationOrder(b)
 	}
 	// Computed filter/order fields only make sense when the computed fields
 	// themselves are generated (schema.functions).
@@ -185,6 +201,70 @@ func (p *Plugin) addRelationFilters(b *schema.Builder) {
 				}
 			}
 		}
+	}
+}
+
+// addRelationOrder adds one-level relational orderBy enum values,
+// REL__COLUMN_{ASC,DESC} (double underscore separating the relation from the
+// column): forward FKs sort by a column of the referenced parent row, reverse
+// FKs by the MIN (ASC) / MAX (DESC) of a column over the referencing rows.
+// The related table's columns pass through the same indexed-only policy as
+// its own orderBy enum, and "@omit order" on the FK skips the values.
+func (p *Plugin) addRelationOrder(b *schema.Builder) {
+	for _, t := range b.Catalog.Tables {
+		orderName := b.Inflect(inflect.KindOrderByTypeName, inflect.Input{Schema: t.Schema, Table: t.Name})
+		en := b.Enums[orderName]
+		if en == nil {
+			continue
+		}
+		// Forward: FK on t -> sort by the referenced parent row's columns.
+		for _, fk := range t.ForeignKeys {
+			if _, skip := filterOmits(fk.Comment, p.relationsOptIn); skip {
+				continue
+			}
+			parent := b.Catalog.Table(fk.RefSchema, fk.RefTable)
+			if parent == nil {
+				continue
+			}
+			relName := b.Inflect(inflect.KindRelationForward, inflect.Input{
+				Schema: t.Schema, Table: fk.RefTable, Column: fk.Columns[0], Columns: fk.Columns,
+				Constraint: fk.Name,
+			})
+			addRelationOrderValues(b, en, relName, parent, fk, true)
+		}
+		// Reverse: FKs on other tables pointing at t -> aggregated child columns.
+		for _, child := range b.Catalog.Tables {
+			for _, fk := range child.ForeignKeys {
+				if fk.RefSchema != t.Schema || fk.RefTable != t.Name {
+					continue
+				}
+				if _, skip := filterOmits(fk.Comment, p.relationsOptIn); skip {
+					continue
+				}
+				relName := b.Inflect(inflect.KindRelationBackward, inflect.Input{
+					Schema: child.Schema, Table: child.Name, Columns: fk.Columns,
+					Constraint: fk.Name,
+				})
+				addRelationOrderValues(b, en, relName, child, fk, false)
+			}
+		}
+	}
+}
+
+// addRelationOrderValues appends REL__COLUMN_{ASC,DESC} values for every
+// orderable column of the related table.
+func addRelationOrderValues(b *schema.Builder, en *schema.Enum, relName string, related *introspect.Table, fk *introspect.ForeignKey, forward bool) {
+	prefix := inflect.EnumValue(relName) + "__"
+	for _, c := range b.FilterableColumns(related) {
+		base := prefix + inflect.EnumValue(c.Name)
+		if hasEnumValue(en, base+"_ASC") || hasEnumValue(en, base+"_DESC") {
+			continue
+		}
+		rel := &schema.OrderRelation{Forward: forward, FK: fk, Table: related, Column: c.Name}
+		en.Values = append(en.Values,
+			schema.EnumValue{Name: base + "_ASC", Relation: rel},
+			schema.EnumValue{Name: base + "_DESC", Relation: rel, Desc: true},
+		)
 	}
 }
 

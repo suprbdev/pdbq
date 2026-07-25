@@ -80,6 +80,32 @@ cursors (and have no `nodeId`). Notes:
   (one extra row is fetched); the opposite side reflects the supplied
   cursors.
 
+## Relational ordering
+
+With the `advanced-filters` plugin (on by default), each `<Types>OrderBy`
+enum also carries one-level relational values named
+`<RELATION>__<COLUMN>_ASC|_DESC` — a double underscore separates the relation
+from the column:
+
+```graphql
+{ allPosts(orderBy: [AUTHOR__EMAIL_ASC]) { nodes { title } } }        # forward
+{ allUsers(orderBy: [POSTS_BY_AUTHOR_ID__TITLE_DESC]) { nodes { email } } }  # reverse
+```
+
+- **Forward** (FK on the ordered table): rows sort by the referenced parent
+  row's column, compiled as a correlated scalar subquery.
+- **Reverse** (FK pointing back at the ordered table): rows sort by an
+  aggregate over the referencing rows — `MIN(column)` for `_ASC` values,
+  `MAX(column)` for `_DESC`. Rows with no related row yield `NULL`
+  (PostgreSQL default: last under `ASC`, first under `DESC`).
+
+The related table's columns pass through the same
+[indexed-only policy](#the-indexed-only-policy) as its own `orderBy` enum,
+`@omit order` on the FK comment removes the values, and keyset cursor
+pagination works under relational orderings (the anchor row's value is
+re-evaluated by subquery). Disable with
+`plugins.settings.advanced-filters.relation_order: false`.
+
 ## distinctOn
 
 `distinctOn` takes a list of `<Types>DistinctOn` column enum values and

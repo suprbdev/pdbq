@@ -321,7 +321,10 @@ func (s *stmt) whereClause(t *introspect.Table, f *ast.Field, alias, extraCond s
 type orderTerm struct {
 	col string
 	// fn set: order by a computed column (row-type function) instead of col.
-	fn   *introspect.Function
+	fn *introspect.Function
+	// rel set: order by a related table's column (col stays empty; the sort
+	// column lives in rel.Column).
+	rel  *schema.OrderRelation
 	desc bool
 }
 
@@ -342,7 +345,7 @@ func (s *stmt) orderTerms(t *introspect.Table, f *ast.Field) []orderTerm {
 		for _, v := range vals {
 			name, _ := v.(string)
 			if spec, ok := specs[name]; ok {
-				terms = append(terms, orderTerm{col: spec.Column, fn: spec.Computed, desc: spec.Desc})
+				terms = append(terms, orderTerm{col: spec.Column, fn: spec.Computed, rel: spec.Relation, desc: spec.Desc})
 				if t.PrimaryKey != nil && len(t.PrimaryKey.Columns) == 1 && spec.Column == t.PrimaryKey.Columns[0] {
 					usedPK = true
 				}
@@ -359,7 +362,7 @@ func (s *stmt) orderTerms(t *introspect.Table, f *ast.Field) []orderTerm {
 
 // renderOrder renders terms as an ORDER BY clause over t rows at alias;
 // reversed flips every direction (backward pagination).
-func renderOrder(t *introspect.Table, terms []orderTerm, alias string, reversed bool) string {
+func (s *stmt) renderOrder(t *introspect.Table, terms []orderTerm, alias string, reversed bool) string {
 	if len(terms) == 0 {
 		return ""
 	}
@@ -369,22 +372,57 @@ func renderOrder(t *introspect.Table, terms []orderTerm, alias string, reversed 
 		if term.desc != reversed {
 			dir = " DESC"
 		}
-		parts[i] = orderExprSQL(t, term, alias) + dir
+		parts[i] = s.orderExprSQL(t, term, alias) + dir
 	}
 	return "\nORDER BY " + strings.Join(parts, ", ")
 }
 
 // orderExprSQL renders the sort expression for one term: a column reference,
-// or the computed function called on the current row.
-func orderExprSQL(t *introspect.Table, term orderTerm, alias string) string {
+// the computed function called on the current row, or a correlated scalar
+// subquery over a related table.
+func (s *stmt) orderExprSQL(t *introspect.Table, term orderTerm, alias string) string {
+	if term.rel != nil {
+		return s.relationOrderSQL(term, alias)
+	}
 	if term.fn != nil {
 		return computedCallSQL(term.fn, t, alias)
 	}
 	return alias + "." + quoteIdent(term.col)
 }
 
+// relationOrderSQL renders the correlated scalar subquery for a relational
+// order term. Forward relations select the sort column off the single
+// referenced row; reverse relations aggregate it over the referencing rows
+// (MIN for ASC terms, MAX for DESC), yielding NULL when no related row
+// exists so PostgreSQL's default NULL ordering applies. The inner alias is
+// fixed: relational subqueries never nest, so it cannot collide.
+func (s *stmt) relationOrderSQL(term orderTerm, alias string) string {
+	rel := term.rel
+	const sub = "__ro"
+	joins := make([]string, len(rel.FK.Columns))
+	for i, col := range rel.FK.Columns {
+		if rel.Forward {
+			joins[i] = fmt.Sprintf("%s.%s = %s.%s",
+				sub, quoteIdent(rel.FK.RefColumns[i]), alias, quoteIdent(col))
+		} else {
+			joins[i] = fmt.Sprintf("%s.%s = %s.%s",
+				sub, quoteIdent(col), alias, quoteIdent(rel.FK.RefColumns[i]))
+		}
+	}
+	expr := sub + "." + quoteIdent(rel.Column)
+	if !rel.Forward {
+		agg := "MIN"
+		if term.desc {
+			agg = "MAX"
+		}
+		expr = agg + "(" + expr + ")"
+	}
+	return fmt.Sprintf("(SELECT %s FROM %s AS %s WHERE %s)",
+		expr, s.sourceRef(rel.Table), sub, strings.Join(joins, " AND "))
+}
+
 func (s *stmt) orderClause(t *introspect.Table, f *ast.Field, alias string) string {
-	return renderOrder(t, s.orderTerms(t, f), alias, false)
+	return s.renderOrder(t, s.orderTerms(t, f), alias, false)
 }
 
 // distinctCols resolves the distinctOn argument to column names via the

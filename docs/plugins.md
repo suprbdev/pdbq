@@ -72,12 +72,16 @@ pattern: the plugin implements only `SchemaHook`, yet changes compiled SQL.
   FK takes a `{some|none|every}` wrapper (`UserFilter.postsByAuthorId:
   PostToManyFilter`), and each direction gets a Boolean existence variant
   (`PostFilter.authorExists: Boolean`, `UserFilter.postsByAuthorIdExist:
-  Boolean`) compiling to a bare `(NOT) EXISTS` — and exposes eligible
+  Boolean`) compiling to a bare `(NOT) EXISTS` — adds one-level relational
+  orderBy values (`AUTHOR__EMAIL_ASC` on posts,
+  `POSTS_BY_AUTHOR_ID__TITLE_DESC` on users; reverse relations aggregate with
+  `MIN`/`MAX`) — and exposes eligible
   computed columns (single
   row-argument stable functions) as filter fields and orderBy enum values
   (`postCount: BigIntFilterOps`, `POST_COUNT_DESC`).
 - Each added field carries a binding (`InputField.Relation`,
-  `InputField.Computed`, `EnumValue.Computed`) that `Builder.Build()` copies
+  `InputField.Computed`, `EnumValue.Computed`, `EnumValue.Relation`) that
+  `Builder.Build()` copies
   into `schema.Built`. The core compiler consults those tables when it meets
   a filter key with no column mapping — relations become `EXISTS` subqueries,
   computed columns become function calls over the current row — and stays
@@ -86,9 +90,12 @@ pattern: the plugin implements only `SchemaHook`, yet changes compiled SQL.
 
 The halves toggle independently:
 `plugins.settings.advanced-filters.relations` and `...computed` (both default
-true). Computed filters are not index-backed, so they sidestep the
-`filters.indexed_only` policy by nature — leave `computed: false` if that
-matters for your workload.
+true), plus `...relation_order` (default true, also off when `relations` is
+off) for the relational orderBy values. Computed filters are not
+index-backed, so they sidestep the `filters.indexed_only` policy by nature —
+leave `computed: false` if that matters for your workload. Relational order
+columns *do* respect `filters.indexed_only`, exactly like the related table's
+own orderBy enum.
 
 ## Worked example 3: smart-comments
 

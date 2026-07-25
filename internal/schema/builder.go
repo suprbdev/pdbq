@@ -85,6 +85,9 @@ type OrderSpec struct {
 	Desc   bool
 	// Computed orders by a row-type function instead of Column.
 	Computed *introspect.Function
+	// Relation orders by a related table's column (advanced-filters); Column
+	// stays empty for these.
+	Relation *OrderRelation
 }
 
 // New creates a Builder with all default types generated from the catalog.
@@ -422,6 +425,14 @@ func (b *Builder) addFilter(t *introspect.Table) string {
 	}
 	b.Inputs[name] = in
 	return name
+}
+
+// FilterableColumns exposes the filterable/orderable column set (indexed-only
+// policy plus config overrides) for SchemaHook plugins adding filter or order
+// surface over another table's columns (e.g. advanced-filters relational
+// ordering).
+func (b *Builder) FilterableColumns(t *introspect.Table) []*introspect.Column {
+	return b.filterableColumns(t)
 }
 
 // FilterOpsInputFor returns (creating if needed) the operator input type for
@@ -1065,8 +1076,8 @@ func (b *Builder) Build() (*Built, error) {
 		ordered := map[string]OrderSpec{}
 		values := map[string]string{}
 		for _, v := range en.Values {
-			if v.Column != "" || v.Computed != nil {
-				ordered[v.Name] = OrderSpec{Column: v.Column, Desc: v.Desc, Computed: v.Computed}
+			if v.Column != "" || v.Computed != nil || v.Relation != nil {
+				ordered[v.Name] = OrderSpec{Column: v.Column, Desc: v.Desc, Computed: v.Computed, Relation: v.Relation}
 			}
 			if v.PGValue != "" {
 				values[v.Name] = v.PGValue

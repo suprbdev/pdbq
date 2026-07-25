@@ -541,6 +541,50 @@ func TestAdvancedFilters(t *testing.T) {
 		}
 	})
 
+	t.Run("relational order", func(t *testing.T) {
+		// Forward: posts sorted by their author's email.
+		got := emails(t, hs.URL, `{allPosts(orderBy: [AUTHOR__EMAIL_ASC, ID_ASC]) { nodes { title } }}`, "allPosts", "title")
+		want := []string{"Notes on the Analytical Engine", "Unpublished draft", "On Computable Numbers", "Compilers 101"}
+		if fmt.Sprint(got) != fmt.Sprint(want) {
+			t.Errorf("forward order: got %v want %v", got, want)
+		}
+		// Reverse ASC: users sorted by MIN(posts.title).
+		got = emails(t, hs.URL, `{allUsers(orderBy: [POSTS_BY_AUTHOR_ID__TITLE_ASC]) { nodes { email } }}`, "allUsers", "email")
+		want = []string{"grace@example.com", "ada@example.com", "alan@example.com"}
+		if fmt.Sprint(got) != fmt.Sprint(want) {
+			t.Errorf("reverse ASC order: got %v want %v", got, want)
+		}
+		// Reverse DESC: users sorted by MAX(posts.title) descending.
+		got = emails(t, hs.URL, `{allUsers(orderBy: [POSTS_BY_AUTHOR_ID__TITLE_DESC]) { nodes { email } }}`, "allUsers", "email")
+		want = []string{"ada@example.com", "alan@example.com", "grace@example.com"}
+		if fmt.Sprint(got) != fmt.Sprint(want) {
+			t.Errorf("reverse DESC order: got %v want %v", got, want)
+		}
+	})
+
+	t.Run("relational order keyset pagination", func(t *testing.T) {
+		res := post(t, hs.URL, `{allPosts(orderBy: [AUTHOR__EMAIL_ASC, ID_ASC], first: 2) {
+			nodes { title } pageInfo { endCursor hasNextPage }
+		}}`, nil)
+		requireNoErrors(t, res)
+		var page struct {
+			Nodes    []struct{ Title string }
+			PageInfo struct {
+				EndCursor   string `json:"endCursor"`
+				HasNextPage bool   `json:"hasNextPage"`
+			} `json:"pageInfo"`
+		}
+		mustUnmarshal(t, res.Data["allPosts"], &page)
+		if len(page.Nodes) != 2 || page.Nodes[1].Title != "Unpublished draft" || !page.PageInfo.HasNextPage {
+			t.Fatalf("first page: %+v", page)
+		}
+		got := emails(t, hs.URL, fmt.Sprintf(`{allPosts(orderBy: [AUTHOR__EMAIL_ASC, ID_ASC], first: 2, after: %q) { nodes { title } }}`, page.PageInfo.EndCursor), "allPosts", "title")
+		want := []string{"On Computable Numbers", "Compilers 101"}
+		if fmt.Sprint(got) != fmt.Sprint(want) {
+			t.Errorf("after relational-order cursor: got %v want %v", got, want)
+		}
+	})
+
 	t.Run("computed column filter and order", func(t *testing.T) {
 		got := emails(t, hs.URL, `{allUsers(filter: {postCount: {greaterThanOrEqualTo: "2"}}) { nodes { email } }}`, "allUsers", "email")
 		if len(got) != 1 || got[0] != "ada@example.com" {

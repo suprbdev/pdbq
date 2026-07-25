@@ -416,7 +416,7 @@ func (s *stmt) connectionJSON(t *introspect.Table, f *ast.Field, extraCond strin
 		rnName = "__rn0"
 	}
 	rn := "row_number() OVER () AS " + rnName
-	if o := renderOrder(t, terms, alias, plan.reversed); o != "" {
+	if o := s.renderOrder(t, terms, alias, plan.reversed); o != "" {
 		rn = "row_number() OVER (" + strings.TrimPrefix(o, "\n") + ") AS " + rnName
 	}
 	selectCols = append(selectCols, rn)
@@ -429,20 +429,20 @@ func (s *stmt) connectionJSON(t *introspect.Table, f *ast.Field, extraCond strin
 		if err != nil {
 			return "", err
 		}
-		conds = append(conds, keysetPredicate(alias, vals, terms, t, false))
+		conds = append(conds, s.keysetPredicate(alias, vals, terms, t, false))
 	}
 	if plan.predKeyset && plan.hasBefore {
 		vals, err := s.anchorVals(t, terms, plan.beforeKeys)
 		if err != nil {
 			return "", err
 		}
-		conds = append(conds, keysetPredicate(alias, vals, terms, t, true))
+		conds = append(conds, s.keysetPredicate(alias, vals, terms, t, true))
 	}
 	where, err := s.whereClause(t, f, alias, strings.Join(conds, " AND "))
 	if err != nil {
 		return "", err
 	}
-	order := renderOrder(t, terms, alias, plan.reversed)
+	order := s.renderOrder(t, terms, alias, plan.reversed)
 	limit := ""
 	trimParam := "" // placeholder trimming the +1 detection row (keyset mode)
 	if plan.limit >= 0 {

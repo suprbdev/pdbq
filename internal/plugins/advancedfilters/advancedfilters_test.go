@@ -81,13 +81,20 @@ func TestSchemaSurface(t *testing.T) {
 		"postCount: BigIntFilterOps",        // computed filter (int8 -> BigInt)
 		"POST_COUNT_ASC",                    // computed ordering
 		"POST_COUNT_DESC",
+		"AUTHOR__EMAIL_ASC",                 // forward relational ordering
+		"POSTS_BY_AUTHOR_ID__TITLE_DESC",    // reverse relational ordering
 	} {
 		if !strings.Contains(sdl, want) {
 			t.Errorf("SDL missing %q", want)
 		}
 	}
-	// posts_excerpt takes an extra argument: not filterable/orderable.
-	for _, reject := range []string{"excerpt: StringFilterOps", "EXCERPT_ASC"} {
+	// posts_excerpt takes an extra argument: not filterable/orderable;
+	// full_name/body are not indexed, so indexed-only drops their relational
+	// order values like the tables' own.
+	for _, reject := range []string{
+		"excerpt: StringFilterOps", "EXCERPT_ASC",
+		"AUTHOR__FULL_NAME_ASC", "POSTS_BY_AUTHOR_ID__BODY_ASC",
+	} {
 		if strings.Contains(sdl, reject) {
 			t.Errorf("SDL must not contain %q", reject)
 		}
@@ -109,6 +116,19 @@ func TestSettingsToggles(t *testing.T) {
 	}
 	if !strings.Contains(built.SDL, "author: UserFilter") {
 		t.Error("computed: false must keep relation filters")
+	}
+
+	built = setup(t, map[string]any{"relation_order": false})
+	if strings.Contains(built.SDL, "AUTHOR__EMAIL_ASC") {
+		t.Error("relation_order: false must drop relational orderBy values")
+	}
+	if !strings.Contains(built.SDL, "author: UserFilter") {
+		t.Error("relation_order: false must keep relation filters")
+	}
+
+	built = setup(t, map[string]any{"relations": false})
+	if strings.Contains(built.SDL, "AUTHOR__EMAIL_ASC") {
+		t.Error("relations: false must drop relational orderBy values too")
 	}
 }
 
@@ -231,6 +251,73 @@ func TestNestedRelationFilter(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("enum arg not coerced: %v", stmt.Args)
+	}
+}
+
+func TestForwardRelationOrder(t *testing.T) {
+	built := setup(t, nil)
+	stmt := compileRoot(t, built, `{
+		allPosts(orderBy: [AUTHOR__EMAIL_ASC], first: 5) { nodes { id } }
+	}`)
+	sql := stmt.SQL
+	if !strings.Contains(sql, `(SELECT __ro."email" FROM "public"."users" AS __ro WHERE __ro."id" = `) {
+		t.Errorf("SQL missing forward relational order subquery:\n%s", sql)
+	}
+	if strings.Contains(sql, "MIN(") || strings.Contains(sql, "MAX(") {
+		t.Errorf("forward relational order must not aggregate:\n%s", sql)
+	}
+	// PK tiebreaker still appended.
+	if !strings.Contains(sql, `."id" ASC`) {
+		t.Errorf("SQL missing PK tiebreaker:\n%s", sql)
+	}
+}
+
+func TestBackwardRelationOrder(t *testing.T) {
+	built := setup(t, nil)
+	stmt := compileRoot(t, built, `{
+		allUsers(orderBy: [POSTS_BY_AUTHOR_ID__TITLE_DESC], first: 5) { nodes { id } }
+	}`)
+	if !strings.Contains(stmt.SQL, `(SELECT MAX(__ro."title") FROM "public"."posts" AS __ro WHERE __ro."author_id" = `) {
+		t.Errorf("DESC must aggregate with MAX:\n%s", stmt.SQL)
+	}
+
+	stmt = compileRoot(t, built, `{
+		allUsers(orderBy: [POSTS_BY_AUTHOR_ID__TITLE_ASC], first: 5) { nodes { id } }
+	}`)
+	if !strings.Contains(stmt.SQL, `(SELECT MIN(__ro."title") FROM "public"."posts" AS __ro WHERE __ro."author_id" = `) {
+		t.Errorf("ASC must aggregate with MIN:\n%s", stmt.SQL)
+	}
+}
+
+func TestRelationOrderWithKeysetCursor(t *testing.T) {
+	built := setup(t, nil)
+	cursor := base64.StdEncoding.EncodeToString([]byte(`["Post",1]`))
+	stmt := compileRoot(t, built, fmt.Sprintf(`{
+		allPosts(orderBy: [AUTHOR__EMAIL_ASC], first: 2, after: %q) {
+			nodes { id }
+			pageInfo { hasNextPage endCursor }
+		}
+	}`, cursor))
+	sql := stmt.SQL
+	// The anchor subquery must evaluate the relational expression for the
+	// cursor row, and the keyset predicate must compare it null-safely.
+	if !strings.Contains(sql, `WHERE __ro."id" = __a.`) {
+		t.Errorf("anchor missing relational expression over the anchor row:\n%s", sql)
+	}
+	if !strings.Contains(sql, "IS NOT DISTINCT FROM") {
+		t.Errorf("relational keyset predicate must use null-safe equality:\n%s", sql)
+	}
+}
+
+func TestRelationOrderSmartComments(t *testing.T) {
+	cat := testutil.FixtureCatalog()
+	cat.Table("public", "posts").ForeignKeys[0].Comment = "@omit order"
+	built := setupCatalog(t, nil, cat)
+	if strings.Contains(built.SDL, "AUTHOR__EMAIL_ASC") || strings.Contains(built.SDL, "POSTS_BY_AUTHOR_ID__TITLE_ASC") {
+		t.Error("@omit order on a FK must drop both relational order directions")
+	}
+	if !strings.Contains(built.SDL, "author: UserFilter") {
+		t.Error("@omit order must keep the relation filter fields")
 	}
 }
 

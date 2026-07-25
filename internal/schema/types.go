@@ -129,6 +129,23 @@ type InputField struct {
 	Nested map[string]any
 }
 
+// OrderRelation binds a relational orderBy enum value to the catalog
+// (advanced-filters plugin). The compiler renders it as a correlated scalar
+// subquery over the related table.
+type OrderRelation struct {
+	// Forward: the FK lives on the ordered table and points at Table
+	// (many-to-one); the subquery selects Column from the single referenced
+	// row. Otherwise the FK lives on Table and points back at the ordered
+	// table (one-to-many); the subquery aggregates Column over the
+	// referencing rows (MIN for ASC values, MAX for DESC).
+	Forward bool
+	FK      *introspect.ForeignKey
+	// Table is the related table the subquery scans.
+	Table *introspect.Table
+	// Column is the sort column on Table.
+	Column string
+}
+
 // FilterRelation binds a relation filter field to the catalog.
 type FilterRelation struct {
 	// Forward: the FK lives on the filtered table and points at Table
@@ -199,6 +216,9 @@ type EnumValue struct {
 	// Computed backs orderBy enum values sorting by a computed column
 	// (advanced-filters): a row-type function instead of a plain column.
 	Computed *introspect.Function
+	// Relation backs orderBy enum values sorting by a related table's column
+	// (advanced-filters); Column stays empty for these.
+	Relation *OrderRelation
 	// PGValue backs catalog enum values.
 	PGValue string
 }

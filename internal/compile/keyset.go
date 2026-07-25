@@ -137,7 +137,7 @@ func (s *stmt) anchorVals(t *introspect.Table, terms []orderTerm, keys []any) ([
 	vals := make([]string, len(terms))
 	subWhere := "" // shared across subqueries: the params are allocated once
 	for i, term := range terms {
-		if term.fn == nil {
+		if term.fn == nil && term.rel == nil {
 			if j := slices.Index(pk, term.col); j >= 0 {
 				vals[i] = s.param(s.keyParam(t.Column(term.col), keys[j]))
 				continue
@@ -151,7 +151,7 @@ func (s *stmt) anchorVals(t *introspect.Table, terms []orderTerm, keys []any) ([
 			subWhere = strings.Join(conds, " AND ")
 		}
 		vals[i] = fmt.Sprintf("(SELECT %s FROM %s AS __a WHERE %s)",
-			orderExprSQL(t, term, "__a"), s.sourceRef(t), subWhere)
+			s.orderExprSQL(t, term, "__a"), s.sourceRef(t), subWhere)
 	}
 	return vals, nil
 }
@@ -162,17 +162,18 @@ func (s *stmt) anchorVals(t *introspect.Table, terms []orderTerm, keys []any) ([
 // compare, so terms nest as s1 OR (e1 AND (s2 OR (e2 AND ...))). NULL
 // ordering follows PostgreSQL defaults (ASC = NULLS LAST, DESC = NULLS
 // FIRST); flip selects the "strictly before" form.
-func keysetPredicate(alias string, vals []string, terms []orderTerm, t *introspect.Table, flip bool) string {
+func (s *stmt) keysetPredicate(alias string, vals []string, terms []orderTerm, t *introspect.Table, flip bool) string {
 	pred := ""
 	for i := len(terms) - 1; i >= 0; i-- {
 		term := terms[i]
 		desc := term.desc != flip
-		col := orderExprSQL(t, term, alias)
+		col := s.orderExprSQL(t, term, alias)
 		k := vals[i]
 		c := t.Column(term.col)
-		// Computed terms are always treated as nullable: the function may
-		// return NULL for any row.
-		notNull := term.fn == nil && c != nil && c.NotNull
+		// Computed and relational terms are always treated as nullable: the
+		// function may return NULL for any row, and a relational subquery
+		// yields NULL when no related row exists.
+		notNull := term.fn == nil && term.rel == nil && c != nil && c.NotNull
 		op := ">"
 		if desc {
 			op = "<"
