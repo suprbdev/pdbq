@@ -21,6 +21,15 @@ invariant).
 string, e.g. `{settings: {pathMatch: "$.theme == \"dark\""}}`; `json` columns
 are cast to `jsonb` since the jsonpath operators exist only for `jsonb`.
 
+Note that these two operators execute a **caller-supplied jsonpath
+expression** against the column's data. The value is a bind parameter (no SQL
+injection), but an expensive path — e.g. `like_regex` with a pathological
+pattern over large jsonb values — can burn CPU until
+`database.statement_timeout` (default 30s) cuts it off. If you expose the API
+to untrusted callers and don't need jsonpath filtering, remove the operators
+with a smart comment (`@omit filter` on the column) or keep the statement
+timeout tight.
+
 Composite-typed columns are never filterable or orderable (regardless of
 indexes or `allow_columns`): they map to object types, which have no scalar
 operator set.
