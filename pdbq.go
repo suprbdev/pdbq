@@ -238,6 +238,7 @@ func (a *App) Executor(built *schema.Built) *exec.Executor {
 		RLS:          a.Config.RLS.Enabled,
 		ClaimsPrefix: a.Config.RLS.ClaimsPrefix,
 		DevErrors:    a.Config.Errors.Detail == "dev",
+		StrictErrors: a.Config.Errors.Detail == "strict",
 		Mint:         mint,
 		Logger:       a.Log,
 		ReadOnly:     &a.readOnly,

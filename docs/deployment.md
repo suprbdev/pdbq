@@ -38,7 +38,8 @@ truncating the query string in intermediary log formats.
 - `rls.auth.mode: jwt` with a strong `jwt_secret` (or `headers` strictly
   behind a gateway that strips inbound `X-Pdbq-Claim-*`).
 - `errors.detail: prod` (default) — constraint violations pass through,
-  internals do not.
+  internals do not. Use `strict` if constraint/column names in error
+  messages are themselves sensitive (hides all database error messages).
 - Leave `server.graphiql` and `server.expose_schema` off (their defaults)
   unless you want the playground and full SDL public — both hand an attacker
   a map of every table, column and relation.

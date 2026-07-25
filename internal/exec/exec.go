@@ -77,6 +77,10 @@ type Options struct {
 	ClaimsPrefix string
 	// DevErrors exposes full PG error details in GraphQL errors.
 	DevErrors bool
+	// StrictErrors hides every PG error message, including the
+	// constraint-violation and data-exception classes that prod mode passes
+	// through (errors.detail: strict). Ignored when DevErrors is set.
+	StrictErrors bool
 	// ReadOnly, when non-nil and true, rejects mutation operations before
 	// they compile or touch the database. It is a shared pointer so the
 	// embedding App can flip it at runtime and the state survives watch-mode
@@ -578,7 +582,7 @@ func (e *Executor) gqlError(err error, f *ast.Field) *gqlerror.Error {
 			ext["table"] = pgErr.TableName
 			ext["constraint"] = pgErr.ConstraintName
 		} else {
-			msg = sanitizePGMessage(pgErr)
+			msg = sanitizePGMessage(pgErr, e.Opts.StrictErrors)
 		}
 		return &gqlerror.Error{Message: msg, Path: path, Extensions: ext}
 	}
@@ -601,12 +605,20 @@ func (e *Executor) gqlError(err error, f *ast.Field) *gqlerror.Error {
 }
 
 // sanitizePGMessage keeps actionable constraint-class errors and hides the
-// rest behind a generic message.
-func sanitizePGMessage(pgErr *pgconn.PgError) string {
+// rest behind a generic message. strict hides those too: PG constraint
+// messages embed constraint/table/column names, which strict mode treats as
+// sensitive.
+func sanitizePGMessage(pgErr *pgconn.PgError, strict bool) string {
 	switch pgErr.Code[:2] {
 	case "23": // integrity constraint violations are user-actionable
+		if strict {
+			return "constraint violation"
+		}
 		return pgErr.Message
 	case "22": // data exceptions (bad input format)
+		if strict {
+			return "invalid input value"
+		}
 		return pgErr.Message
 	case "42": // syntax/authorization: could leak schema internals
 		if pgErr.Code == "42501" {

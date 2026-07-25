@@ -109,7 +109,7 @@ watch:
   channel: "pdbq_ddl"
 
 errors:
-  # 'dev' exposes full PostgreSQL error detail in GraphQL errors; 'prod' returns sanitized messages with a correlation id.
+  # 'dev' exposes full PostgreSQL error detail in GraphQL errors; 'prod' sanitizes but passes constraint-violation and bad-input messages through; 'strict' hides every database error message (constraint and column names never leak).
   detail: "prod"
 
 plugins:

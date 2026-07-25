@@ -104,7 +104,7 @@ type Watch struct {
 }
 
 type Errors struct {
-	Detail string `koanf:"detail" doc:"'dev' exposes full PostgreSQL error detail in GraphQL errors; 'prod' returns sanitized messages with a correlation id."`
+	Detail string `koanf:"detail" doc:"'dev' exposes full PostgreSQL error detail in GraphQL errors; 'prod' sanitizes but passes constraint-violation and bad-input messages through; 'strict' hides every database error message (constraint and column names never leak)."`
 }
 
 type Plugins struct {
@@ -199,9 +199,9 @@ func envKeyMapper(s string) string {
 func (c *Config) Validate() error {
 	var errs []string
 	switch c.Errors.Detail {
-	case "dev", "prod":
+	case "dev", "prod", "strict":
 	default:
-		errs = append(errs, fmt.Sprintf("errors.detail: %q is not 'dev' or 'prod'", c.Errors.Detail))
+		errs = append(errs, fmt.Sprintf("errors.detail: %q is not 'dev', 'prod' or 'strict'", c.Errors.Detail))
 	}
 	switch c.RLS.Auth.Mode {
 	case "jwt", "headers", "none":

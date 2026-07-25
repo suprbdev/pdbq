@@ -58,7 +58,7 @@ $ pdbq config example   # print the full annotated reference
 | `watch.enabled` | `false` | dev only; refuses to combine with cache |
 | `watch.poll_interval` | `5s` | fallback polling when event triggers can't be installed |
 | `watch.channel` | `pdbq_ddl` | NOTIFY channel used by the DDL event trigger |
-| `errors.detail` | `prod` | `dev` exposes full PG error detail |
+| `errors.detail` | `prod` | `dev` exposes full PG error detail; `strict` hides even constraint-violation messages |
 | `plugins.disabled` | `[]` | e.g. `[simple-names]` |
 | `plugins.settings.<name>` | `{}` | per-plugin config |
 | `log.level` | `info` | `debug`, `info`, `warn`, `error` |

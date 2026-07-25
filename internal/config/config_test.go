@@ -15,6 +15,15 @@ func TestDefaultsValid(t *testing.T) {
 	}
 }
 
+func TestValidateAcceptsStrictErrors(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.RLS.Auth.JWTSecret = "s"
+	cfg.Errors.Detail = "strict"
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("strict rejected: %v", err)
+	}
+}
+
 func TestValidateRejects(t *testing.T) {
 	bad := func(mutate func(*Config)) error {
 		cfg := DefaultConfig()
