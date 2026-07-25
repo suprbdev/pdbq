@@ -81,6 +81,9 @@ type Options struct {
 	// constraint-violation and data-exception classes that prod mode passes
 	// through (errors.detail: strict). Ignored when DevErrors is set.
 	StrictErrors bool
+	// DisableIntrospection rejects __schema / __type root fields
+	// (server.disable_introspection). __typename is unaffected.
+	DisableIntrospection bool
 	// ReadOnly, when non-nil and true, rejects mutation operations before
 	// they compile or touch the database. It is a shared pointer so the
 	// embedding App can flip it at runtime and the state survives watch-mode
@@ -161,6 +164,15 @@ func (e *Executor) prepare(ctx context.Context, req Request) (context.Context, *
 	}
 	if opDef.Operation == ast.Mutation && e.Opts.ReadOnly != nil && e.Opts.ReadOnly.Load() {
 		return ctx, nil, gqlerror.Errorf("server is in read-only mode: mutations are disabled")
+	}
+	if e.Opts.DisableIntrospection {
+		// __typename stays allowed: it reveals only the root type name, and
+		// clients routinely send it as a liveness probe.
+		for _, f := range collectRootFields(opDef.SelectionSet, doc.Fragments, vars) {
+			if f.Name == "__schema" || f.Name == "__type" {
+				return ctx, nil, gqlerror.Errorf("introspection is disabled")
+			}
+		}
 	}
 	if err := e.checkLimits(doc, opDef, vars); err != nil {
 		return ctx, nil, err

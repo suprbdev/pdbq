@@ -193,3 +193,44 @@ func TestRootTypename(t *testing.T) {
 		t.Errorf("__typename = %s", res.Data["__typename"])
 	}
 }
+
+// newLockedExecutor mirrors newExecutor with DisableIntrospection set.
+func newLockedExecutor(t *testing.T) *exec.Executor {
+	t.Helper()
+	b := schema.New(testutil.FixtureCatalog(), inflect.Default, schema.Options{
+		FilterIndexedOnly: true,
+		Functions:         true,
+	})
+	built, err := b.Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := compile.New(built)
+	return exec.New(nil, built, c.Compile, nil, exec.Options{DisableIntrospection: true})
+}
+
+func TestDisableIntrospectionRejectsSchemaAndType(t *testing.T) {
+	e := newLockedExecutor(t)
+	for _, q := range []string{
+		`{ __schema { queryType { name } } }`,
+		`{ __type(name: "Query") { name } }`,
+		// Introspection hidden behind a fragment must be caught too.
+		`query { ...f } fragment f on Query { __schema { queryType { name } } }`,
+	} {
+		res := e.Execute(context.Background(), exec.Request{Query: q})
+		if len(res.Errors) != 1 || !strings.Contains(res.Errors[0].Message, "introspection is disabled") {
+			t.Errorf("query %q: errors = %v, want introspection-disabled error", q, res.Errors)
+		}
+	}
+}
+
+func TestDisableIntrospectionKeepsTypename(t *testing.T) {
+	e := newLockedExecutor(t)
+	res := e.Execute(context.Background(), exec.Request{Query: `{ __typename }`})
+	if len(res.Errors) > 0 {
+		t.Fatalf("errors: %v", res.Errors)
+	}
+	if string(res.Data["__typename"]) != `"Query"` {
+		t.Errorf("__typename = %s, want "+`"Query"`, res.Data["__typename"])
+	}
+}

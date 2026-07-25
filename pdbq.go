@@ -228,20 +228,21 @@ func (a *App) Executor(built *schema.Built) *exec.Executor {
 		}
 	}
 	return exec.New(a.pool, built, compileFn, hooks, exec.Options{
-		MaxDepth:     a.Config.Server.MaxDepth,
-		MaxCost:      a.Config.Server.MaxCost,
-		MaxPageSize:  a.Config.Server.MaxPageSize,
-		TxMutations:  a.Config.TX.Mutations,
-		TxPerRequest: a.Config.TX.PerRequest,
-		TxRetries:    a.Config.TX.MaxRetries,
-		Isolation:    iso,
-		RLS:          a.Config.RLS.Enabled,
-		ClaimsPrefix: a.Config.RLS.ClaimsPrefix,
-		DevErrors:    a.Config.Errors.Detail == "dev",
-		StrictErrors: a.Config.Errors.Detail == "strict",
-		Mint:         mint,
-		Logger:       a.Log,
-		ReadOnly:     &a.readOnly,
+		MaxDepth:             a.Config.Server.MaxDepth,
+		MaxCost:              a.Config.Server.MaxCost,
+		MaxPageSize:          a.Config.Server.MaxPageSize,
+		TxMutations:          a.Config.TX.Mutations,
+		TxPerRequest:         a.Config.TX.PerRequest,
+		TxRetries:            a.Config.TX.MaxRetries,
+		Isolation:            iso,
+		RLS:                  a.Config.RLS.Enabled,
+		ClaimsPrefix:         a.Config.RLS.ClaimsPrefix,
+		DevErrors:            a.Config.Errors.Detail == "dev",
+		StrictErrors:         a.Config.Errors.Detail == "strict",
+		DisableIntrospection: a.Config.Server.DisableIntrospection,
+		Mint:                 mint,
+		Logger:               a.Log,
+		ReadOnly:             &a.readOnly,
 	})
 }
 

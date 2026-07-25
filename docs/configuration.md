@@ -45,6 +45,7 @@ $ pdbq config example   # print the full annotated reference
 | `server.persisted_queries_path` | — | JSON file of sha256 → document, preloaded as persisted queries |
 | `server.persisted_only` | `false` | reject requests that don't reference a persisted query (requires `apq` or `persisted_queries_path`) |
 | `server.read_only` | `false` | reject every mutation (maintenance, demos, defense in depth) |
+| `server.disable_introspection` | `false` | reject `__schema`/`__type` queries (`__typename` keeps working) |
 | `schema.schemas` | `[public]` | schema allowlist |
 | `schema.cache_path` | — | boot from `pdbq schema dump` output |
 | `schema.functions` | `true` | expose PostgreSQL functions as custom queries/mutations |

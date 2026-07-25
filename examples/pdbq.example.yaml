@@ -42,6 +42,8 @@ server:
   persisted_only: false
   # Reject every mutation operation (read-only mode) for maintenance, demos or defense in depth. Also toggleable at runtime when embedding pdbq as a library (App.SetReadOnly).
   read_only: false
+  # Reject __schema / __type introspection queries (off by default). Enable in production to hide the schema shape; __typename keeps working.
+  disable_introspection: false
 
 schema:
   # PostgreSQL schemas to expose.

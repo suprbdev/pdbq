@@ -42,7 +42,9 @@ truncating the query string in intermediary log formats.
   messages are themselves sensitive (hides all database error messages).
 - Leave `server.graphiql` and `server.expose_schema` off (their defaults)
   unless you want the playground and full SDL public — both hand an attacker
-  a map of every table, column and relation.
+  a map of every table, column and relation. GraphQL introspection reveals
+  the same map; set `server.disable_introspection: true` to close that
+  channel too (breaks GraphiQL and schema-aware clients).
 - Boot from a schema cache (see [caching.md](caching.md)) so the runtime
   role needs no catalog privileges; leave `watch.enabled` off.
 - Set `server.max_depth` / `server.max_cost` to fit your workload;

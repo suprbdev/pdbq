@@ -42,14 +42,15 @@ func configFlags(cmd *cobra.Command) {
 	fs.StringSlice("server.cors_origins", nil, "allowed CORS origins for /graphql ('*' for any)")
 	fs.Bool("server.compression", false, "gzip responses when the client accepts it")
 	fs.Bool("server.read_only", false, "reject every mutation operation (read-only mode)")
+	fs.Bool("server.disable_introspection", false, "reject __schema/__type introspection queries")
 	fs.StringSlice("schema.schemas", nil, "PostgreSQL schemas to expose")
 	fs.String("schema.cache_path", "", "boot from schema cache file")
 	fs.Bool("rls.enabled", true, "enable RLS role switching")
 	fs.Bool("watch.enabled", false, "watch for DDL changes (dev)")
 	fs.Bool("filters.indexed_only", true, "only indexed columns filterable")
-	fs.String("errors.detail", "", "error verbosity: dev|prod")
+	fs.String("errors.detail", "", "error verbosity: dev|prod|strict")
 	fs.String("log.level", "", "log level")
-	registerEnumCompletion(cmd, "errors.detail", "dev", "prod")
+	registerEnumCompletion(cmd, "errors.detail", "dev", "prod", "strict")
 	registerEnumCompletion(cmd, "log.level", "debug", "info", "warn", "error")
 }
 
