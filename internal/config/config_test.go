@@ -32,6 +32,8 @@ func TestValidateRejects(t *testing.T) {
 		"log level":     func(c *Config) { c.Log.Level = "loud" },
 		"max page size": func(c *Config) { c.Server.MaxPageSize = 0 },
 		"anon role":     func(c *Config) { c.RLS.AnonymousRole = "" },
+		"watch channel": func(c *Config) { c.Watch.Enabled = true; c.Watch.Channel = "bad$$chan" },
+		"trusted proxy": func(c *Config) { c.RLS.Auth.TrustedProxies = []string{"10.0.0.0/8", "not-an-ip"} },
 	}
 	for name, mutate := range cases {
 		if err := bad(mutate); err == nil {

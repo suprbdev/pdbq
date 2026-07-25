@@ -85,6 +85,8 @@ rls:
     jwt_audience: ""
     # Header prefix mapped to claims in headers mode, e.g. X-Pdbq-Claim-.
     header_prefix: "X-Pdbq-Claim-"
+    # CIDR blocks (or single IPs) allowed to supply claim headers in headers mode. Requests from other peers that carry claim headers are rejected. Empty trusts every peer and logs a startup warning.
+    trusted_proxies: []
     # Schema-qualified composite type (e.g. public.jwt) minted into a signed JWT: any function returning it yields an HS256 token string built from the composite's fields (an exp field becomes the token expiry). Requires jwt_secret; jwt_issuer/jwt_audience are embedded when set. Empty disables minting.
     jwt_type: ""
 

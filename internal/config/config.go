@@ -8,6 +8,7 @@ package config
 
 import (
 	"fmt"
+	"net/netip"
 	"strings"
 	"time"
 
@@ -78,14 +79,15 @@ type RLS struct {
 }
 
 type Auth struct {
-	Mode         string        `koanf:"mode" doc:"Claim source: 'jwt', 'headers' (behind a trusted gateway), or 'none'."`
-	JWTSecret    string        `koanf:"jwt_secret" doc:"HMAC secret for HS256/384/512 verification (jwt mode; ignored when jwks_url is set)."`
-	JWKSURL      string        `koanf:"jwks_url" doc:"JWKS endpoint for asymmetric JWT verification (RS256/384/512, ES256/384/512). Takes precedence over jwt_secret."`
-	JWKSCacheTTL time.Duration `koanf:"jwks_cache_ttl" doc:"How long fetched JWKS keys are cached; an unknown kid triggers an early refresh (key rotation)."`
-	JWTIssuer    string        `koanf:"jwt_issuer" doc:"Expected iss claim; empty skips the check."`
-	JWTAudience  string        `koanf:"jwt_audience" doc:"Expected aud claim; empty skips the check."`
-	HeaderPrefix string        `koanf:"header_prefix" doc:"Header prefix mapped to claims in headers mode, e.g. X-Pdbq-Claim-."`
-	JWTType      string        `koanf:"jwt_type" doc:"Schema-qualified composite type (e.g. public.jwt) minted into a signed JWT: any function returning it yields an HS256 token string built from the composite's fields (an exp field becomes the token expiry). Requires jwt_secret; jwt_issuer/jwt_audience are embedded when set. Empty disables minting."`
+	Mode           string        `koanf:"mode" doc:"Claim source: 'jwt', 'headers' (behind a trusted gateway), or 'none'."`
+	JWTSecret      string        `koanf:"jwt_secret" doc:"HMAC secret for HS256/384/512 verification (jwt mode; ignored when jwks_url is set)."`
+	JWKSURL        string        `koanf:"jwks_url" doc:"JWKS endpoint for asymmetric JWT verification (RS256/384/512, ES256/384/512). Takes precedence over jwt_secret."`
+	JWKSCacheTTL   time.Duration `koanf:"jwks_cache_ttl" doc:"How long fetched JWKS keys are cached; an unknown kid triggers an early refresh (key rotation)."`
+	JWTIssuer      string        `koanf:"jwt_issuer" doc:"Expected iss claim; empty skips the check."`
+	JWTAudience    string        `koanf:"jwt_audience" doc:"Expected aud claim; empty skips the check."`
+	HeaderPrefix   string        `koanf:"header_prefix" doc:"Header prefix mapped to claims in headers mode, e.g. X-Pdbq-Claim-."`
+	TrustedProxies []string      `koanf:"trusted_proxies" doc:"CIDR blocks (or single IPs) allowed to supply claim headers in headers mode. Requests from other peers that carry claim headers are rejected. Empty trusts every peer and logs a startup warning."`
+	JWTType        string        `koanf:"jwt_type" doc:"Schema-qualified composite type (e.g. public.jwt) minted into a signed JWT: any function returning it yields an HS256 token string built from the composite's fields (an exp field becomes the token expiry). Requires jwt_secret; jwt_issuer/jwt_audience are embedded when set. Empty disables minting."`
 }
 
 type TX struct {
@@ -206,6 +208,11 @@ func (c *Config) Validate() error {
 	default:
 		errs = append(errs, fmt.Sprintf("rls.auth.mode: %q is not 'jwt', 'headers' or 'none'", c.RLS.Auth.Mode))
 	}
+	for _, p := range c.RLS.Auth.TrustedProxies {
+		if _, err := ParseTrustedProxy(p); err != nil {
+			errs = append(errs, fmt.Sprintf("rls.auth.trusted_proxies: %q is not a valid IP or CIDR block", p))
+		}
+	}
 	if c.RLS.Enabled && c.RLS.Auth.Mode == "jwt" && c.RLS.Auth.JWTSecret == "" && c.RLS.Auth.JWKSURL == "" {
 		errs = append(errs, "rls.auth.jwt_secret or rls.auth.jwks_url is required when rls.enabled and auth mode is jwt")
 	}
@@ -253,6 +260,19 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("invalid config:\n  - %s", strings.Join(errs, "\n  - "))
 	}
 	return nil
+}
+
+// ParseTrustedProxy parses one rls.auth.trusted_proxies entry: either a CIDR
+// block ("10.0.0.0/8") or a single IP ("10.0.0.1", treated as /32 or /128).
+func ParseTrustedProxy(s string) (netip.Prefix, error) {
+	if strings.Contains(s, "/") {
+		return netip.ParsePrefix(s)
+	}
+	addr, err := netip.ParseAddr(s)
+	if err != nil {
+		return netip.Prefix{}, err
+	}
+	return netip.PrefixFrom(addr, addr.BitLen()), nil
 }
 
 // validChannelName restricts the watch NOTIFY channel to [a-zA-Z0-9_]; the

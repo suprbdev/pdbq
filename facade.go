@@ -93,6 +93,9 @@ func (a *App) buildServer(ctx context.Context) (*server.Server, error) {
 	if !a.Config.RLS.Enabled {
 		a.Log.Warn("RLS IS DISABLED — all requests run with the privileged connection role; do not use in production")
 	}
+	if a.Config.RLS.Enabled && a.Config.RLS.Auth.Mode == "headers" && len(a.Config.RLS.Auth.TrustedProxies) == 0 {
+		a.Log.Warn("headers auth mode without rls.auth.trusted_proxies — ANY client reaching this port can forge claims and roles; set trusted_proxies or ensure only the gateway can connect")
+	}
 	cat, err := a.LoadCatalog(ctx)
 	if err != nil {
 		return nil, err

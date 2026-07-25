@@ -3,6 +3,7 @@ package server
 import (
 	"fmt"
 	"net/http"
+	"net/netip"
 	"strings"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -16,12 +17,25 @@ type Authenticator struct {
 	cfg config.RLS
 	// jwks verifies asymmetric tokens when rls.auth.jwks_url is set.
 	jwks *jwksCache
+	// trustedProxies gates claim headers in headers mode; nil means no
+	// restriction was configured (every peer is trusted).
+	trustedProxies []netip.Prefix
 }
 
 func NewAuthenticator(cfg config.RLS) *Authenticator {
 	a := &Authenticator{cfg: cfg}
 	if cfg.Auth.JWKSURL != "" {
 		a.jwks = newJWKSCache(cfg.Auth.JWKSURL, cfg.Auth.JWKSCacheTTL)
+	}
+	if len(cfg.Auth.TrustedProxies) > 0 {
+		// Invalid entries are rejected by config.Validate; skipping them here
+		// only shrinks the trusted set (fails closed), never widens it.
+		a.trustedProxies = make([]netip.Prefix, 0, len(cfg.Auth.TrustedProxies))
+		for _, p := range cfg.Auth.TrustedProxies {
+			if pfx, err := config.ParseTrustedProxy(p); err == nil {
+				a.trustedProxies = append(a.trustedProxies, pfx)
+			}
+		}
 	}
 	return a
 }
@@ -96,7 +110,30 @@ func (a *Authenticator) fromHeaders(r *http.Request) (map[string]any, string, er
 	if len(claims) == 0 {
 		return map[string]any{}, a.cfg.AnonymousRole, nil
 	}
+	if !a.peerTrusted(r.RemoteAddr) {
+		return nil, "", fmt.Errorf("claim headers from untrusted peer")
+	}
 	return a.resolve(claims)
+}
+
+// peerTrusted reports whether the direct peer may supply claim headers. With
+// no trusted_proxies configured every peer is trusted (legacy behavior; a
+// startup warning is logged). An unparseable RemoteAddr fails closed.
+func (a *Authenticator) peerTrusted(remoteAddr string) bool {
+	if a.trustedProxies == nil {
+		return true
+	}
+	ap, err := netip.ParseAddrPort(remoteAddr)
+	if err != nil {
+		return false
+	}
+	addr := ap.Addr().Unmap()
+	for _, pfx := range a.trustedProxies {
+		if pfx.Contains(addr) {
+			return true
+		}
+	}
+	return false
 }
 
 // resolve extracts the database role from claims (falling back to

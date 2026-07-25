@@ -31,6 +31,13 @@ connections cannot leak one request's identity into another.
   authenticated the caller. Headers matching `rls.auth.header_prefix`
   (default `X-Pdbq-Claim-`) become claims: `X-Pdbq-Claim-User-Id: 42` →
   `pdbq.claims.user_id = '42'`.
+
+  Set `rls.auth.trusted_proxies` to the gateway's CIDR blocks (or single
+  IPs), e.g. `["10.0.0.0/8", "192.168.1.5"]`: claim headers arriving from
+  any other peer are rejected. Left empty, **every** peer that can reach the
+  port can forge claims and roles — pdbq logs a startup warning; only do
+  this when the network layer guarantees that nothing but the gateway can
+  connect.
 - **`none`**: every request is anonymous.
 
 ## Example policy

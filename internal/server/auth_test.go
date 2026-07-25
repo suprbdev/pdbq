@@ -1,6 +1,7 @@
 package server
 
 import (
+	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
@@ -127,5 +128,80 @@ func TestNoTokenIsAnonymous(t *testing.T) {
 	}
 	if role != "anonymous" {
 		t.Fatalf("role = %q, want anonymous", role)
+	}
+}
+
+func headersAuth(trusted ...string) *Authenticator {
+	return NewAuthenticator(config.RLS{
+		Enabled:       true,
+		AnonymousRole: "anonymous",
+		RoleClaim:     "role",
+		Auth: config.Auth{
+			Mode:           "headers",
+			HeaderPrefix:   "X-Pdbq-Claim-",
+			TrustedProxies: trusted,
+		},
+	})
+}
+
+func headersRequest(remoteAddr string) *http.Request {
+	r := httptest.NewRequest("POST", "/graphql", nil)
+	r.RemoteAddr = remoteAddr
+	r.Header.Set("X-Pdbq-Claim-Role", "app_user")
+	return r
+}
+
+func TestHeadersNoTrustedProxiesAcceptsAnyPeer(t *testing.T) {
+	a := headersAuth()
+	_, role, err := a.Authenticate(headersRequest("203.0.113.7:4444"))
+	if err != nil {
+		t.Fatalf("legacy behavior broken: %v", err)
+	}
+	if role != "app_user" {
+		t.Fatalf("role = %q, want app_user", role)
+	}
+}
+
+func TestHeadersTrustedPeerAccepted(t *testing.T) {
+	for _, tc := range []struct{ trusted, remote string }{
+		{"10.0.0.0/8", "10.1.2.3:9999"},
+		{"10.0.0.5", "10.0.0.5:80"},
+		{"10.0.0.0/8", "[::ffff:10.0.0.5]:80"}, // 4-in-6 mapped peer
+	} {
+		a := headersAuth(tc.trusted)
+		_, role, err := a.Authenticate(headersRequest(tc.remote))
+		if err != nil {
+			t.Fatalf("trusted=%s remote=%s rejected: %v", tc.trusted, tc.remote, err)
+		}
+		if role != "app_user" {
+			t.Fatalf("trusted=%s remote=%s role = %q, want app_user", tc.trusted, tc.remote, role)
+		}
+	}
+}
+
+func TestHeadersUntrustedPeerWithClaimsRejected(t *testing.T) {
+	a := headersAuth("10.0.0.0/8")
+	if _, _, err := a.Authenticate(headersRequest("203.0.113.7:4444")); err == nil {
+		t.Fatal("claim headers from untrusted peer accepted; must be rejected")
+	}
+}
+
+func TestHeadersUntrustedPeerWithoutClaimsAnonymous(t *testing.T) {
+	a := headersAuth("10.0.0.0/8")
+	r := httptest.NewRequest("POST", "/graphql", nil)
+	r.RemoteAddr = "203.0.113.7:4444"
+	_, role, err := a.Authenticate(r)
+	if err != nil {
+		t.Fatalf("claimless request rejected: %v", err)
+	}
+	if role != "anonymous" {
+		t.Fatalf("role = %q, want anonymous", role)
+	}
+}
+
+func TestHeadersUnparseableRemoteAddrFailsClosed(t *testing.T) {
+	a := headersAuth("10.0.0.0/8")
+	if _, _, err := a.Authenticate(headersRequest("not-an-address")); err == nil {
+		t.Fatal("unparseable RemoteAddr accepted; must fail closed")
 	}
 }
