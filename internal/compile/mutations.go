@@ -466,7 +466,7 @@ func (s *stmt) function(meta *schema.FieldMeta, f *ast.Field) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		params = append(params, s.param(v)+"::"+quoteIdent(a.PGType))
+		params = append(params, s.argParam(a, v)+"::"+quoteIdent(a.PGType))
 	}
 	call := fnRef + "(" + strings.Join(params, ", ") + ")"
 
@@ -482,7 +482,8 @@ func (s *stmt) function(meta *schema.FieldMeta, f *ast.Field) (string, error) {
 			return fmt.Sprintf("SELECT coalesce(jsonb_agg(%s.data), '[]'::jsonb) AS data\nFROM (\n%s\n) AS %s",
 				sub, indent(fmt.Sprintf("SELECT %s AS data\nFROM %s AS %s%s", jsonExpr, call, alias, joinLaterals(laterals))), sub), nil
 		}
-		return fmt.Sprintf("SELECT coalesce(jsonb_agg(to_jsonb(__v)), '[]'::jsonb) AS data FROM %s AS __v", call), nil
+		return fmt.Sprintf("SELECT coalesce(jsonb_agg(%s), '[]'::jsonb) AS data FROM %s AS __v",
+			s.fnValueJSON("__v", fn), call), nil
 	}
 	if t := s.tableForTypeName(fn.ReturnType); t != nil && len(f.SelectionSet) > 0 {
 		alias := s.alias("t")
@@ -498,7 +499,11 @@ func (s *stmt) function(meta *schema.FieldMeta, f *ast.Field) (string, error) {
 	if fn.ReturnType == "void" {
 		return fmt.Sprintf("SELECT to_jsonb(true) AS data FROM (SELECT %s) AS __v", call), nil
 	}
-	return fmt.Sprintf("SELECT to_jsonb(%s) AS data", call), nil
+	// Materialize the call first: fnValueJSON may subscript the value (enum
+	// arrays), and subscripting the call directly would re-evaluate it per
+	// element.
+	return fmt.Sprintf("SELECT %s AS data FROM (SELECT %s AS v) AS __fn",
+		s.fnValueJSON("__fn.v", fn), call), nil
 }
 
 // functionMutation compiles a volatile function with the Relay-classic shape
@@ -518,7 +523,7 @@ func (s *stmt) functionMutation(meta *schema.FieldMeta, f *ast.Field) (string, e
 			params = append(params, "NULL::"+quoteIdent(a.PGType))
 			continue
 		}
-		params = append(params, s.param(v)+"::"+quoteIdent(a.PGType))
+		params = append(params, s.argParam(a, v)+"::"+quoteIdent(a.PGType))
 	}
 	call := fnRef + "(" + strings.Join(params, ", ") + ")"
 
@@ -571,7 +576,8 @@ func (s *stmt) functionMutation(meta *schema.FieldMeta, f *ast.Field) (string, e
 			from = fmt.Sprintf("(SELECT coalesce(jsonb_agg(%s.data), '[]'::jsonb) AS data FROM (\n%s\n) AS %s) AS __agg",
 				sub, indent(fmt.Sprintf("SELECT %s AS data\nFROM %s AS %s%s", jsonExpr, call, alias, joinLaterals(laterals))), sub)
 		} else {
-			from = fmt.Sprintf("(SELECT coalesce(jsonb_agg(to_jsonb(__v)), '[]'::jsonb) AS data FROM %s AS __v) AS __agg", call)
+			from = fmt.Sprintf("(SELECT coalesce(jsonb_agg(%s), '[]'::jsonb) AS data FROM %s AS __v) AS __agg",
+				s.fnValueJSON("__v", fn), call)
 		}
 		resultExpr = "__agg.data"
 	case fn.ReturnType == "void":
@@ -589,7 +595,7 @@ func (s *stmt) functionMutation(meta *schema.FieldMeta, f *ast.Field) (string, e
 			resultExpr = fmt.Sprintf("CASE WHEN %s IS NULL THEN NULL ELSE %s END", alias, jsonExpr)
 		} else {
 			from = fmt.Sprintf("(SELECT %s AS v) AS __fn", call)
-			resultExpr = "to_jsonb(__fn.v)"
+			resultExpr = s.fnValueJSON("__fn.v", fn)
 		}
 	}
 	if resultField != nil {

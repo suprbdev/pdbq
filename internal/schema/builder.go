@@ -962,7 +962,16 @@ func (b *Builder) addFunctions() {
 				"function", f.Schema+"."+f.Name)
 			continue
 		}
-		retBase := scalarFor(strings.TrimPrefix(f.ReturnType, "_"))
+		retElem := strings.TrimPrefix(f.ReturnType, "_")
+		retBase := scalarFor(retElem)
+		// An enum return type resolves to the generated enum type: a bare
+		// scalarFor would flatten it to String, and the compiler would then
+		// emit raw pg labels for a field the client reads as an enum.
+		// Composite returns deliberately stay scalars — the JWT mint path
+		// replaces a mint-composite result with a signed token string.
+		if e := b.Catalog.Enum(f.ReturnTypeSchema, retElem); e != nil {
+			retBase = b.Inflect(inflect.KindEnumTypeName, inflect.Input{Schema: e.Schema, Enum: e.Name})
+		}
 		// setof <table> -> list of the table's object type when known.
 		for key, tn := range b.TypeForTable {
 			if strings.HasSuffix(key, "."+f.ReturnType) {
@@ -974,8 +983,12 @@ func (b *Builder) addFunctions() {
 			retBase = "Boolean"
 		}
 		retType := retBase
-		if f.ReturnsSet {
+		switch {
+		case f.ReturnsSet:
 			retType = "[" + retBase + "!]!"
+		case strings.HasPrefix(f.ReturnType, "_"):
+			// An array return type is a list of the element type.
+			retType = "[" + retBase + "!]"
 		}
 		fieldName := b.Inflect(inflect.KindFunctionField, inflect.Input{Schema: f.Schema, Function: f.Name})
 		if f.Volatility == introspect.VolatilityVolatile {
@@ -997,7 +1010,7 @@ func (b *Builder) addFunctions() {
 			for _, a := range f.Args {
 				in.AddField(&InputField{
 					Name: inflect.LowerCamel(a.Name),
-					Type: argGQLType(a),
+					Type: b.argGQLType(a),
 				})
 			}
 			in.AddField(&InputField{Name: "clientMutationId", Type: "String"})
@@ -1024,7 +1037,7 @@ func (b *Builder) addFunctions() {
 		for _, a := range f.Args {
 			args = append(args, Arg{
 				Name: inflect.LowerCamel(a.Name),
-				Type: argGQLType(a),
+				Type: b.argGQLType(a),
 			})
 		}
 		b.addRootField(b.Query, &Field{
@@ -1038,9 +1051,18 @@ func (b *Builder) addFunctions() {
 }
 
 // argGQLType maps a function argument's pg type to a GraphQL input type;
-// array types ("_uuid") become lists.
-func argGQLType(a introspect.FuncArg) string {
-	base := scalarFor(strings.TrimPrefix(a.PGType, "_"))
+// array types ("_uuid") become lists. Enum and composite arguments resolve to
+// their generated input types so callers pass enum value names rather than raw
+// pg labels (the compiler maps them back via coerceInput).
+func (b *Builder) argGQLType(a introspect.FuncArg) string {
+	elem := strings.TrimPrefix(a.PGType, "_")
+	base := scalarFor(elem)
+	// Enum arguments take the generated enum type so callers pass value names;
+	// the compiler maps them back to pg labels (argParam). Composite arguments
+	// stay scalars: nothing coerces a composite literal on the way in.
+	if e := b.Catalog.Enum(a.TypeSchema, elem); e != nil {
+		base = b.Inflect(inflect.KindEnumTypeName, inflect.Input{Schema: e.Schema, Enum: e.Name})
+	}
 	if strings.HasPrefix(a.PGType, "_") {
 		return "[" + base + "]"
 	}
@@ -1109,7 +1131,7 @@ func (b *Builder) addComputedField(t *introspect.Table, f *introspect.Function) 
 	for _, a := range f.Args[1:] {
 		args = append(args, Arg{
 			Name: inflect.LowerCamel(a.Name),
-			Type: scalarFor(strings.TrimPrefix(a.PGType, "_")),
+			Type: b.argGQLType(a),
 		})
 	}
 	b.addRootField(obj, &Field{

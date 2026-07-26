@@ -164,6 +164,33 @@ func FixtureCatalog() *introspect.Catalog {
 			},
 			ReturnType: "text", ReturnTypeSchema: "pg_catalog",
 			Volatility: introspect.VolatilityStable,
+		}, {
+			// Enum return -> Query.bestMood: Mood (not String).
+			Schema: "public", Name: "best_mood",
+			ReturnType: "mood", ReturnTypeSchema: "public",
+			Volatility: introspect.VolatilityStable,
+		}, {
+			// Enum array return -> Query.allMoods: [Mood!].
+			Schema: "public", Name: "all_moods",
+			ReturnType: "_mood", ReturnTypeSchema: "public",
+			Volatility: introspect.VolatilityStable,
+		}, {
+			// SETOF enum -> Query.moodMoods: [Mood!]!.
+			Schema: "public", Name: "mood_moods",
+			ReturnType: "mood", ReturnTypeSchema: "public", ReturnsSet: true,
+			Volatility: introspect.VolatilityStable,
+		}, {
+			// Enum argument -> Query.describeMood(m: Mood).
+			Schema: "public", Name: "describe_mood",
+			Args:       []introspect.FuncArg{{Name: "m", PGType: "mood", TypeSchema: "public"}},
+			ReturnType: "text", ReturnTypeSchema: "pg_catalog",
+			Volatility: introspect.VolatilityStable,
+		}, {
+			// Volatile enum return -> Mutation.bumpMood(input:){result}.
+			Schema: "public", Name: "bump_mood",
+			Args:       []introspect.FuncArg{{Name: "m", PGType: "mood", TypeSchema: "public"}},
+			ReturnType: "mood", ReturnTypeSchema: "public",
+			Volatility: introspect.VolatilityVolatile,
 		}},
 	}
 }

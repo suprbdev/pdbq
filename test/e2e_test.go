@@ -499,6 +499,23 @@ func TestQueries(t *testing.T) {
 		}
 	})
 
+	t.Run("enum function returns and args", func(t *testing.T) {
+		// Functions returning an enum (scalar, array, or SETOF) are typed with
+		// the generated enum type, so their values are enum value names too.
+		res := post(t, hs.URL, `{bestMood allMoods moodMoods describeMood(m: HAPPY)}`, nil)
+		requireNoErrors(t, res)
+		for field, want := range map[string]string{
+			"bestMood":     `"HAPPY"`,
+			"allMoods":     `["SAD","OK"]`,
+			"moodMoods":    `["OK","HAPPY"]`,
+			"describeMood": `"mood is happy"`,
+		} {
+			if got := normalize(t, res.Data[field]); got != want {
+				t.Errorf("%s: got %s want %s", field, got, want)
+			}
+		}
+	})
+
 	t.Run("function", func(t *testing.T) {
 		res := post(t, hs.URL, `{searchPosts(term: "compilers") { title author { email } }}`, nil)
 		requireNoErrors(t, res)
@@ -1160,6 +1177,14 @@ func TestFunctionMutations(t *testing.T) {
 	requireNoErrors(t, res)
 	if got := normalize(t, res.Data["wordLengths"]); got != `{"result":3}` {
 		t.Errorf("wordLengths: got %s", got)
+	}
+
+	// Enum-typed arguments and returns speak GraphQL enum value names in both
+	// directions; the compiler maps them to pg labels and back.
+	res = post(t, hs.URL, `mutation { bumpMood(input: {m: SAD}) { result } }`, nil)
+	requireNoErrors(t, res)
+	if got := normalize(t, res.Data["bumpMood"]); got != `{"result":"OK"}` {
+		t.Errorf("bumpMood: got %s", got)
 	}
 
 	// The call runs even when result is not selected.

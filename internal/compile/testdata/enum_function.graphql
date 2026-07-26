@@ -1,0 +1,6 @@
+{
+  bestMood
+  allMoods
+  moodMoods
+  describeMood(m: HAPPY)
+}

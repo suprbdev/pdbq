@@ -178,7 +178,7 @@ func (s *stmt) computedJSON(meta *schema.FieldMeta, f *ast.Field, alias string, 
 		if err != nil {
 			return "", err
 		}
-		params = append(params, s.param(v)+"::"+quoteIdent(a.PGType))
+		params = append(params, s.argParam(a, v)+"::"+quoteIdent(a.PGType))
 	}
 	call := quoteIdent(fn.Schema) + "." + quoteIdent(fn.Name) + "(" + strings.Join(params, ", ") + ")"
 	ret := &introspect.Column{
@@ -350,6 +350,43 @@ func (s *stmt) enumArrayJSON(ref string, c *introspect.Column) (string, bool) {
 	mapped, _ := s.enumCase("("+ref+")["+elem+".o]", c)
 	return fmt.Sprintf("CASE WHEN %s IS NULL THEN NULL ELSE (SELECT coalesce(jsonb_agg(%s ORDER BY %s.o), '[]'::jsonb) FROM (SELECT generate_subscripts(%s, 1) AS o) AS %s) END",
 		ref, mapped, elem, ref, elem), true
+}
+
+// argParam renders a function argument value as a parameter, mapping GraphQL
+// enum value names back to their pg labels first: enum-typed arguments are
+// declared with the generated enum type, so the incoming value is a value name
+// ("HAPPY") that PostgreSQL would reject as a label.
+func (s *stmt) argParam(a introspect.FuncArg, v any) string {
+	col := &introspect.Column{
+		PGType:     a.PGType,
+		TypeSchema: a.TypeSchema,
+		IsArray:    strings.HasPrefix(a.PGType, "_"),
+	}
+	return s.param(s.coerce(col, v))
+}
+
+// fnReturnColumn describes a function's return type as a column, so the
+// scalar/array JSON renderers can apply the same representation fixes they
+// apply to real columns (enum value names, BigInt-as-string, bytea base64).
+func fnReturnColumn(fn *introspect.Function) *introspect.Column {
+	return &introspect.Column{
+		PGType:     fn.ReturnType,
+		TypeSchema: fn.ReturnTypeSchema,
+		IsArray:    strings.HasPrefix(fn.ReturnType, "_"),
+	}
+}
+
+// fnValueJSON renders a already-materialized function result value (a stable
+// reference such as "__fn.v", not a call expression) as response JSON.
+func (s *stmt) fnValueJSON(ref string, fn *introspect.Function) string {
+	ret := fnReturnColumn(fn)
+	if ret.IsArray {
+		if expr, ok := s.enumArrayJSON(ref, ret); ok {
+			return expr
+		}
+		return "to_jsonb(" + ref + ")"
+	}
+	return "to_jsonb(" + s.exprJSON(ref, ret) + ")"
 }
 
 func anyMap(m map[string]string) map[string]any {

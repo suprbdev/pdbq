@@ -111,6 +111,34 @@ VOLATILE LANGUAGE sql AS $$
     SELECT coalesce(array_length(words, 1), 0);
 $$;
 
+-- Enum-typed function returns/arguments map to the generated enum type, so
+-- both directions speak GraphQL enum value names rather than raw pg labels.
+CREATE FUNCTION best_mood() RETURNS mood
+STABLE LANGUAGE sql AS $$
+    SELECT 'happy'::mood;
+$$;
+
+CREATE FUNCTION all_moods() RETURNS mood[]
+STABLE LANGUAGE sql AS $$
+    SELECT ARRAY['sad', 'ok']::mood[];
+$$;
+
+CREATE FUNCTION mood_moods() RETURNS SETOF mood
+STABLE LANGUAGE sql AS $$
+    SELECT unnest(ARRAY['ok', 'happy']::mood[]);
+$$;
+
+CREATE FUNCTION describe_mood(m mood) RETURNS text
+STABLE LANGUAGE sql AS $$
+    SELECT 'mood is ' || m::text;
+$$;
+
+-- Volatile enum return: exercises the mutation payload path.
+CREATE FUNCTION bump_mood(m mood) RETURNS mood
+VOLATILE LANGUAGE sql AS $$
+    SELECT CASE m WHEN 'sad' THEN 'ok' WHEN 'ok' THEN 'happy' ELSE 'happy' END::mood;
+$$;
+
 -- JWT minting (rls.auth.jwt_type = public.jwt): functions returning this
 -- composite yield signed tokens; the fields become claims.
 CREATE TYPE jwt AS (
