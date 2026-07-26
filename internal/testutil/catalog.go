@@ -5,9 +5,9 @@ package testutil
 
 import "github.com/suprbdev/pdbq/internal/introspect"
 
-// FixtureCatalog models: users (pk id, unique email, enum mood, jsonb,
-// text[], composite address + address[]), posts (pk id, fk author_id ->
-// users.id), places (PostGIS geometry + geography, GiST-indexed), plus a
+// FixtureCatalog models: users (pk id, unique email, enum mood + mood[],
+// jsonb, text[], composite address + address[]), posts (pk id, fk author_id
+// -> users.id), places (PostGIS geometry + geography, GiST-indexed), plus a
 // stable function.
 func FixtureCatalog() *introspect.Catalog {
 	users := &introspect.Table{
@@ -25,6 +25,7 @@ func FixtureCatalog() *introspect.Catalog {
 			{Name: "created_at", Position: 8, PGType: "timestamptz", TypeSchema: "pg_catalog", NotNull: true, HasDefault: true},
 			{Name: "address", Position: 9, PGType: "address", TypeSchema: "public"},
 			{Name: "prev_addresses", Position: 10, PGType: "_address", TypeSchema: "public", IsArray: true},
+			{Name: "moods", Position: 11, PGType: "_mood", TypeSchema: "public", IsArray: true},
 		},
 		PrimaryKey: &introspect.Constraint{Name: "users_pkey", Columns: []string{"id"}},
 		Uniques:    []*introspect.Constraint{{Name: "users_email_key", Columns: []string{"email"}}},
@@ -34,6 +35,7 @@ func FixtureCatalog() *introspect.Catalog {
 			{Name: "users_mood_idx", Columns: []string{"mood"}, Method: "btree"},
 			{Name: "users_settings_idx", Columns: []string{"settings"}, Method: "gin"},
 			{Name: "users_tags_idx", Columns: []string{"tags"}, Method: "gin"},
+			{Name: "users_moods_idx", Columns: []string{"moods"}, Method: "gin"},
 		},
 	}
 	posts := &introspect.Table{

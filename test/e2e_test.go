@@ -475,6 +475,30 @@ func TestQueries(t *testing.T) {
 		}
 	})
 
+	t.Run("enum array columns", func(t *testing.T) {
+		// Enum arrays must surface GraphQL enum value names (uppercase), the
+		// same as scalar enum columns: the schema declares moods as [Mood!],
+		// so raw pg labels would not be valid values of the declared type.
+		res := post(t, hs.URL, `{userByEmail(email: "ada@example.com") { mood moods }}`, nil)
+		requireNoErrors(t, res)
+		want := `{"mood": "HAPPY", "moods": ["SAD", "HAPPY"]}`
+		if got := normalize(t, res.Data["userByEmail"]); got != normalizeStr(t, want) {
+			t.Errorf("got %s want %s", got, normalizeStr(t, want))
+		}
+		// A NULL enum array stays null rather than becoming an empty list.
+		res = post(t, hs.URL, `{userByEmail(email: "alan@example.com") { moods }}`, nil)
+		requireNoErrors(t, res)
+		if got := normalize(t, res.Data["userByEmail"]); got != `{"moods":null}` {
+			t.Errorf("null enum array: got %s", got)
+		}
+		// Filtering by enum array still round-trips through the same names.
+		res = post(t, hs.URL, `{allUsers(filter: {moods: {contains: [HAPPY]}}) { nodes { email moods } }}`, nil)
+		requireNoErrors(t, res)
+		if !strings.Contains(string(res.Data["allUsers"]), `"SAD"`) {
+			t.Errorf("enum array filter: got %s", res.Data["allUsers"])
+		}
+	})
+
 	t.Run("function", func(t *testing.T) {
 		res := post(t, hs.URL, `{searchPosts(term: "compilers") { title author { email } }}`, nil)
 		requireNoErrors(t, res)

@@ -120,6 +120,9 @@ func (s *stmt) columnJSON(alias string, c *introspect.Column) string {
 			// element through ST_AsGeoJSON instead.
 			return s.spatialArrayJSON(ref)
 		}
+		if expr, ok := s.enumArrayJSON(ref, c); ok {
+			return expr
+		}
 		return "to_jsonb(" + ref + ")"
 	}
 	return s.exprJSON(ref, c)
@@ -201,6 +204,13 @@ func (s *stmt) computedJSON(meta *schema.FieldMeta, f *ast.Field, alias string, 
 			s.exprJSON(elem+".v", ret), call, elem), nil
 	}
 	if ret.IsArray {
+		// A function call is not a stable reference: enumArrayJSON would
+		// subscript it repeatedly, re-evaluating the call per element.
+		if _, ok := s.enumValuesFor(ret); ok {
+			sub := s.alias("a")
+			mapped, _ := s.enumArrayJSON(sub+".v", ret)
+			return fmt.Sprintf("(SELECT %s FROM (SELECT %s AS v) AS %s)", mapped, call, sub), nil
+		}
 		return "to_jsonb(" + call + ")", nil
 	}
 	return s.exprJSON(call, ret), nil
@@ -277,7 +287,11 @@ func (s *stmt) compositeJSON(ref string, comp *introspect.Composite, isArray boo
 				return "", err
 			}
 		} else if meta.Column.IsArray {
-			expr = "to_jsonb(" + attr + ")"
+			if mapped, ok := s.enumArrayJSON(attr, meta.Column); ok {
+				expr = mapped
+			} else {
+				expr = "to_jsonb(" + attr + ")"
+			}
 		} else {
 			expr = s.exprJSON(attr, meta.Column)
 		}
@@ -286,15 +300,13 @@ func (s *stmt) compositeJSON(ref string, comp *introspect.Composite, isArray boo
 	return fmt.Sprintf("CASE WHEN (%s)::text IS NULL THEN NULL ELSE %s END", ref, buildJSONObject(pairs)), nil
 }
 
-// enumCase maps a pg enum column back to GraphQL enum value names with a
-// CASE expression (NULL falls through automatically).
+// enumCase maps a pg enum value back to its GraphQL enum value name with a
+// CASE expression (NULL falls through automatically). The column's element
+// type is what matters, so an enum array resolves the same mapping; callers
+// handling arrays use enumArrayJSON instead.
 func (s *stmt) enumCase(ref string, c *introspect.Column) (string, bool) {
-	enumType, ok := s.c.Built.EnumTypeForPG[c.TypeSchema+"."+c.PGType]
+	values, ok := s.enumValuesFor(c)
 	if !ok {
-		return "", false
-	}
-	values := s.c.Built.EnumValues[enumType]
-	if len(values) == 0 {
 		return "", false
 	}
 	var b strings.Builder
@@ -304,6 +316,40 @@ func (s *stmt) enumCase(ref string, c *introspect.Column) (string, bool) {
 	}
 	b.WriteString(" END")
 	return b.String(), true
+}
+
+// enumValuesFor returns the GraphQL-value-name -> pg-label map for a column
+// whose (element) type is an enum. The "_" prefix is stripped so array columns
+// resolve to the same enum as their scalar counterpart.
+func (s *stmt) enumValuesFor(c *introspect.Column) (map[string]string, bool) {
+	if c == nil {
+		return nil, false
+	}
+	base := strings.TrimPrefix(c.PGType, "_")
+	enumType, ok := s.c.Built.EnumTypeForPG[c.TypeSchema+"."+base]
+	if !ok {
+		return nil, false
+	}
+	values := s.c.Built.EnumValues[enumType]
+	if len(values) == 0 {
+		return nil, false
+	}
+	return values, true
+}
+
+// enumArrayJSON renders an enum array as a JSON array of GraphQL enum value
+// names. to_jsonb would emit the raw lowercase pg labels, which do not match
+// the enum values the schema declares for the field ([Mood!]), so each element
+// goes through the same CASE mapping the scalar path uses. Element order and
+// the NULL-ness of the array itself are preserved.
+func (s *stmt) enumArrayJSON(ref string, c *introspect.Column) (string, bool) {
+	if _, ok := s.enumValuesFor(c); !ok {
+		return "", false
+	}
+	elem := s.alias("m")
+	mapped, _ := s.enumCase("("+ref+")["+elem+".o]", c)
+	return fmt.Sprintf("CASE WHEN %s IS NULL THEN NULL ELSE (SELECT coalesce(jsonb_agg(%s ORDER BY %s.o), '[]'::jsonb) FROM (SELECT generate_subscripts(%s, 1) AS o) AS %s) END",
+		ref, mapped, elem, ref, elem), true
 }
 
 func anyMap(m map[string]string) map[string]any {

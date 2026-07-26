@@ -1,0 +1,7 @@
+{
+  userById(id: 1) {
+    id
+    mood
+    moods
+  }
+}

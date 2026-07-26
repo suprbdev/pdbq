@@ -20,11 +20,13 @@ CREATE TABLE users (
     balance    bigint NOT NULL DEFAULT 0,
     created_at timestamptz NOT NULL DEFAULT now(),
     address        address,
-    prev_addresses address[]
+    prev_addresses address[],
+    moods          mood[]
 );
 CREATE INDEX users_mood_idx ON users (mood);
 CREATE INDEX users_settings_idx ON users USING gin (settings);
 CREATE INDEX users_tags_idx ON users USING gin (tags);
+CREATE INDEX users_moods_idx ON users USING gin (moods);
 
 CREATE TABLE posts (
     id         integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -166,12 +168,14 @@ CREATE POLICY posts_own_writes ON posts FOR ALL TO app_user
     WITH CHECK (author_id = NULLIF(current_setting('pdbq.claims.user_id', true), '')::integer);
 
 -- Seed data.
-INSERT INTO users (email, full_name, mood, settings, tags, address, prev_addresses) VALUES
+INSERT INTO users (email, full_name, mood, settings, tags, address, prev_addresses, moods) VALUES
     ('ada@example.com',   'Ada Lovelace',  'happy', '{"theme": "dark"}',  ARRAY['admin', 'founder'],
         ROW('12 St James Sq', 'London', 'happy')::address,
-        ARRAY[ROW('1 Ockham Park', 'Surrey', 'ok')::address]),
-    ('grace@example.com', 'Grace Hopper',  'ok',    '{"theme": "light"}', ARRAY['staff'], NULL, NULL),
-    ('alan@example.com',  'Alan Turing',   'happy', NULL,                 NULL, NULL, NULL);
+        ARRAY[ROW('1 Ockham Park', 'Surrey', 'ok')::address],
+        ARRAY['sad', 'happy']::mood[]),
+    ('grace@example.com', 'Grace Hopper',  'ok',    '{"theme": "light"}', ARRAY['staff'], NULL, NULL,
+        ARRAY['ok']::mood[]),
+    ('alan@example.com',  'Alan Turing',   'happy', NULL,                 NULL, NULL, NULL, NULL);
 
 -- Spatial seed: three London-ish points plus one far away, so bounding-box
 -- and radius queries have both hits and misses.
