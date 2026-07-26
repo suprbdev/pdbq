@@ -8,6 +8,7 @@ import (
 
 	"github.com/suprbdev/pdbq/internal/inflect"
 	"github.com/suprbdev/pdbq/internal/introspect"
+	"github.com/suprbdev/pdbq/internal/postgis"
 	"github.com/suprbdev/pdbq/internal/schema"
 )
 
@@ -51,7 +52,23 @@ func (s *stmt) rowJSON(t *introspect.Table, sel ast.SelectionSet, alias string, 
 				pairs = append(pairs, key, expr)
 				continue
 			}
+			if postgis.IsSpatial(meta.Column.PGType) && !meta.Column.IsArray {
+				// transform:/simplify: arguments apply before GeoJSON encoding.
+				expr, err := s.spatialFieldSQL(alias, meta.Column, f)
+				if err != nil {
+					return "", nil, err
+				}
+				pairs = append(pairs, key, expr)
+				continue
+			}
 			pairs = append(pairs, key, s.columnJSON(alias, meta.Column))
+		case schema.KindSpatialDerived:
+			suffix, _ := meta.Nested["suffix"].(string)
+			expr, err := s.spatialDerivedSQL(alias, meta.Column, suffix)
+			if err != nil {
+				return "", nil, err
+			}
+			pairs = append(pairs, key, expr)
 		case schema.KindNodeID:
 			pairs = append(pairs, key, nodeIDSQL(typeName, meta.Table, alias))
 		case schema.KindComputed:
@@ -98,9 +115,22 @@ func buildJSONObject(pairs []string) string {
 func (s *stmt) columnJSON(alias string, c *introspect.Column) string {
 	ref := alias + "." + quoteIdent(c.Name)
 	if c.IsArray {
+		if f := postgis.FlavourOf(c.PGType); f.Spatial() {
+			// to_jsonb on a geometry[] would emit WKB hex strings; map each
+			// element through ST_AsGeoJSON instead.
+			return s.spatialArrayJSON(ref)
+		}
 		return "to_jsonb(" + ref + ")"
 	}
 	return s.exprJSON(ref, c)
+}
+
+// spatialArrayJSON renders a geometry/geography array as a JSON array of
+// GeoJSON objects, preserving element order and NULL-ness of the array itself.
+func (s *stmt) spatialArrayJSON(ref string) string {
+	elem := s.alias("g")
+	return fmt.Sprintf("CASE WHEN %s IS NULL THEN NULL ELSE (SELECT coalesce(jsonb_agg(%s ORDER BY %s.o), '[]'::jsonb) FROM (SELECT generate_subscripts(%s, 1) AS o) AS %s) END",
+		ref, postgis.OutputSQL("("+ref+")["+elem+".o]"), elem, ref, elem)
 }
 
 // exprJSON renders a scalar value expression for inclusion in the JSON
@@ -110,6 +140,11 @@ func (s *stmt) columnJSON(alias string, c *introspect.Column) string {
 func (s *stmt) exprJSON(ref string, c *introspect.Column) string {
 	if expr, ok := s.enumCase(ref, c); ok {
 		return expr
+	}
+	if postgis.FlavourOf(c.PGType).Spatial() {
+		// PostGIS values render as WKB hex by default; the GeoJSON scalar
+		// contract is a real JSON object.
+		return postgis.OutputSQL(ref)
 	}
 	switch c.PGType {
 	case "int8", "numeric", "money":

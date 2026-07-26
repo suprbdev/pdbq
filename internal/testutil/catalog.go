@@ -7,7 +7,8 @@ import "github.com/suprbdev/pdbq/internal/introspect"
 
 // FixtureCatalog models: users (pk id, unique email, enum mood, jsonb,
 // text[], composite address + address[]), posts (pk id, fk author_id ->
-// users.id), plus a stable function.
+// users.id), places (PostGIS geometry + geography, GiST-indexed), plus a
+// stable function.
 func FixtureCatalog() *introspect.Catalog {
 	users := &introspect.Table{
 		Schema: "public", Name: "users", Kind: introspect.RelTable,
@@ -56,6 +57,31 @@ func FixtureCatalog() *introspect.Catalog {
 			{Name: "posts_title_idx", Columns: []string{"title"}, Method: "btree"},
 		},
 	}
+	// places carries the PostGIS columns: geometry (planar, SRID units) and
+	// geography (spheroidal, metres), both GiST-indexed so the indexed-only
+	// filter policy admits them.
+	places := &introspect.Table{
+		Schema: "public", Name: "places", Kind: introspect.RelTable,
+		Privileges: introspect.Privileges{Select: true, Insert: true, Update: true, Delete: true},
+		Columns: []*introspect.Column{
+			{Name: "id", Position: 1, PGType: "int4", TypeSchema: "pg_catalog", NotNull: true, HasDefault: true, Generated: true},
+			{Name: "owner_id", Position: 2, PGType: "int4", TypeSchema: "pg_catalog"},
+			{Name: "name", Position: 3, PGType: "text", TypeSchema: "pg_catalog", NotNull: true},
+			{Name: "location", Position: 4, PGType: "geometry", TypeSchema: "public"},
+			{Name: "area", Position: 5, PGType: "geography", TypeSchema: "public"},
+		},
+		PrimaryKey: &introspect.Constraint{Name: "places_pkey", Columns: []string{"id"}},
+		ForeignKeys: []*introspect.ForeignKey{{
+			Name: "places_owner_id_fkey", Columns: []string{"owner_id"},
+			RefSchema: "public", RefTable: "users", RefColumns: []string{"id"},
+		}},
+		Indexes: []*introspect.Index{
+			{Name: "places_pkey", Columns: []string{"id"}, Unique: true, Method: "btree"},
+			{Name: "places_owner_id_idx", Columns: []string{"owner_id"}, Method: "btree"},
+			{Name: "places_location_idx", Columns: []string{"location"}, Method: "gist"},
+			{Name: "places_area_idx", Columns: []string{"area"}, Method: "gist"},
+		},
+	}
 	// metrics is a PK-less view: no nodeId, offset-cursor pagination only.
 	metrics := &introspect.Table{
 		Schema: "public", Name: "metrics", Kind: introspect.RelView,
@@ -69,7 +95,7 @@ func FixtureCatalog() *introspect.Catalog {
 		FormatVersion: introspect.CatalogFormatVersion,
 		ServerVersion: "16.0",
 		Schemas:       []string{"public"},
-		Tables:        []*introspect.Table{metrics, posts, users},
+		Tables:        []*introspect.Table{metrics, places, posts, users},
 		Enums: []*introspect.Enum{{
 			Schema: "public", Name: "mood", Values: []string{"sad", "ok", "happy"},
 		}},

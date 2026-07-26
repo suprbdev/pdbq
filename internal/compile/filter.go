@@ -6,8 +6,43 @@ import (
 	"strings"
 
 	"github.com/suprbdev/pdbq/internal/introspect"
+	"github.com/suprbdev/pdbq/internal/postgis"
 	"github.com/suprbdev/pdbq/internal/schema"
 )
+
+// spatialValueExpr renders a GeoJSON/WKT input value as a PostGIS constructor
+// over a single parameter. Arrays build the element expressions individually
+// and collect them into an ARRAY[...] literal — the element count comes from
+// the query shape, and every coordinate still travels as a parameter.
+func (s *stmt) spatialValueExpr(f postgis.Flavour, isArray bool, v any) (string, error) {
+	if !isArray {
+		val, err := postgis.Parse(v, f)
+		if err != nil {
+			return "", errUser("%s", err.Error())
+		}
+		return val.SQL(s.param(val.Param)), nil
+	}
+	list, ok := v.([]any)
+	if !ok {
+		return "", errUser("spatial list value must be a list")
+	}
+	parts := make([]string, len(list))
+	for i, item := range list {
+		if item == nil {
+			parts[i] = "NULL::" + f.String()
+			continue
+		}
+		val, err := postgis.Parse(item, f)
+		if err != nil {
+			return "", errUser("%s", err.Error())
+		}
+		parts[i] = val.SQL(s.param(val.Param))
+	}
+	if len(parts) == 0 {
+		return "ARRAY[]::" + f.String() + "[]", nil
+	}
+	return "ARRAY[" + strings.Join(parts, ", ") + "]::" + f.String() + "[]", nil
+}
 
 // filterCond compiles a <Type>Filter input value into a boolean SQL
 // expression over alias, or "" when the filter is empty.
@@ -262,6 +297,12 @@ func (s *stmt) refOps(col *introspect.Column, ref string, v any) (string, error)
 }
 
 func (s *stmt) oneOp(col *introspect.Column, ref, op string, val any) (string, error) {
+	// Spatial columns have their own operator vocabulary; the scalar
+	// comparisons below are meaningless (and mostly rejected) for PostGIS
+	// types, so they never reach a geometry column.
+	if f := postgis.FlavourOf(col.PGType); f.Spatial() {
+		return s.spatialOp(f, ref, op, val)
+	}
 	switch op {
 	case "equalTo":
 		return ref + " = " + s.param(s.coerce(col, val)), nil
@@ -420,6 +461,16 @@ func coerceInputSlice(built *schema.Built, col *introspect.Column, list []any) [
 func (s *stmt) valueExpr(col *introspect.Column, v any) string {
 	if comp := s.compositeFor(col); comp != nil && v != nil {
 		return s.compositeParam(comp, col, v)
+	}
+	if f := postgis.FlavourOf(col.PGType); f.Spatial() && v != nil {
+		expr, err := s.spatialValueExpr(f, col.IsArray, v)
+		if err != nil {
+			// valueExpr has no error return; record it so compilation fails
+			// with the user-facing message instead of emitting bad SQL.
+			s.fail(err)
+			return "NULL"
+		}
+		return expr
 	}
 	if col.IsArray && v != nil {
 		if cast, ok := enumArrayCast(s.c.Built, col); ok {

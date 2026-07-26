@@ -11,6 +11,7 @@ matching the Postgres type:
 | arrays | `equalTo notEqualTo contains containedBy overlaps isNull` |
 | json/jsonb | `equalTo contains containedBy containsKey pathExists pathMatch isNull` |
 | enums | scalar set, with GraphQL enum values |
+| PostGIS geometry/geography | spatial set only (`bboxIntersects intersects within dwithin` …) — see [PostGIS](postgis.md) |
 
 `startsWith`/`endsWith` escape `%`/`_`/`\` in the operand; every operand is
 a bind parameter — the SQL text never varies with input values (fuzz-tested

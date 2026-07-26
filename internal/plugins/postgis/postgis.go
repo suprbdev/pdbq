@@ -1,0 +1,394 @@
+// Package postgis is a built-in plugin exposing PostGIS spatial columns as a
+// full GraphQL query surface.
+//
+// Default generation already reads and writes spatial columns as GeoJSON (the
+// core compiler handles the GeoJSON scalar). This plugin adds everything built
+// on top of that:
+//
+//   - spatial filters: every geometry/geography column gets a
+//     GeometryFilterOps operand set covering bounding-box operators
+//     (bboxIntersects/&&, bboxContains/~, bboxContainedBy/@), the DE-9IM
+//     predicates (intersects, contains, within, covers, crosses, touches,
+//     overlaps, equals, disjoint, containsProperly, coveredBy), and radius
+//     search (dwithin/beyond). Bounding-box and dwithin operators are
+//     GiST-index-usable, which is what keeps viewport and "near me" queries
+//     fast on large tables.
+//
+//   - derived accessors: each spatial column gains sibling fields for the
+//     scalar properties PostGIS can compute in the same statement —
+//     <field>Area, <field>Length, <field>Perimeter, <field>Centroid,
+//     <field>Envelope, <field>Srid, <field>GeometryType, <field>IsValid.
+//
+//   - projection arguments: spatial fields accept transform: (reproject to an
+//     SRID) and simplify: (ST_SimplifyPreserveTopology tolerance), so clients
+//     can pull web-mercator or low-vertex geometry without a second query.
+//
+//   - distance ordering: <COLUMN>_DISTANCE_ASC/_DESC orderBy values plus a
+//     `near:` argument on list and connection fields, compiled to the
+//     index-assisted KNN operator (<->).
+//
+// Geometry and geography are both supported. They share the operator
+// vocabulary but differ in units: geography measures in metres, geometry in
+// SRID units. dwithin takes a `useSpheroid` flag so lat/lon data stored as
+// plain geometry can still be searched in metres.
+//
+// Like advanced-filters, the plugin only adds schema surface plus catalog
+// bindings; the compiler reads the bindings and stays inert when they are
+// absent, so disabling the plugin (plugins.disabled: [postgis]) removes the
+// surface completely while plain GeoJSON read/write keeps working.
+//
+// Per-object control follows the same smart-comment conventions as the rest of
+// the codebase: "@omit filter" / "@omit order" on a spatial column skips its
+// filter / ordering surface.
+package postgis
+
+import (
+	"context"
+	"strings"
+
+	"github.com/suprbdev/pdbq/internal/inflect"
+	"github.com/suprbdev/pdbq/internal/introspect"
+	"github.com/suprbdev/pdbq/internal/postgis"
+	"github.com/suprbdev/pdbq/internal/schema"
+	"github.com/suprbdev/pdbq/internal/smarttags"
+)
+
+// Plugin implements the SchemaHook adding the spatial surface.
+type Plugin struct {
+	// filters generates the spatial operator inputs.
+	filters bool
+	// derived generates the <field>Area/<field>Centroid/... accessors.
+	derived bool
+	// ordering generates distance orderBy values and the `near:` argument.
+	ordering bool
+	// projection generates the transform:/simplify: field arguments.
+	projection bool
+}
+
+// New builds the plugin from its `plugins.settings.postgis` map.
+func New(settings map[string]any) *Plugin {
+	p := &Plugin{filters: true, derived: true, ordering: true, projection: true}
+	for key, target := range map[string]*bool{
+		"filters":    &p.filters,
+		"derived":    &p.derived,
+		"ordering":   &p.ordering,
+		"projection": &p.projection,
+	} {
+		if v, ok := settings[key].(bool); ok {
+			*target = v
+		}
+	}
+	return p
+}
+
+func (p *Plugin) Name() string { return "postgis" }
+
+// Priority 160 places the plugin just after advanced-filters (150), so the
+// filter inputs it extends already exist and relation filters are in place.
+func (p *Plugin) Priority() int { return 160 }
+
+// ---- SchemaHook ----
+
+func (p *Plugin) TransformSchema(_ context.Context, b *schema.Builder) error {
+	if !hasSpatialColumn(b.Catalog) {
+		return nil
+	}
+	p.addSharedInputs(b)
+	for _, t := range b.Catalog.Tables {
+		cols := spatialColumns(t)
+		if len(cols) == 0 {
+			continue
+		}
+		if p.filters {
+			p.addSpatialFilters(b, t, cols)
+		}
+		if p.derived {
+			p.addDerivedFields(b, t, cols)
+		}
+		if p.projection {
+			p.addProjectionArgs(b, t, cols)
+		}
+		if p.ordering {
+			p.addDistanceOrdering(b, t, cols)
+		}
+	}
+	return nil
+}
+
+// hasSpatialColumn reports whether any table carries a PostGIS column.
+func hasSpatialColumn(cat *introspect.Catalog) bool {
+	for _, t := range cat.Tables {
+		if len(spatialColumns(t)) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// spatialColumns returns the geometry/geography columns of a table.
+func spatialColumns(t *introspect.Table) []*introspect.Column {
+	var out []*introspect.Column
+	for _, c := range t.Columns {
+		if postgis.IsSpatial(c.PGType) {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// omits reports which halves of the surface a smart comment removes.
+func omits(comment string) (skipFilter, skipOrder bool) {
+	tags, _ := smarttags.Parse(comment)
+	om, everything := tags.Omits()
+	return everything || om["filter"], everything || om["order"]
+}
+
+// Shared input type names.
+const (
+	bboxInput    = "BBoxInput"
+	dwithinInput = "DWithinInput"
+	nearInput    = "NearInput"
+)
+
+// addSharedInputs declares the operand types every spatial column reuses.
+func (p *Plugin) addSharedInputs(b *schema.Builder) {
+	if _, ok := b.Inputs[bboxInput]; !ok {
+		in := &schema.Input{
+			Name: bboxInput,
+			Description: "An axis-aligned bounding box. Corners are in the coordinate system " +
+				"identified by srid (WGS84 lon/lat when omitted).",
+			Fields: []*schema.InputField{
+				{Name: "minX", Type: "Float!", Description: "Minimum X (longitude)."},
+				{Name: "minY", Type: "Float!", Description: "Minimum Y (latitude)."},
+				{Name: "maxX", Type: "Float!", Description: "Maximum X (longitude)."},
+				{Name: "maxY", Type: "Float!", Description: "Maximum Y (latitude)."},
+				{Name: "srid", Type: "Int", Default: "4326", Description: "Spatial reference identifier of the corners."},
+			},
+		}
+		b.Inputs[bboxInput] = in
+	}
+	if _, ok := b.Inputs[dwithinInput]; !ok {
+		b.Inputs[dwithinInput] = &schema.Input{
+			Name: dwithinInput,
+			Description: "A radius search: a geometry plus a distance. The distance is in metres " +
+				"for geography columns and in SRID units for geometry columns, unless useSpheroid is set.",
+			Fields: []*schema.InputField{
+				{Name: "geometry", Type: postgis.TypeName + "!", Description: "Centre geometry, as GeoJSON or WKT."},
+				{Name: "distance", Type: "Float!", Description: "Search radius."},
+				{Name: "useSpheroid", Type: "Boolean", Default: "false",
+					Description: "Measure in metres on a geometry column by casting both sides to geography."},
+			},
+		}
+	}
+	if _, ok := b.Inputs[nearInput]; !ok {
+		b.Inputs[nearInput] = &schema.Input{
+			Name:        nearInput,
+			Description: "Reference geometry for distance ordering (<COLUMN>_DISTANCE_ASC/_DESC).",
+			Fields: []*schema.InputField{
+				{Name: "geometry", Type: postgis.TypeName + "!", Description: "Reference geometry, as GeoJSON or WKT."},
+			},
+		}
+	}
+}
+
+// opsInputName is the shared operator input for spatial columns. Geometry and
+// geography share one type: the operator set is identical and the unit
+// difference is a property of the column, not of the input.
+const opsInputName = "GeometryFilterOps"
+
+// addSpatialFilters gives each spatial column a filter field bound to the
+// shared spatial operator input.
+func (p *Plugin) addSpatialFilters(b *schema.Builder, t *introspect.Table, cols []*introspect.Column) {
+	filterName := b.Inflect(inflect.KindFilterTypeName, inflect.Input{Schema: t.Schema, Table: t.Name})
+	in, ok := b.Inputs[filterName]
+	if !ok {
+		return
+	}
+	p.ensureOpsInput(b)
+	allowed := filterableSet(b, t)
+	for _, c := range cols {
+		if skip, _ := omits(c.Comment); skip {
+			continue
+		}
+		// Respect the indexed-only policy exactly like scalar columns: a
+		// spatial filter without a GiST index is a sequential scan.
+		if !allowed[c.Name] {
+			continue
+		}
+		name := b.Inflect(inflect.KindFieldName, inflect.Input{Schema: t.Schema, Table: t.Name, Column: c.Name})
+		in.AddField(&schema.InputField{
+			Name:        name,
+			Type:        opsInputName,
+			Description: "Spatial filters on " + c.Name + ".",
+			Column:      c.Name,
+		})
+	}
+}
+
+// filterableSet reports which of the table's columns the indexed-only policy
+// admits, as a set for cheap lookup.
+func filterableSet(b *schema.Builder, t *introspect.Table) map[string]bool {
+	out := map[string]bool{}
+	for _, c := range b.FilterableColumns(t) {
+		out[c.Name] = true
+	}
+	return out
+}
+
+// ensureOpsInput declares GeometryFilterOps once per schema.
+func (p *Plugin) ensureOpsInput(b *schema.Builder) {
+	if _, ok := b.Inputs[opsInputName]; ok {
+		return
+	}
+	in := &schema.Input{
+		Name: opsInputName,
+		Description: "Spatial operators for a PostGIS geometry or geography column. " +
+			"Bounding-box operators and dwithin can use a GiST index; the exact " +
+			"predicates are precise but scan more rows.",
+	}
+	for _, op := range postgis.Ops {
+		desc := op.Description
+		if op.Index {
+			desc += " Index-usable."
+		}
+		in.AddField(&schema.InputField{Name: op.Name, Type: op.Arg, Description: desc})
+	}
+	b.Inputs[opsInputName] = in
+}
+
+// addDerivedFields adds the computed spatial accessors as sibling fields of
+// each spatial column (location -> locationArea, locationCentroid, ...).
+func (p *Plugin) addDerivedFields(b *schema.Builder, t *introspect.Table, cols []*introspect.Column) {
+	typeName := b.TypeForTable[t.Schema+"."+t.Name]
+	obj, ok := b.Objects[typeName]
+	if !ok {
+		return
+	}
+	for _, c := range cols {
+		base := b.Inflect(inflect.KindFieldName, inflect.Input{Schema: t.Schema, Table: t.Name, Column: c.Name})
+		for _, d := range postgis.Deriveds {
+			name := base + d.Suffix
+			if obj.Field(name) != nil {
+				// A real column already owns the name; leave it alone.
+				continue
+			}
+			obj.AddField(&schema.Field{
+				Name:        name,
+				Type:        d.Type,
+				Description: d.Description,
+				Meta: &schema.FieldMeta{
+					Kind:   schema.KindSpatialDerived,
+					Table:  t,
+					Column: c,
+					Nested: map[string]any{"suffix": d.Suffix},
+				},
+			})
+		}
+	}
+}
+
+// addProjectionArgs adds transform:/simplify: to each spatial column field.
+func (p *Plugin) addProjectionArgs(b *schema.Builder, t *introspect.Table, cols []*introspect.Column) {
+	typeName := b.TypeForTable[t.Schema+"."+t.Name]
+	obj, ok := b.Objects[typeName]
+	if !ok {
+		return
+	}
+	for _, c := range cols {
+		name := b.Inflect(inflect.KindFieldName, inflect.Input{Schema: t.Schema, Table: t.Name, Column: c.Name})
+		f := obj.Field(name)
+		if f == nil {
+			continue
+		}
+		f.Args = append(f.Args,
+			schema.Arg{Name: "transform", Type: "Int"},
+			schema.Arg{Name: "simplify", Type: "Float"},
+		)
+	}
+}
+
+// addDistanceOrdering adds <COLUMN>_DISTANCE_ASC/_DESC values to the table's
+// orderBy enum and a `near:` argument to the fields that accept orderBy.
+//
+// The enum value carries the column binding; the reference geometry comes from
+// `near:` at query time, which is why the two are generated together.
+func (p *Plugin) addDistanceOrdering(b *schema.Builder, t *introspect.Table, cols []*introspect.Column) {
+	enumName := b.Inflect(inflect.KindOrderByTypeName, inflect.Input{Schema: t.Schema, Table: t.Name})
+	en, ok := b.Enums[enumName]
+	if !ok {
+		return
+	}
+	allowed := filterableSet(b, t)
+	added := false
+	for _, c := range cols {
+		if _, skip := omits(c.Comment); skip {
+			continue
+		}
+		if !allowed[c.Name] {
+			continue
+		}
+		base := inflect.EnumValue(c.Name)
+		for _, dir := range []struct {
+			suffix string
+			desc   bool
+		}{{"_DISTANCE_ASC", false}, {"_DISTANCE_DESC", true}} {
+			value := base + dir.suffix
+			if hasEnumValue(en, value) {
+				continue
+			}
+			en.Values = append(en.Values, schema.EnumValue{
+				Name: value,
+				Desc: dir.desc,
+				Description: "Order by distance from the geometry given in the near: argument " +
+					"(nearest first for _ASC). Requires near:.",
+				Column:   c.Name,
+				Distance: true,
+			})
+			added = true
+		}
+	}
+	if added {
+		p.addNearArg(b, t, enumName)
+	}
+}
+
+func hasEnumValue(en *schema.Enum, name string) bool {
+	for _, v := range en.Values {
+		if v.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+// addNearArg adds `near: NearInput` to every field that already takes the
+// table's orderBy enum, so distance ordering has a reference geometry.
+func (p *Plugin) addNearArg(b *schema.Builder, t *introspect.Table, enumName string) {
+	for _, obj := range b.Objects {
+		for _, f := range obj.Fields {
+			if !takesOrderBy(f, enumName) || hasArg(f, "near") {
+				continue
+			}
+			f.Args = append(f.Args, schema.Arg{Name: "near", Type: nearInput})
+		}
+	}
+}
+
+// takesOrderBy reports whether a field accepts the given orderBy enum.
+func takesOrderBy(f *schema.Field, enumName string) bool {
+	for _, a := range f.Args {
+		if a.Name == "orderBy" && strings.Contains(a.Type, enumName) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasArg(f *schema.Field, name string) bool {
+	for _, a := range f.Args {
+		if a.Name == name {
+			return true
+		}
+	}
+	return false
+}

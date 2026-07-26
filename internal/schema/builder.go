@@ -11,7 +11,39 @@ import (
 
 	"github.com/suprbdev/pdbq/internal/inflect"
 	"github.com/suprbdev/pdbq/internal/introspect"
+	"github.com/suprbdev/pdbq/internal/postgis"
 )
+
+// catalogHasSpatial reports whether any column, composite attribute, or
+// function signature in the catalog uses a PostGIS type — the trigger for
+// declaring the GeoJSON scalar.
+func catalogHasSpatial(cat *introspect.Catalog) bool {
+	for _, t := range cat.Tables {
+		for _, c := range t.Columns {
+			if postgis.IsSpatial(c.PGType) {
+				return true
+			}
+		}
+	}
+	for _, ct := range cat.Composites {
+		for _, f := range ct.Fields {
+			if postgis.IsSpatial(f.PGType) {
+				return true
+			}
+		}
+	}
+	for _, fn := range cat.Functions {
+		if postgis.IsSpatial(fn.ReturnType) {
+			return true
+		}
+		for _, a := range fn.Args {
+			if postgis.IsSpatial(a.PGType) {
+				return true
+			}
+		}
+	}
+	return false
+}
 
 // Options control default generation.
 type Options struct {
@@ -88,6 +120,9 @@ type OrderSpec struct {
 	// Relation orders by a related table's column (advanced-filters); Column
 	// stays empty for these.
 	Relation *OrderRelation
+	// Distance orders by spatial distance from the field's near: geometry
+	// (postgis plugin); Column names the spatial column measured from.
+	Distance bool
 }
 
 // New creates a Builder with all default types generated from the catalog.
@@ -107,6 +142,12 @@ func New(cat *introspect.Catalog, inflector inflect.Next, opts Options) *Builder
 		TypeForComposite:  map[string]string{},
 		InputForComposite: map[string]string{},
 		log:               opts.Logger,
+	}
+	// The GeoJSON scalar is only declared when the database actually has a
+	// PostGIS column, so schemas without spatial data are byte-identical to
+	// what pdbq generated before PostGIS support existed.
+	if catalogHasSpatial(cat) {
+		b.Scalars = append(b.Scalars, postgis.TypeName)
 	}
 	b.Query = &Object{Name: "Query"}
 	b.Mutation = &Object{Name: "Mutation"}
@@ -416,6 +457,13 @@ func (b *Builder) addFilter(t *introspect.Table) string {
 	in.AddField(&InputField{Name: "or", Type: "[" + name + "!]"})
 	in.AddField(&InputField{Name: "not", Type: name})
 	for _, c := range cols {
+		// Spatial columns get their operator set from the postgis plugin
+		// (GeometryFilterOps). Generating a scalar operator input here would
+		// leave an unused type behind whenever the plugin is enabled, and an
+		// unusable one when it is not.
+		if postgis.IsSpatial(c.PGType) {
+			continue
+		}
 		gqlType := b.gqlTypeForColumn(c)
 		elem := strings.TrimSuffix(strings.TrimPrefix(gqlType, "["), "!]")
 		opInput := b.opInputFor(elem, c.PGType, c.IsArray)
@@ -442,6 +490,11 @@ func (b *Builder) addCondition(t *introspect.Table) string {
 	name := b.Inflect(inflect.KindConditionTypeName, inflect.Input{Schema: t.Schema, Table: t.Name})
 	in := &Input{Name: name, Description: "Equality condition for " + typeName + ": every provided field must equal its value (all fields are ANDed); an explicit null matches SQL NULL."}
 	for _, c := range cols {
+		// Spatial columns have no plain equality operator; use the filter
+		// argument's spatial predicates (equals, intersects, ...) instead.
+		if postgis.IsSpatial(c.PGType) {
+			continue
+		}
 		in.AddField(&InputField{
 			Name:   b.Inflect(inflect.KindFieldName, inflect.Input{Table: t.Name, Column: c.Name}),
 			Type:   b.gqlInputTypeForColumn(c),
@@ -501,6 +554,11 @@ func (b *Builder) addDistinctOn(t *introspect.Table) string {
 	name := b.Inflect(inflect.KindDistinctOnTypeName, inflect.Input{Schema: t.Schema, Table: t.Name})
 	en := &Enum{Name: name, Description: "Columns to de-duplicate " + b.TypeForTable[tableKey(t.Schema, t.Name)] + " rows by (SELECT DISTINCT ON)."}
 	for _, c := range cols {
+		// DISTINCT ON needs a btree equality operator, which PostGIS types do
+		// not provide; offering the value would only produce a runtime error.
+		if postgis.IsSpatial(c.PGType) {
+			continue
+		}
 		en.Values = append(en.Values, EnumValue{Name: inflect.EnumValue(c.Name), Column: c.Name})
 	}
 	b.Enums[name] = en
@@ -516,6 +574,12 @@ func (b *Builder) addOrderBy(t *introspect.Table) string {
 	name := b.Inflect(inflect.KindOrderByTypeName, inflect.Input{Schema: t.Schema, Table: t.Name})
 	en := &Enum{Name: name}
 	for _, c := range cols {
+		// PostGIS values have no meaningful linear order; the postgis plugin
+		// adds <COLUMN>_DISTANCE_ASC/_DESC instead, which sorts by distance
+		// from a supplied reference geometry.
+		if postgis.IsSpatial(c.PGType) {
+			continue
+		}
 		base := inflect.EnumValue(c.Name)
 		en.Values = append(en.Values,
 			EnumValue{Name: base + "_ASC", Column: c.Name},
@@ -1111,7 +1175,7 @@ func (b *Builder) Build() (*Built, error) {
 		values := map[string]string{}
 		for _, v := range en.Values {
 			if v.Column != "" || v.Computed != nil || v.Relation != nil {
-				ordered[v.Name] = OrderSpec{Column: v.Column, Desc: v.Desc, Computed: v.Computed, Relation: v.Relation}
+				ordered[v.Name] = OrderSpec{Column: v.Column, Desc: v.Desc, Computed: v.Computed, Relation: v.Relation, Distance: v.Distance}
 			}
 			if v.PGValue != "" {
 				values[v.Name] = v.PGValue

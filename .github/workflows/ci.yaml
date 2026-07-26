@@ -24,7 +24,9 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: postgres:16-alpine
+        # PostGIS-enabled: the fixture schema creates the extension for the
+        # spatial e2e coverage.
+        image: postgis/postgis:16-3.4
         env:
           POSTGRES_USER: pdbq
           POSTGRES_PASSWORD: pdbq

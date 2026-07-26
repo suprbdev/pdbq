@@ -39,6 +39,11 @@ const (
 	KindSynthetic        FieldKind = "synthetic"          // handled by the executor (e.g. connection internals)
 	KindNodeID           FieldKind = "node_id"            // nodeId: ID! global identifier on a row type
 	KindNode             FieldKind = "node"               // Query.node(nodeId: ID!) global lookup
+	// KindSpatialDerived is a computed PostGIS accessor on a spatial column
+	// (postgis plugin): <field>Area, <field>Centroid, ... The accessor is
+	// named by Meta.Nested["suffix"] and compiles to a PostGIS call over
+	// Meta.Column in the same statement.
+	KindSpatialDerived FieldKind = "spatial_derived"
 )
 
 // FieldMeta binds a GraphQL field to the catalog for SQL compilation.
@@ -219,6 +224,10 @@ type EnumValue struct {
 	// Relation backs orderBy enum values sorting by a related table's column
 	// (advanced-filters); Column stays empty for these.
 	Relation *OrderRelation
+	// Distance marks orderBy enum values sorting by spatial distance from
+	// the reference geometry in the field's near: argument (postgis plugin).
+	// Column names the spatial column being measured from.
+	Distance bool
 	// PGValue backs catalog enum values.
 	PGValue string
 }

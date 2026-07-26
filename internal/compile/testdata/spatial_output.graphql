@@ -1,0 +1,26 @@
+# Spatial reads: GeoJSON output, the transform:/simplify: projection
+# arguments, and the derived accessors — all inside one statement.
+{
+  reads: allPlaces {
+    nodes {
+      name
+      location
+      locationSrid
+      locationGeometryType
+      locationCentroid
+      locationEnvelope
+      locationIsValid
+      area
+      areaArea
+      areaLength
+      areaCentroid
+    }
+  }
+  projected: allPlaces {
+    nodes {
+      webMercator: location(transform: 3857)
+      coarse: location(simplify: 0.01)
+      both: location(transform: 3857, simplify: 0.01)
+    }
+  }
+}

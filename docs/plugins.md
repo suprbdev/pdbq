@@ -97,6 +97,12 @@ leave `computed: false` if that matters for your workload. Relational order
 columns *do* respect `filters.indexed_only`, exactly like the related table's
 own orderBy enum.
 
+The built-in `postgis` plugin (priority 160) follows exactly this shape for
+PostGIS columns: it adds `GeometryFilterOps` fields, derived accessors,
+projection arguments and distance-ordering enum values plus their bindings,
+and the core compiler reads the bindings without a `CompileHook`. See
+[PostGIS](postgis.md).
+
 ## Worked example 3: smart-comments
 
 `internal/plugins/smartcomments` combines three hooks to turn PostgreSQL

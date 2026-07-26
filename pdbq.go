@@ -23,6 +23,7 @@ import (
 	"github.com/suprbdev/pdbq/internal/plugin"
 	"github.com/suprbdev/pdbq/internal/plugins/advancedfilters"
 	"github.com/suprbdev/pdbq/internal/plugins/nestedmutations"
+	postgisplugin "github.com/suprbdev/pdbq/internal/plugins/postgis"
 	"github.com/suprbdev/pdbq/internal/plugins/simplenames"
 	"github.com/suprbdev/pdbq/internal/plugins/smartcomments"
 	"github.com/suprbdev/pdbq/internal/schema"
@@ -88,6 +89,7 @@ func builtinPlugins(cfg config.Config) []plugin.Plugin {
 		smartcomments.New(),
 		simplenames.New(),
 		advancedfilters.New(cfg.Plugins.Settings["advanced-filters"]),
+		postgisplugin.New(cfg.Plugins.Settings["postgis"]),
 		nestedmutations.New(cfg.Plugins.Settings["nested-mutations"]),
 	}
 }

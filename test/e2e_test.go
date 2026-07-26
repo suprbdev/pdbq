@@ -619,6 +619,153 @@ func TestAdvancedFilters(t *testing.T) {
 		}
 	})
 
+	t.Run("postgis spatial reads", func(t *testing.T) {
+		res := post(t, hs.URL, `{
+			allPlaces(orderBy: [ID_ASC]) {
+				nodes { name location locationSrid locationGeometryType }
+			}
+		}`, nil)
+		requireNoErrors(t, res)
+		var conn struct {
+			Nodes []struct {
+				Name         string          `json:"name"`
+				Location     json.RawMessage `json:"location"`
+				Srid         int             `json:"locationSrid"`
+				GeometryType string          `json:"locationGeometryType"`
+			} `json:"nodes"`
+		}
+		mustUnmarshal(t, res.Data["allPlaces"], &conn)
+		if len(conn.Nodes) == 0 {
+			t.Fatal("no places returned")
+		}
+		first := conn.Nodes[0]
+		// The value must arrive as a GeoJSON object, not WKB hex or a string.
+		var geo struct {
+			Type        string    `json:"type"`
+			Coordinates []float64 `json:"coordinates"`
+		}
+		mustUnmarshal(t, first.Location, &geo)
+		if geo.Type != "Point" || len(geo.Coordinates) != 2 {
+			t.Errorf("expected a GeoJSON Point, got %s", first.Location)
+		}
+		if first.Srid != 4326 {
+			t.Errorf("srid = %d, want 4326", first.Srid)
+		}
+		if first.GeometryType != "ST_Point" {
+			t.Errorf("geometryType = %q, want ST_Point", first.GeometryType)
+		}
+	})
+
+	t.Run("postgis bounding box filter", func(t *testing.T) {
+		// The box covers London but not Sydney.
+		res := post(t, hs.URL, `{
+			allPlaces(filter: {location: {bboxIntersects: {minX: -0.5, minY: 51.3, maxX: 0.3, maxY: 51.7}}}, orderBy: [ID_ASC]) {
+				nodes { name }
+			}
+		}`, nil)
+		requireNoErrors(t, res)
+		names := nodeNames(t, res.Data["allPlaces"])
+		if len(names) == 0 {
+			t.Fatal("bounding box matched nothing")
+		}
+		for _, n := range names {
+			if n == "Sydney Opera House" {
+				t.Errorf("Sydney should be outside the London bounding box")
+			}
+		}
+	})
+
+	t.Run("postgis radius search", func(t *testing.T) {
+		// 5 km around Trafalgar Square: reaches the British Museum, not Sydney.
+		res := post(t, hs.URL, `{
+			allPlaces(filter: {location: {dwithin: {
+				geometry: {type: "Point", coordinates: [-0.1281, 51.5080]},
+				distance: 5000,
+				useSpheroid: true
+			}}}, orderBy: [ID_ASC]) { nodes { name } }
+		}`, nil)
+		requireNoErrors(t, res)
+		names := nodeNames(t, res.Data["allPlaces"])
+		if !contains(names, "Trafalgar Square") || !contains(names, "British Museum") {
+			t.Errorf("expected nearby London places, got %v", names)
+		}
+		if contains(names, "Sydney Opera House") {
+			t.Errorf("Sydney is not within 5 km of Trafalgar Square: %v", names)
+		}
+	})
+
+	t.Run("postgis distance ordering", func(t *testing.T) {
+		res := post(t, hs.URL, `{
+			allPlaces(near: {geometry: "SRID=4326;POINT(-0.1281 51.5080)"}, orderBy: [LOCATION_DISTANCE_ASC]) {
+				nodes { name }
+			}
+		}`, nil)
+		requireNoErrors(t, res)
+		names := nodeNames(t, res.Data["allPlaces"])
+		if len(names) == 0 {
+			t.Fatal("no places returned")
+		}
+		if names[0] != "Trafalgar Square" {
+			t.Errorf("nearest place = %q, want Trafalgar Square (order: %v)", names[0], names)
+		}
+		if names[len(names)-1] != "Sydney Opera House" {
+			t.Errorf("farthest place = %q, want Sydney Opera House (order: %v)", names[len(names)-1], names)
+		}
+	})
+
+	t.Run("postgis WKT input round-trip", func(t *testing.T) {
+		res := post(t, hs.URL, `mutation {
+			createPlace(input: {name: "WKT Test", location: "SRID=4326;POINT(10 20)"}) {
+				place { id name location locationSrid }
+			}
+		}`, nil)
+		requireNoErrors(t, res)
+		var payload struct {
+			Place struct {
+				ID       int             `json:"id"`
+				Location json.RawMessage `json:"location"`
+				Srid     int             `json:"locationSrid"`
+			} `json:"place"`
+		}
+		mustUnmarshal(t, res.Data["createPlace"], &payload)
+		var geo struct {
+			Coordinates []float64 `json:"coordinates"`
+		}
+		mustUnmarshal(t, payload.Place.Location, &geo)
+		if len(geo.Coordinates) != 2 || geo.Coordinates[0] != 10 || geo.Coordinates[1] != 20 {
+			t.Errorf("WKT did not round-trip: %s", payload.Place.Location)
+		}
+		if payload.Place.Srid != 4326 {
+			t.Errorf("srid = %d, want 4326", payload.Place.Srid)
+		}
+		// Clean up so reruns against a persistent dev DB stay idempotent.
+		post(t, hs.URL, fmt.Sprintf(`mutation { deletePlaceById(id: %d) { place { id } } }`, payload.Place.ID), nil)
+	})
+
+	t.Run("postgis rejects malformed geometry", func(t *testing.T) {
+		res := post(t, hs.URL, `{
+			allPlaces(filter: {location: {intersects: "NOT A GEOMETRY"}}) { nodes { id } }
+		}`, nil)
+		if len(res.Errors) == 0 {
+			t.Error("malformed WKT should be rejected")
+		}
+	})
+
+	t.Run("postgis disabled plugin removes the spatial surface", func(t *testing.T) {
+		hs := testServer(t, func(cfg *config.Config) {
+			cfg.Plugins.Disabled = append(cfg.Plugins.Disabled, "postgis")
+		})
+		res := post(t, hs.URL, `{
+			allPlaces(filter: {location: {bboxIntersects: {minX: 0, minY: 0, maxX: 1, maxY: 1}}}) { nodes { id } }
+		}`, nil)
+		if len(res.Errors) == 0 {
+			t.Error("spatial filter should be rejected when postgis is disabled")
+		}
+		// Plain GeoJSON reads are core behaviour and must still work.
+		res = post(t, hs.URL, `{allPlaces { nodes { location } }}`, nil)
+		requireNoErrors(t, res)
+	})
+
 	t.Run("disabled plugin removes the surface", func(t *testing.T) {
 		hs := testServer(t, func(cfg *config.Config) {
 			cfg.Plugins.Disabled = append(cfg.Plugins.Disabled, "advanced-filters")
@@ -628,6 +775,31 @@ func TestAdvancedFilters(t *testing.T) {
 			t.Error("postCount filter should be rejected when advanced-filters is disabled")
 		}
 	})
+}
+
+// nodeNames extracts the `name` field from each node of a connection result.
+func nodeNames(t *testing.T, raw json.RawMessage) []string {
+	t.Helper()
+	var conn struct {
+		Nodes []struct {
+			Name string `json:"name"`
+		} `json:"nodes"`
+	}
+	mustUnmarshal(t, raw, &conn)
+	out := make([]string, len(conn.Nodes))
+	for i, n := range conn.Nodes {
+		out[i] = n.Name
+	}
+	return out
+}
+
+func contains(list []string, want string) bool {
+	for _, v := range list {
+		if v == want {
+			return true
+		}
+	}
+	return false
 }
 
 // emails extracts one string field from each node of a connection result.
@@ -757,6 +929,23 @@ func TestMutationsAndRollback(t *testing.T) {
 	requireNoErrors(t, res)
 	if c := strings.Count(string(res.Data["createUser"]), `"title"`); c != 2 {
 		t.Errorf("nested create should return 2 posts: %s", res.Data["createUser"])
+	}
+
+	// Nested mutation writing a PostGIS column: geometry values flow through
+	// the nested-mutations CTE builder, not the core compiler, so they need
+	// the constructor wrapper there too.
+	res = post(t, hs.URL, fmt.Sprintf(`mutation {
+		createUser(input: {
+			email: %q
+			placesByOwnerId: {create: [
+				{name: "nested geo", location: {type: "Point", coordinates: [1, 2]}}
+				{name: "nested wkt", location: "SRID=4326;POINT(3 4)"}
+			]}
+		}) { user { id placesByOwnerId { nodes { name location } } } }
+	}`, email("nestedgeo")), nil)
+	requireNoErrors(t, res)
+	if !strings.Contains(string(res.Data["createUser"]), `"coordinates"`) {
+		t.Errorf("nested spatial create did not return GeoJSON: %s", res.Data["createUser"])
 	}
 
 	// Induced failure: duplicate email inside a nested mutation must roll

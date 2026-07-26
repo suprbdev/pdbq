@@ -16,6 +16,7 @@ import (
 
 	"github.com/suprbdev/pdbq/internal/compile"
 	"github.com/suprbdev/pdbq/internal/inflect"
+	postgisplugin "github.com/suprbdev/pdbq/internal/plugins/postgis"
 	"github.com/suprbdev/pdbq/internal/schema"
 	"github.com/suprbdev/pdbq/internal/testutil"
 )
@@ -23,12 +24,19 @@ import (
 var update = flag.Bool("update", false, "rewrite golden files")
 
 // build compiles the fixture catalog into a Built schema with default naming.
+//
+// The postgis plugin is applied because the spatial surface (filters, derived
+// accessors, distance ordering) only exists once it has run, and the golden
+// files cover that SQL.
 func build(t testing.TB) *schema.Built {
 	t.Helper()
 	b := schema.New(testutil.FixtureCatalog(), inflect.Default, schema.Options{
 		FilterIndexedOnly: true,
 		Functions:         true,
 	})
+	if err := postgisplugin.New(nil).TransformSchema(context.Background(), b); err != nil {
+		t.Fatalf("postgis plugin: %v", err)
+	}
 	built, err := b.Build()
 	if err != nil {
 		t.Fatalf("build schema: %v", err)

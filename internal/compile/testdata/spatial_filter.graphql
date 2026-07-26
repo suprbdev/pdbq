@@ -1,0 +1,22 @@
+# Bounding-box and exact-predicate spatial filters. The bbox operators are the
+# index-usable ones; intersects/within are exact.
+{
+  bbox: allPlaces(filter: {
+    location: {
+      bboxIntersects: {minX: -0.2, minY: 51.4, maxX: 0.0, maxY: 51.6}
+    }
+  }) {
+    nodes { id name }
+  }
+  exact: allPlaces(filter: {
+    location: {
+      intersects: {type: "Polygon", coordinates: [[[-0.2, 51.4], [0.0, 51.4], [0.0, 51.6], [-0.2, 51.4]]]}
+      within: "SRID=4326;POLYGON((-1 51,1 51,1 52,-1 51))"
+    }
+  }) {
+    nodes { id }
+  }
+  nullness: allPlaces(filter: {location: {isNull: false}, area: {isNull: true}}) {
+    nodes { id }
+  }
+}

@@ -75,3 +75,76 @@ func FuzzFilter(f *testing.F) {
 		}
 	})
 }
+
+// FuzzSpatial is FuzzFilter for the PostGIS path: WKT strings and bounding-box
+// coordinates are user data, so they must move through the parameter list
+// exactly like scalars. A WKT string is the interesting case because it is
+// free text that ends up inside a PostGIS constructor.
+func FuzzSpatial(f *testing.F) {
+	built := build(f)
+	compiler := compile.New(built)
+
+	const query = `query ($wkt: GeoJSON!, $x: Float!, $d: Float!) {
+		allPlaces(filter: {
+			location: {
+				intersects: $wkt
+				bboxIntersects: {minX: $x, minY: $x, maxX: $x, maxY: $x}
+				dwithin: {geometry: $wkt, distance: $d}
+			}
+		}) { nodes { id } }
+	}`
+	doc, perr := parser.ParseQuery(&ast.Source{Input: query})
+	if perr != nil {
+		f.Fatal(perr)
+	}
+	if errs := validator.Validate(built.Schema, doc); len(errs) > 0 {
+		f.Fatal(errs)
+	}
+	op := doc.Operations[0]
+
+	compileWith := func(t testing.TB, wkt string, x, d float64) (*compile.Statement, bool) {
+		t.Helper()
+		vars, verr := validator.VariableValues(built.Schema, op, map[string]any{
+			"wkt": wkt, "x": x, "d": d,
+		})
+		if verr != nil {
+			return nil, false
+		}
+		stmt, err := compiler.Compile(context.Background(), &compile.Request{
+			Field:    op.SelectionSet[0].(*ast.Field),
+			Vars:     vars,
+			Built:    built,
+			MaxDepth: 15,
+		})
+		if err != nil {
+			// Malformed geometry is rejected at compile time by design; only a
+			// successful compile is subject to the invariant.
+			return nil, false
+		}
+		return stmt, true
+	}
+
+	baseline, ok := compileWith(f, "POINT(1 2)", 1.5, 100)
+	if !ok {
+		f.Fatal("baseline spatial query failed to compile")
+	}
+
+	f.Add("POINT(1 2)", 1.5, 100.0)
+	f.Add("SRID=4326;POLYGON((0 0,1 0,1 1,0 0))", -0.5, 0.0)
+	f.Add(`POINT(1 2)'); DROP TABLE places; --`, 0.0, 1.0)
+	f.Add(`'; DROP TABLE places; --`, 1e30, -1.0)
+	f.Add("", 0.0, 0.0)
+
+	f.Fuzz(func(t *testing.T, wkt string, x, d float64) {
+		stmt, ok := compileWith(t, wkt, x, d)
+		if !ok {
+			return
+		}
+		if stmt.SQL != baseline.SQL {
+			t.Fatalf("spatial SQL text varied with input values:\n--- baseline ---\n%s\n--- got ---\n%s", baseline.SQL, stmt.SQL)
+		}
+		if len(stmt.Args) != len(baseline.Args) {
+			t.Fatalf("parameter count varied: %d != %d", len(stmt.Args), len(baseline.Args))
+		}
+	})
+}

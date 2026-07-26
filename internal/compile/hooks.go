@@ -6,6 +6,7 @@ import (
 	"github.com/vektah/gqlparser/v2/ast"
 
 	"github.com/suprbdev/pdbq/internal/introspect"
+	"github.com/suprbdev/pdbq/internal/postgis"
 	"github.com/suprbdev/pdbq/internal/schema"
 )
 
@@ -21,6 +22,25 @@ func (p *ParamSet) Add(v any) string {
 }
 
 func (p *ParamSet) Args() []any { return p.args }
+
+// SpatialValue renders a GeoJSON/WKT input value for a PostGIS column as a
+// parameterized constructor expression (e.g. ST_GeomFromGeoJSON($3)),
+// appending the single value parameter to the set.
+//
+// CompileHook plugins writing geometry/geography columns must use this rather
+// than Add: a spatial column needs the constructor wrapper, and passing the
+// raw GeoJSON text as a bare parameter would fail type resolution.
+func (p *ParamSet) SpatialValue(col *introspect.Column, v any) (string, error) {
+	f := postgis.FlavourOf(col.PGType)
+	if !f.Spatial() {
+		return "", fmt.Errorf("compile: column %q is not a PostGIS type", col.Name)
+	}
+	val, err := postgis.Parse(v, f)
+	if err != nil {
+		return "", errUser("%s", err.Error())
+	}
+	return val.SQL(p.Add(val.Param)), nil
+}
 
 // MutationWithCTEs compiles the payload selection of a mutation root field
 // against a caller-supplied CTE chain. The chain's final CTE must be named
@@ -40,6 +60,13 @@ func (c *Compiler) MutationWithCTEs(req *Request, f *ast.Field, meta *schema.Fie
 	}
 	payload, err := s.payloadSelect(meta.Table, f)
 	if err != nil {
+		return nil, err
+	}
+	// Rendering helpers with no error return (valueExpr and the spatial
+	// builders) park failures on the statement; surface them here as well as
+	// in Compile, so a plugin-driven mutation cannot emit SQL built from a
+	// value that failed to parse.
+	if err := s.err(); err != nil {
 		return nil, err
 	}
 	return &Statement{

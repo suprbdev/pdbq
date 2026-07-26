@@ -18,6 +18,7 @@ import (
 	"github.com/suprbdev/pdbq/internal/exec"
 	"github.com/suprbdev/pdbq/internal/inflect"
 	"github.com/suprbdev/pdbq/internal/introspect"
+	"github.com/suprbdev/pdbq/internal/postgis"
 	"github.com/suprbdev/pdbq/internal/schema"
 )
 
@@ -318,8 +319,17 @@ func (g *cteGen) name(prefix string) string {
 
 // addParam coerces v for the named column (enum labels, jsonb encoding)
 // before registering it as a placeholder.
-func (g *cteGen) addParam(t *introspect.Table, colName string, v any) string {
-	return g.ps.Add(compile.CoerceInput(g.req.Built, t.Column(colName), v))
+//
+// PostGIS columns take the constructor expression instead of a bare
+// placeholder: geometry/geography values arrive as GeoJSON or WKT text and
+// have to be wrapped (ST_GeomFromGeoJSON / ST_GeomFromEWKT) to be typed
+// correctly.
+func (g *cteGen) addParam(t *introspect.Table, colName string, v any) (string, error) {
+	col := t.Column(colName)
+	if col != nil && v != nil && postgis.IsSpatial(col.PGType) {
+		return g.ps.SpatialValue(col, v)
+	}
+	return g.ps.Add(compile.CoerceInput(g.req.Built, col, v)), nil
 }
 
 // insertChain emits CTEs to insert one row into t from input, resolving
@@ -339,8 +349,12 @@ func (g *cteGen) insertChain(t *introspect.Table, inputType string, input map[st
 			continue
 		}
 		if col, ok := binding[fname]; ok {
+			p, err := g.addParam(t, col, input[fname])
+			if err != nil {
+				return "", err
+			}
 			cols = append(cols, compile.QuoteIdent(col))
-			vals = append(vals, g.addParam(t, col, input[fname]))
+			vals = append(vals, p)
 		}
 	}
 	// Forward nested: resolve/insert parents first.
@@ -412,7 +426,11 @@ func (g *cteGen) resolveParent(spec *nestedSpec, nested map[string]any, depth in
 			if !ok {
 				continue
 			}
-			conds = append(conds, compile.QuoteIdent(col)+" = "+g.addParam(spec.Target, col, connect[fname]))
+			p, err := g.addParam(spec.Target, col, connect[fname])
+			if err != nil {
+				return "", err
+			}
+			conds = append(conds, compile.QuoteIdent(col)+" = "+p)
 		}
 		if len(conds) == 0 {
 			return "", fmt.Errorf("nested-mutations: empty connect for %s", spec.FK.RefTable)
@@ -445,8 +463,12 @@ func (g *cteGen) insertChildren(spec *nestedSpec, nested map[string]any, parentC
 				continue
 			}
 			if col, ok := binding[fname]; ok {
+				p, err := g.addParam(spec.Owner, col, row[fname])
+				if err != nil {
+					return err
+				}
 				cols = append(cols, compile.QuoteIdent(col))
-				vals = append(vals, g.addParam(spec.Owner, col, row[fname]))
+				vals = append(vals, p)
 			}
 		}
 		for i, col := range spec.FK.Columns {

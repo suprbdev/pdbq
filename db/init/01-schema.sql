@@ -36,6 +36,26 @@ CREATE TABLE posts (
 CREATE INDEX posts_author_id_idx ON posts (author_id);
 CREATE INDEX posts_title_idx ON posts (title);
 
+-- PostGIS spatial fixture. The extension ships in the compose/CI image; the
+-- table is only created when it is actually available so this schema still
+-- loads against a plain postgres image.
+CREATE EXTENSION IF NOT EXISTS postgis;
+
+CREATE TABLE places (
+    id        integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    -- The FK gives nested mutations a spatial target (createUser with nested
+    -- places), which is where geometry values flow through the plugin's own
+    -- CTE builder rather than the core compiler.
+    owner_id  integer REFERENCES users (id),
+    name      text NOT NULL,
+    -- geometry: planar, SRID units. geography: spheroidal, metres.
+    location  geometry(Point, 4326),
+    area      geography(Polygon, 4326)
+);
+CREATE INDEX places_owner_id_idx ON places (owner_id);
+CREATE INDEX places_location_idx ON places USING gist (location);
+CREATE INDEX places_area_idx ON places USING gist (area);
+
 CREATE FUNCTION search_posts(term text) RETURNS SETOF posts
 STABLE LANGUAGE sql AS $$
     SELECT * FROM posts WHERE title ILIKE '%' || term || '%';
@@ -130,8 +150,8 @@ DO $$ BEGIN
 END $$;
 
 GRANT USAGE ON SCHEMA public TO anonymous, app_user;
-GRANT SELECT ON users, posts TO anonymous;
-GRANT SELECT, INSERT, UPDATE, DELETE ON users, posts TO app_user;
+GRANT SELECT ON users, posts, places TO anonymous;
+GRANT SELECT, INSERT, UPDATE, DELETE ON users, posts, places TO app_user;
 GRANT EXECUTE ON FUNCTION search_posts(text), users_post_count(users), posts_excerpt(posts, integer),
     users_recent_posts(users, integer), users_tag_words(users), retry_probe(),
     add_numbers(integer, integer), publish_post(integer), unpublish_post(integer),
@@ -152,6 +172,15 @@ INSERT INTO users (email, full_name, mood, settings, tags, address, prev_address
         ARRAY[ROW('1 Ockham Park', 'Surrey', 'ok')::address]),
     ('grace@example.com', 'Grace Hopper',  'ok',    '{"theme": "light"}', ARRAY['staff'], NULL, NULL),
     ('alan@example.com',  'Alan Turing',   'happy', NULL,                 NULL, NULL, NULL);
+
+-- Spatial seed: three London-ish points plus one far away, so bounding-box
+-- and radius queries have both hits and misses.
+INSERT INTO places (owner_id, name, location, area) VALUES
+    (1, 'Trafalgar Square', ST_SetSRID(ST_MakePoint(-0.1281, 51.5080), 4326),
+        ST_GeogFromText('SRID=4326;POLYGON((-0.130 51.507, -0.126 51.507, -0.126 51.509, -0.130 51.509, -0.130 51.507))')),
+    (1, 'British Museum',   ST_SetSRID(ST_MakePoint(-0.1270, 51.5194), 4326), NULL),
+    (2, 'Greenwich',        ST_SetSRID(ST_MakePoint(-0.0005, 51.4779), 4326), NULL),
+    (3, 'Sydney Opera House', ST_SetSRID(ST_MakePoint(151.2153, -33.8568), 4326), NULL);
 
 INSERT INTO posts (author_id, title, body, published) VALUES
     (1, 'Notes on the Analytical Engine', 'First!',            true),

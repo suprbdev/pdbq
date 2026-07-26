@@ -6,7 +6,8 @@
 # see docs/quickstart.md for an example.
 services:
   db:
-    image: postgres:16-alpine
+    # PostGIS-enabled image so the fixture schema's spatial table works.
+    image: postgis/postgis:16-3.4
     environment:
       POSTGRES_USER: pdbq
       POSTGRES_PASSWORD: pdbq

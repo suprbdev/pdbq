@@ -98,6 +98,7 @@ See [docs/quickstart.md](docs/quickstart.md) for the full tour.
 | [docs/cli.md](docs/cli.md) | All subcommands, scripting patterns |
 | [docs/rls.md](docs/rls.md) | Roles, JWT/header claims, policies |
 | [docs/filtering.md](docs/filtering.md) | Filter operators, indexed-only policy |
+| [docs/postgis.md](docs/postgis.md) | PostGIS: GeoJSON scalar, spatial filters, distance ordering |
 | [docs/plugins.md](docs/plugins.md) | Hook surfaces, writing a plugin, built-ins as worked examples |
 | [docs/caching.md](docs/caching.md) | Schema cache and CI/CD gates |
 | [docs/deployment.md](docs/deployment.md) | Docker image, health checks, production checklist |

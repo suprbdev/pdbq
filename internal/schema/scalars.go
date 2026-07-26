@@ -1,5 +1,7 @@
 package schema
 
+import "github.com/suprbdev/pdbq/internal/postgis"
+
 // Custom scalar names emitted into every schema.
 var customScalars = []string{"BigInt", "BigFloat", "Datetime", "Date", "Time", "UUID", "JSON", "Cursor"}
 
@@ -7,6 +9,12 @@ var customScalars = []string{"BigInt", "BigFloat", "Datetime", "Date", "Time", "
 // composites are resolved by the builder (gqlTypeForColumn) before this is
 // consulted.
 func scalarFor(pgType string) string {
+	// PostGIS geometry/geography read and write as GeoJSON. The scalar is
+	// only declared in the SDL when a spatial column actually exists (see
+	// catalogHasSpatial), so non-spatial databases keep the same schema.
+	if postgis.IsSpatial(pgType) {
+		return postgis.TypeName
+	}
 	switch pgType {
 	case "int2", "int4", "serial", "smallserial":
 		return "Int"
@@ -39,6 +47,13 @@ func scalarFor(pgType string) string {
 // each Postgres type family gets only the operators that make sense for it
 // (comparisons for scalars, pattern ops for text, containment for arrays/jsonb).
 func filterOps(gqlType string, pgType string, isArray bool) []filterOp {
+	// PostGIS columns have no meaningful scalar ordering or equality: the
+	// spatial vocabulary (bounding boxes, DE-9IM predicates, radius search)
+	// is added by the postgis plugin. Emitting <, >, in here would generate
+	// operators PostgreSQL rejects at execution time.
+	if postgis.IsSpatial(pgType) {
+		return []filterOp{{"isNull", "Boolean"}}
+	}
 	if isArray {
 		return []filterOp{
 			{"equalTo", "[" + gqlType + "!]"}, {"notEqualTo", "[" + gqlType + "!]"},

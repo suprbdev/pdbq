@@ -1,0 +1,20 @@
+# Radius search. On a geometry column the distance is in SRID units unless
+# useSpheroid casts both sides to geography (metres); on a geography column it
+# is metres natively.
+{
+  sridUnits: allPlaces(filter: {
+    location: {dwithin: {geometry: {type: "Point", coordinates: [-0.12, 51.5]}, distance: 0.05}}
+  }) {
+    nodes { id name }
+  }
+  metres: allPlaces(filter: {
+    location: {dwithin: {geometry: "SRID=4326;POINT(-0.12 51.5)", distance: 1000, useSpheroid: true}}
+  }) {
+    nodes { id }
+  }
+  beyondGeography: allPlaces(filter: {
+    area: {beyond: {geometry: {type: "Point", coordinates: [-0.12, 51.5]}, distance: 5000}}
+  }) {
+    nodes { id }
+  }
+}

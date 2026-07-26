@@ -15,6 +15,7 @@ import (
 	"github.com/vektah/gqlparser/v2/ast"
 
 	"github.com/suprbdev/pdbq/internal/introspect"
+	"github.com/suprbdev/pdbq/internal/postgis"
 	"github.com/suprbdev/pdbq/internal/schema"
 )
 
@@ -91,6 +92,12 @@ func (c *Compiler) Compile(ctx context.Context, req *Request) (*Statement, error
 	if err != nil {
 		return nil, err
 	}
+	// Helpers that render SQL without an error return (valueExpr and the
+	// spatial builders it calls) park failures on the statement; surface them
+	// here so a bad value never reaches the database.
+	if err := s.err(); err != nil {
+		return nil, err
+	}
 	return &Statement{
 		SQL:      sql,
 		Args:     s.args,
@@ -120,7 +127,21 @@ type stmt struct {
 	// CTE holding rows inserted earlier in the same statement, which a
 	// plain table scan could not see within one snapshot).
 	overrides map[string]string
+	// deferred holds the first error raised from a helper with no error
+	// return (valueExpr and friends). Callers surface it via s.err().
+	deferred error
 }
+
+// fail records an error from a rendering helper that cannot return one. The
+// first error wins; compilation aborts before the statement is executed.
+func (s *stmt) fail(err error) {
+	if s.deferred == nil {
+		s.deferred = err
+	}
+}
+
+// err returns the first deferred rendering error, if any.
+func (s *stmt) err() error { return s.deferred }
 
 // sourceRef resolves the SQL row source for a table, honouring overrides.
 func (s *stmt) sourceRef(t *introspect.Table) string {
@@ -333,7 +354,10 @@ type orderTerm struct {
 	fn *introspect.Function
 	// rel set: order by a related table's column (col stays empty; the sort
 	// column lives in rel.Column).
-	rel  *schema.OrderRelation
+	rel *schema.OrderRelation
+	// near set: order by spatial distance from this already-parameterized
+	// geometry expression to col (postgis plugin).
+	near string
 	desc bool
 }
 
@@ -354,7 +378,22 @@ func (s *stmt) orderTerms(t *introspect.Table, f *ast.Field) []orderTerm {
 		for _, v := range vals {
 			name, _ := v.(string)
 			if spec, ok := specs[name]; ok {
-				terms = append(terms, orderTerm{col: spec.Column, fn: spec.Computed, rel: spec.Relation, desc: spec.Desc})
+				near := ""
+				if spec.Distance {
+					// Distance ordering needs a reference geometry; without
+					// near: the value is meaningless, so drop the term rather
+					// than emit an unordered scan that looks sorted.
+					expr, err := s.nearExpr(t, spec.Column, f)
+					if err != nil {
+						s.fail(err)
+						continue
+					}
+					if expr == "" {
+						continue
+					}
+					near = expr
+				}
+				terms = append(terms, orderTerm{col: spec.Column, fn: spec.Computed, rel: spec.Relation, near: near, desc: spec.Desc})
 				if t.PrimaryKey != nil && len(t.PrimaryKey.Columns) == 1 && spec.Column == t.PrimaryKey.Columns[0] {
 					usedPK = true
 				}
@@ -390,6 +429,11 @@ func (s *stmt) renderOrder(t *introspect.Table, terms []orderTerm, alias string,
 // the computed function called on the current row, or a correlated scalar
 // subquery over a related table.
 func (s *stmt) orderExprSQL(t *introspect.Table, term orderTerm, alias string) string {
+	if term.near != "" {
+		// <-> is the KNN operator: a GiST index answers it directly, which is
+		// what makes "nearest N" cheap.
+		return postgis.KNNSQL(alias+"."+quoteIdent(term.col), term.near)
+	}
 	if term.rel != nil {
 		return s.relationOrderSQL(term, alias)
 	}
