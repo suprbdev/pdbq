@@ -18,3 +18,11 @@ func (e *UserError) Error() string { return e.msg }
 func errUser(format string, args ...any) error {
 	return &UserError{msg: fmt.Sprintf("compile: "+format, args...)}
 }
+
+// errPageSize rejects a first/last above the server page-size cap. Silently
+// clamping instead would return fewer rows than the client asked for, which
+// breaks paginators that infer "last page" from a short result and leaves
+// response shapes mismatched against the requested size.
+func errPageSize(arg string, got, max int) error {
+	return errUser("%s %d exceeds the maximum page size of %d", arg, got, max)
+}

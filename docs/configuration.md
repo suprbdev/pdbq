@@ -38,7 +38,7 @@ $ pdbq config example   # print the full annotated reference
 | `server.request_timeout` | `30s` | overall HTTP request timeout |
 | `server.max_body_bytes` | 1048576 | maximum request body size (1 MiB) |
 | `server.max_depth` / `max_cost` | 15 / 10000 | per-operation limits |
-| `server.max_page_size` | 100 | caps `first`/`last`; also the default page size when neither is given |
+| `server.max_page_size` | 100 | largest accepted `first`/`last` (a larger value errors); also the default page size when neither is given |
 | `server.cors_origins` | `[]` | allowed CORS origins (exact match, or `*`); empty disables CORS headers |
 | `server.compression` | `false` | gzip responses when the client sends `Accept-Encoding: gzip` |
 | `server.apq` | `false` | Apollo automatic persisted queries (in-memory, register-on-miss) |

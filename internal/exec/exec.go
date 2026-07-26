@@ -59,8 +59,8 @@ type RequestHook interface {
 type Options struct {
 	MaxDepth int
 	MaxCost  int
-	// MaxPageSize caps first/last and is the default page size when neither
-	// is given.
+	// MaxPageSize is the largest accepted first/last (larger is rejected)
+	// and the default page size when neither is given.
 	MaxPageSize int
 	// TxMutations wraps every mutation in a transaction.
 	TxMutations bool

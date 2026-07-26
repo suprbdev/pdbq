@@ -20,7 +20,7 @@ type pagePlan struct {
 	// reversed: `last` pagination — scan flipped, re-reversed in the outer
 	// aggregates.
 	reversed   bool
-	limit      int // clamped to maxPageSize, which is also the default when neither first nor last given
+	limit      int // <= maxPageSize (larger is rejected); maxPageSize is the default when neither first nor last given
 	offset     int // offset arg plus any legacy cursor offset
 	hasAfter   bool
 	hasBefore  bool
@@ -41,6 +41,9 @@ func (s *stmt) planPage(t *introspect.Table, f *ast.Field, typeName string) (pag
 			if n < 0 {
 				return p, errUser("first must be >= 0")
 			}
+			if int(n) > s.maxPageSize {
+				return p, errPageSize("first", int(n), s.maxPageSize)
+			}
 			p.limit = int(n)
 		}
 	}
@@ -49,13 +52,15 @@ func (s *stmt) planPage(t *introspect.Table, f *ast.Field, typeName string) (pag
 			if n < 0 {
 				return p, errUser("last must be >= 0")
 			}
+			if int(n) > s.maxPageSize {
+				return p, errPageSize("last", int(n), s.maxPageSize)
+			}
 			p.limit = int(n)
 			p.reversed = true
 		}
 	}
-	// Clamp to the server cap; absent first/last defaults to the cap rather
-	// than an unbounded scan.
-	if p.limit < 0 || p.limit > s.maxPageSize {
+	// Absent first/last defaults to the cap rather than an unbounded scan.
+	if p.limit < 0 {
 		p.limit = s.maxPageSize
 	}
 	if v, ok := s.argValue(f, "offset"); ok {

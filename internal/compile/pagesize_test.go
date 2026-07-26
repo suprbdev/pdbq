@@ -2,6 +2,7 @@ package compile_test
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -60,14 +61,37 @@ func TestNegativePaginationRejected(t *testing.T) {
 	}
 }
 
-func TestFirstClampedToMaxPageSize(t *testing.T) {
-	stmt, err := compileOne(t, `{ allUsers(first: 100000) { nodes { id } } }`, 100)
+func TestPageSizeOverCapRejected(t *testing.T) {
+	cases := map[string]string{
+		"first": `{ allUsers(first: 100000) { nodes { id } } }`,
+		"last":  `{ allUsers(last: 100000) { nodes { id } } }`,
+	}
+	for name, q := range cases {
+		t.Run(name, func(t *testing.T) {
+			_, err := compileOne(t, q, 100)
+			if err == nil {
+				t.Fatalf("%s=100000 accepted; want an error rather than a silent clamp", name)
+			}
+			if !strings.Contains(err.Error(), "maximum page size of 100") {
+				t.Fatalf("error does not name the cap: %v", err)
+			}
+			// Must stay client-safe: prod mode sanitizes non-UserErrors.
+			var ue *compile.UserError
+			if !errors.As(err, &ue) {
+				t.Fatalf("page-size error is not a UserError: %T", err)
+			}
+		})
+	}
+}
+
+func TestPageSizeAtCapAccepted(t *testing.T) {
+	stmt, err := compileOne(t, `{ allUsers(first: 100) { nodes { id } } }`, 100)
 	if err != nil {
 		t.Fatal(err)
 	}
 	// Keyset mode scans cap+1 rows to detect hasNextPage and trims to cap.
 	if !hasArg(stmt, 101) || !hasArg(stmt, 100) {
-		t.Fatalf("first=100000 not clamped to cap 100; args=%v", stmt.Args)
+		t.Fatalf("first=100 at the cap not honored; args=%v", stmt.Args)
 	}
 }
 

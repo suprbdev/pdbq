@@ -28,7 +28,7 @@ server:
   max_depth: 15
   # Maximum estimated cost (selected fields x list multipliers) per operation.
   max_cost: 10000
-  # Maximum rows per page; first/last are clamped to this and it is the default page size when neither is given.
+  # Maximum rows per page; first/last above this are rejected and it is the default page size when neither is given.
   max_page_size: 100
   # Allowed CORS origins for /graphql (exact match, or '*' for any). Empty disables CORS headers entirely.
   cors_origins: []

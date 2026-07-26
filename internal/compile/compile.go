@@ -36,8 +36,9 @@ type Request struct {
 	Vars      map[string]any
 	Built     *schema.Built
 	MaxDepth  int
-	// MaxPageSize caps first/last and is the default page size when neither
-	// is given. Values <= 0 fall back to defaultMaxPageSize.
+	// MaxPageSize is the largest accepted first/last (larger is rejected)
+	// and the default page size when neither is given. Values <= 0 fall back
+	// to defaultMaxPageSize.
 	MaxPageSize int
 }
 
@@ -537,8 +538,8 @@ func reorderForDistinct(terms []orderTerm, dcols []string) []orderTerm {
 }
 
 // pageClause renders LIMIT/OFFSET from first/offset (+ cursor extraOffset).
-// first is clamped to maxPageSize, which is also the default when first is
-// absent, so a LIMIT clause is always emitted.
+// first above maxPageSize is rejected; maxPageSize is the default when first
+// is absent, so a LIMIT clause is always emitted.
 func (s *stmt) pageClause(f *ast.Field, extraOffset int) (string, error) {
 	limit := s.maxPageSize
 	if v, ok := s.argValue(f, "first"); ok {
@@ -546,9 +547,10 @@ func (s *stmt) pageClause(f *ast.Field, extraOffset int) (string, error) {
 			if n < 0 {
 				return "", errUser("first must be >= 0")
 			}
-			if int(n) < limit {
-				limit = int(n)
+			if int(n) > s.maxPageSize {
+				return "", errPageSize("first", int(n), s.maxPageSize)
 			}
+			limit = int(n)
 		}
 	}
 	out := "\nLIMIT " + s.param(limit)
