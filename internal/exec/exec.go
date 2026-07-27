@@ -429,7 +429,7 @@ func (e *Executor) checkLimits(doc *ast.QueryDocument, op *ast.OperationDefiniti
 		}
 		sel = append(sel, item)
 	}
-	depth, cost := measure(sel, doc.Fragments, vars, pageCap, 1)
+	depth, cost := measure(sel, doc.Fragments, vars, pageCap, 1, e.Built.Meta)
 	if depth > maxDepth {
 		return gqlerror.Errorf("operation depth %d exceeds limit %d", depth, maxDepth)
 	}
@@ -439,15 +439,33 @@ func (e *Executor) checkLimits(doc *ast.QueryDocument, op *ast.OperationDefiniti
 	return nil
 }
 
-func measure(sel ast.SelectionSet, frags ast.FragmentDefinitionList, vars map[string]any, pageCap, depth int) (int, int) {
-	return measureSel(sel, frags, vars, pageCap, depth, false)
+func measure(sel ast.SelectionSet, frags ast.FragmentDefinitionList, vars map[string]any, pageCap, depth int, meta schema.Meta) (int, int) {
+	return measureSel(sel, frags, vars, pageCap, depth, false, meta)
+}
+
+// fieldCostMultiplier returns the @costMultiplier override bound to a field,
+// or 0 when the field has none. The lookup is by parent object type + field
+// name, the same binding the compiler uses (see compile.parentTypeName).
+func fieldCostMultiplier(f *ast.Field, meta schema.Meta) int {
+	if meta == nil || f.ObjectDefinition == nil {
+		return 0
+	}
+	fields, ok := meta[f.ObjectDefinition.Name]
+	if !ok {
+		return 0
+	}
+	fm, ok := fields[f.Name]
+	if !ok || fm == nil {
+		return 0
+	}
+	return fm.CostMultiplier
 }
 
 // measureSel walks one selection set. paginated is true when the enclosing
 // field already applied a page-size multiplier (a connection): its direct
 // list children (nodes/edges) then count once instead of the ×10 list
 // default, so pagination is not charged twice.
-func measureSel(sel ast.SelectionSet, frags ast.FragmentDefinitionList, vars map[string]any, pageCap, depth int, paginated bool) (int, int) {
+func measureSel(sel ast.SelectionSet, frags ast.FragmentDefinitionList, vars map[string]any, pageCap, depth int, paginated bool, meta schema.Meta) (int, int) {
 	maxDepth, cost := depth, 0
 	for _, item := range sel {
 		switch v := item.(type) {
@@ -469,7 +487,14 @@ func measureSel(sel ast.SelectionSet, frags ast.FragmentDefinitionList, vars map
 			} else if !paginated && v.Definition != nil && v.Definition.Type.NamedType == "" {
 				mult = 10 // list field outside a paginated container
 			}
-			d, c := measureSel(v.SelectionSet, frags, vars, pageCap, depth+1, childPaginated)
+			// An @costMultiplier override replaces the page-size assumption
+			// with the schema's declared expected fan-out. It only ever lowers
+			// the estimate: a query asking for fewer rows than the declared
+			// average must not be charged the average.
+			if over := fieldCostMultiplier(v, meta); over > 0 && over < mult {
+				mult = over
+			}
+			d, c := measureSel(v.SelectionSet, frags, vars, pageCap, depth+1, childPaginated, meta)
 			cost += 1 + mult*c
 			if len(v.SelectionSet) == 0 {
 				d = depth
@@ -481,7 +506,7 @@ func measureSel(sel ast.SelectionSet, frags ast.FragmentDefinitionList, vars map
 			if compile.SkipByDirectives(v.Directives, vars) {
 				continue
 			}
-			d, c := measureSel(v.SelectionSet, frags, vars, pageCap, depth, paginated)
+			d, c := measureSel(v.SelectionSet, frags, vars, pageCap, depth, paginated, meta)
 			cost += c
 			if d > maxDepth {
 				maxDepth = d
@@ -491,7 +516,7 @@ func measureSel(sel ast.SelectionSet, frags ast.FragmentDefinitionList, vars map
 				continue
 			}
 			if def := frags.ForName(v.Name); def != nil {
-				d, c := measureSel(def.SelectionSet, frags, vars, pageCap, depth, paginated)
+				d, c := measureSel(def.SelectionSet, frags, vars, pageCap, depth, paginated, meta)
 				cost += c
 				if d > maxDepth {
 					maxDepth = d

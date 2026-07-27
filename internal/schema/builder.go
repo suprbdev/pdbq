@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/vektah/gqlparser/v2"
@@ -12,6 +13,7 @@ import (
 	"github.com/suprbdev/pdbq/internal/inflect"
 	"github.com/suprbdev/pdbq/internal/introspect"
 	"github.com/suprbdev/pdbq/internal/postgis"
+	"github.com/suprbdev/pdbq/internal/smarttags"
 )
 
 // catalogHasSpatial reports whether any column, composite attribute, or
@@ -373,6 +375,23 @@ func (b *Builder) addRootField(obj *Object, f *Field) {
 	obj.AddField(f)
 }
 
+// costMultiplier reads the @costMultiplier smart comment off a database
+// COMMENT, returning 0 when absent or malformed. It is parsed straight from
+// the catalog (like advanced-filters does) so the cost override works with the
+// smart-comments plugin disabled. Values below 1 are ignored: a zero or
+// negative multiplier would let a subtree escape the cost limit entirely.
+func costMultiplier(comment string) int {
+	tags, _ := smarttags.Parse(comment)
+	if tags == nil {
+		return 0
+	}
+	n, err := strconv.Atoi(tags.First("costMultiplier"))
+	if err != nil || n < 1 {
+		return 0
+	}
+	return n
+}
+
 func (b *Builder) addRelations(t *introspect.Table) {
 	typeName := b.TypeForTable[tableKey(t.Schema, t.Name)]
 	obj := b.Objects[typeName]
@@ -413,7 +432,10 @@ func (b *Builder) addRelations(t *introspect.Table) {
 				Name: name,
 				Type: b.ensureConnection(other) + "!",
 				Args: b.connectionArgs(other, "", "", ""),
-				Meta: &FieldMeta{Kind: KindRelationBackward, Table: other, FK: fk},
+				Meta: &FieldMeta{
+					Kind: KindRelationBackward, Table: other, FK: fk,
+					CostMultiplier: costMultiplier(fk.Comment),
+				},
 			})
 		}
 	}

@@ -8,6 +8,7 @@ import (
 	"github.com/vektah/gqlparser/v2/validator"
 
 	"github.com/suprbdev/pdbq/internal/inflect"
+	"github.com/suprbdev/pdbq/internal/introspect"
 	"github.com/suprbdev/pdbq/internal/schema"
 	"github.com/suprbdev/pdbq/internal/testutil"
 )
@@ -16,7 +17,14 @@ import (
 // measured cost with a page cap of 100.
 func cost(t *testing.T, query string, rawVars map[string]any) int {
 	t.Helper()
-	b := schema.New(testutil.FixtureCatalog(), inflect.Default, schema.Options{
+	return costWith(t, testutil.FixtureCatalog(), query, rawVars)
+}
+
+// costWith is cost against a caller-supplied catalog, so tests can set
+// database COMMENTs (e.g. @costMultiplier) before the schema is built.
+func costWith(t *testing.T, cat *introspect.Catalog, query string, rawVars map[string]any) int {
+	t.Helper()
+	b := schema.New(cat, inflect.Default, schema.Options{
 		FilterIndexedOnly: true,
 		Functions:         true,
 	})
@@ -36,7 +44,7 @@ func cost(t *testing.T, query string, rawVars map[string]any) int {
 	if verr != nil {
 		t.Fatalf("variables: %v", verr)
 	}
-	_, c := measure(op.SelectionSet, doc.Fragments, vars, 100, 1)
+	_, c := measure(op.SelectionSet, doc.Fragments, vars, 100, 1, built.Meta)
 	return c
 }
 
@@ -90,5 +98,62 @@ func TestCostNestedPaginationCompounds(t *testing.T) {
 	nested := cost(t, `{ allUsers(first: 100) { nodes { postsByAuthorId(first: 100) { nodes { id } } } } }`, nil)
 	if nested < flat*50 {
 		t.Fatalf("nested pagination cost %d does not compound over flat %d", nested, flat)
+	}
+}
+
+// withReplyCostMultiplier returns the fixture catalog with a @costMultiplier
+// smart comment on the self-referential comments.parent_id FK.
+func withReplyCostMultiplier(tag string) *introspect.Catalog {
+	cat := testutil.FixtureCatalog()
+	for _, fk := range cat.Table("public", "comments").ForeignKeys {
+		if fk.Name == "comments_parent_id_fkey" {
+			fk.Comment = tag
+		}
+	}
+	return cat
+}
+
+// threadQuery is a 4-level comment thread, the shape that makes the default
+// page^depth estimate explode.
+const threadQuery = `{
+  allComments(first: 20) { nodes { id
+    commentsByParentId(first: 20) { nodes { id
+      commentsByParentId(first: 20) { nodes { id
+        commentsByParentId(first: 20) { nodes { id } } } } } } } }
+}`
+
+func TestCostMultiplierLowersRecursiveEstimate(t *testing.T) {
+	plain := costWith(t, testutil.FixtureCatalog(), threadQuery, nil)
+	tagged := costWith(t, withReplyCostMultiplier("@costMultiplier 3"), threadQuery, nil)
+	if tagged >= plain {
+		t.Fatalf("@costMultiplier did not lower cost: tagged=%d plain=%d", tagged, plain)
+	}
+	// The point of the tag is that a deep thread fits under a sane max_cost.
+	if tagged > 10000 {
+		t.Errorf("tagged cost %d still exceeds the default max_cost 10000", tagged)
+	}
+	if plain <= 10000 {
+		t.Errorf("untagged cost %d unexpectedly fits the default limit; fixture no longer exercises the blowup", plain)
+	}
+}
+
+func TestCostMultiplierNeverRaisesCost(t *testing.T) {
+	// A query asking for fewer rows than the declared average fan-out must be
+	// charged the smaller requested page, not the average.
+	const small = `{ allComments(first: 20) { nodes { id
+	    commentsByParentId(first: 2) { nodes { id } } } } }`
+	plain := costWith(t, testutil.FixtureCatalog(), small, nil)
+	tagged := costWith(t, withReplyCostMultiplier("@costMultiplier 10"), small, nil)
+	if tagged != plain {
+		t.Fatalf("@costMultiplier raised cost above the requested page: tagged=%d plain=%d", tagged, plain)
+	}
+}
+
+func TestCostMultiplierIgnoresInvalid(t *testing.T) {
+	plain := costWith(t, testutil.FixtureCatalog(), threadQuery, nil)
+	for _, tag := range []string{"@costMultiplier 0", "@costMultiplier -5", "@costMultiplier abc", "@costMultiplier"} {
+		if got := costWith(t, withReplyCostMultiplier(tag), threadQuery, nil); got != plain {
+			t.Errorf("tag %q changed cost to %d, want unchanged %d", tag, got, plain)
+		}
 	}
 }

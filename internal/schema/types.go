@@ -54,6 +54,14 @@ type FieldMeta struct {
 	KeyColumns []string               // lookup / update / delete key
 	FK         *introspect.ForeignKey // for relations
 	Function   *introspect.Function
+	// CostMultiplier overrides the executor's page-size fan-out assumption for
+	// this field (the @costMultiplier smart comment). Zero means "no override":
+	// the cost estimator falls back to the requested first/last. It exists
+	// because the default estimate is geometric in nesting depth (page^depth),
+	// which is correct for a cartesian fan-out but wildly pessimistic for
+	// self-referential trees (comment threads) where most rows have few
+	// children. See exec.measureSel.
+	CostMultiplier int
 	// Nested carries plugin-defined payload (e.g. nested-mutations input shape).
 	Nested map[string]any
 }

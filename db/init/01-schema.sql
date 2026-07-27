@@ -38,6 +38,21 @@ CREATE TABLE posts (
 CREATE INDEX posts_author_id_idx ON posts (author_id);
 CREATE INDEX posts_title_idx ON posts (title);
 
+-- Self-referential reply tree (Reddit-style threads). parent_id is the
+-- recursive edge; @costMultiplier tells the cost estimator to assume a small
+-- average fan-out per level instead of the requested page size, which would
+-- otherwise grow as page^depth and reject legitimate thread queries.
+CREATE TABLE comments (
+    id         integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    post_id    integer NOT NULL REFERENCES posts (id),
+    parent_id  integer REFERENCES comments (id),
+    body       text NOT NULL
+);
+CREATE INDEX comments_post_id_idx ON comments (post_id);
+CREATE INDEX comments_parent_id_idx ON comments (parent_id);
+
+COMMENT ON CONSTRAINT comments_parent_id_fkey ON comments IS '@costMultiplier 3';
+
 -- PostGIS spatial fixture. The extension ships in the compose/CI image; the
 -- table is only created when it is actually available so this schema still
 -- loads against a plain postgres image.

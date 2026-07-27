@@ -1377,3 +1377,100 @@ func TestSmartComments(t *testing.T) {
 		t.Fatalf("@omit delete not applied: %s", mut)
 	}
 }
+
+// TestCostMultiplierThread covers the @costMultiplier smart comment end to
+// end: a recursive comment thread whose default cost estimate (page^depth)
+// blows past any sane max_cost, but which the declared fan-out brings back
+// inside the limit. The fixture schema ships the tag on
+// comments_parent_id_fkey, so the test clears it to prove it is load-bearing.
+func TestCostMultiplierThread(t *testing.T) {
+	url := os.Getenv("PDBQ_TEST_DATABASE_URL")
+	if url == "" {
+		t.Skip("PDBQ_TEST_DATABASE_URL not set; run `make test-e2e`")
+	}
+	ctx := context.Background()
+	conn, err := pgx.Connect(ctx, url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Registered before the row/comment cleanups below so it runs after them
+	// (t.Cleanup is LIFO): a deferred Close would fire first and leave the
+	// fixture data behind.
+	t.Cleanup(func() { conn.Close(ctx) })
+
+	// A three-deep thread: root -> reply -> reply.
+	var postID int
+	if err := conn.QueryRow(ctx, `SELECT id FROM posts ORDER BY id LIMIT 1`).Scan(&postID); err != nil {
+		t.Fatal(err)
+	}
+	// Bodies are unique to this test so the assertions below cannot be
+	// satisfied by rows another test (or an earlier run) left behind.
+	const (
+		rootBody = "costmult-root"
+		midBody  = "costmult-mid"
+		leafBody = "costmult-leaf"
+	)
+	var rootID, midID int
+	if err := conn.QueryRow(ctx,
+		`INSERT INTO comments (post_id, parent_id, body) VALUES ($1, NULL, $2) RETURNING id`,
+		postID, rootBody).Scan(&rootID); err != nil {
+		t.Fatal(err)
+	}
+	if err := conn.QueryRow(ctx,
+		`INSERT INTO comments (post_id, parent_id, body) VALUES ($1, $2, $3) RETURNING id`,
+		postID, rootID, midBody).Scan(&midID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := conn.Exec(ctx,
+		`INSERT INTO comments (post_id, parent_id, body) VALUES ($1, $2, $3)`,
+		postID, midID, leafBody); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		// Scoped to this test's own rows so a shared fixture post is left as
+		// it was found. One statement, so the self-referential FK is checked
+		// once at the end and the delete order does not matter.
+		if _, err := conn.Exec(ctx, `DELETE FROM comments WHERE body = ANY($1)`,
+			[]string{leafBody, midBody, rootBody}); err != nil {
+			t.Errorf("cleanup: %v", err)
+		}
+	})
+
+	const thread = `{
+	  allComments(first: 20, condition: {parentId: null}) { nodes { id body
+	    commentsByParentId(first: 20) { nodes { id body
+	      commentsByParentId(first: 20) { nodes { id body } } } } } }
+	}`
+
+	// Without the tag the estimate is geometric and the operation is rejected.
+	if _, err := conn.Exec(ctx,
+		`COMMENT ON CONSTRAINT comments_parent_id_fkey ON comments IS NULL`); err != nil {
+		t.Fatal(err)
+	}
+	untagged := testServer(t, func(c *config.Config) { c.Server.MaxDepth = 30 })
+	res := post(t, untagged.URL, thread, nil)
+	if len(res.Errors) == 0 {
+		t.Fatalf("untagged thread query unexpectedly passed the cost limit: %s", res.Data["allComments"])
+	}
+	if !strings.Contains(res.Errors[0].Message, "exceeds limit") {
+		t.Fatalf("expected a cost-limit error, got %q", res.Errors[0].Message)
+	}
+
+	// Restoring the tag brings the same query inside the default max_cost.
+	if _, err := conn.Exec(ctx,
+		`COMMENT ON CONSTRAINT comments_parent_id_fkey ON comments IS '@costMultiplier 3'`); err != nil {
+		t.Fatal(err)
+	}
+	tagged := testServer(t, func(c *config.Config) { c.Server.MaxDepth = 30 })
+	res = post(t, tagged.URL, thread, nil)
+	requireNoErrors(t, res)
+
+	// The tag must not change what the query returns: the thread still comes
+	// back nested and complete.
+	got := string(res.Data["allComments"])
+	for _, want := range []string{rootBody, midBody, leafBody} {
+		if !strings.Contains(got, want) {
+			t.Errorf("thread response missing %q: %s", want, got)
+		}
+	}
+}

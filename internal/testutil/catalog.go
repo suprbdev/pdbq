@@ -59,6 +59,32 @@ func FixtureCatalog() *introspect.Catalog {
 			{Name: "posts_title_idx", Columns: []string{"title"}, Method: "btree"},
 		},
 	}
+	// comments is self-referential (parent_id -> comments.id): a Reddit-style
+	// reply tree. It exists so the cost estimator can be tested against
+	// recursive nesting, where the default page^depth assumption explodes.
+	comments := &introspect.Table{
+		Schema: "public", Name: "comments", Kind: introspect.RelTable,
+		Privileges: introspect.Privileges{Select: true, Insert: true, Update: true, Delete: true},
+		Columns: []*introspect.Column{
+			{Name: "id", Position: 1, PGType: "int4", TypeSchema: "pg_catalog", NotNull: true, HasDefault: true, Generated: true},
+			{Name: "post_id", Position: 2, PGType: "int4", TypeSchema: "pg_catalog", NotNull: true},
+			{Name: "parent_id", Position: 3, PGType: "int4", TypeSchema: "pg_catalog"},
+			{Name: "body", Position: 4, PGType: "text", TypeSchema: "pg_catalog", NotNull: true},
+		},
+		PrimaryKey: &introspect.Constraint{Name: "comments_pkey", Columns: []string{"id"}},
+		ForeignKeys: []*introspect.ForeignKey{{
+			Name: "comments_post_id_fkey", Columns: []string{"post_id"},
+			RefSchema: "public", RefTable: "posts", RefColumns: []string{"id"},
+		}, {
+			Name: "comments_parent_id_fkey", Columns: []string{"parent_id"},
+			RefSchema: "public", RefTable: "comments", RefColumns: []string{"id"},
+		}},
+		Indexes: []*introspect.Index{
+			{Name: "comments_pkey", Columns: []string{"id"}, Unique: true, Method: "btree"},
+			{Name: "comments_post_id_idx", Columns: []string{"post_id"}, Method: "btree"},
+			{Name: "comments_parent_id_idx", Columns: []string{"parent_id"}, Method: "btree"},
+		},
+	}
 	// places carries the PostGIS columns: geometry (planar, SRID units) and
 	// geography (spheroidal, metres), both GiST-indexed so the indexed-only
 	// filter policy admits them.
@@ -97,7 +123,7 @@ func FixtureCatalog() *introspect.Catalog {
 		FormatVersion: introspect.CatalogFormatVersion,
 		ServerVersion: "16.0",
 		Schemas:       []string{"public"},
-		Tables:        []*introspect.Table{metrics, places, posts, users},
+		Tables:        []*introspect.Table{comments, metrics, places, posts, users},
 		Enums: []*introspect.Enum{{
 			Schema: "public", Name: "mood", Values: []string{"sad", "ok", "happy"},
 		}},
