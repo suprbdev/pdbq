@@ -410,7 +410,10 @@ func (s *stmt) orderTerms(t *introspect.Table, f *ast.Field) []orderTerm {
 }
 
 // renderOrder renders terms as an ORDER BY clause over t rows at alias;
-// reversed flips every direction (backward pagination).
+// reversed flips every direction (backward pagination). Descending terms
+// override PostgreSQL's DESC = NULLS FIRST default so NULLs sort last in
+// both directions; a reversed scan emits the exact mirror (ASC NULLS FIRST)
+// so backward pagination stays a true inverse of the forward order.
 func (s *stmt) renderOrder(t *introspect.Table, terms []orderTerm, alias string, reversed bool) string {
 	if len(terms) == 0 {
 		return ""
@@ -421,9 +424,27 @@ func (s *stmt) renderOrder(t *introspect.Table, terms []orderTerm, alias string,
 		if term.desc != reversed {
 			dir = " DESC"
 		}
+		if term.desc && orderTermNullable(t, term) {
+			if reversed {
+				dir = " ASC NULLS FIRST"
+			} else {
+				dir = " DESC NULLS LAST"
+			}
+		}
 		parts[i] = s.orderExprSQL(t, term, alias) + dir
 	}
 	return "\nORDER BY " + strings.Join(parts, ", ")
+}
+
+// orderTermNullable reports whether a term's sort expression can yield NULL:
+// computed functions and relational subqueries always can; plain columns
+// only when not declared NOT NULL.
+func orderTermNullable(t *introspect.Table, term orderTerm) bool {
+	if term.fn != nil || term.rel != nil {
+		return true
+	}
+	c := t.Column(term.col)
+	return c == nil || !c.NotNull
 }
 
 // orderExprSQL renders the sort expression for one term: a column reference,
@@ -448,7 +469,8 @@ func (s *stmt) orderExprSQL(t *introspect.Table, term orderTerm, alias string) s
 // order term. Forward relations select the sort column off the single
 // referenced row; reverse relations aggregate it over the referencing rows
 // (MIN for ASC terms, MAX for DESC), yielding NULL when no related row
-// exists so PostgreSQL's default NULL ordering applies. The inner alias is
+// exists so those rows sort last (renderOrder emits NULLS LAST for
+// descending terms). The inner alias is
 // fixed: relational subqueries never nest, so it cannot collide.
 func (s *stmt) relationOrderSQL(term orderTerm, alias string) string {
 	rel := term.rel

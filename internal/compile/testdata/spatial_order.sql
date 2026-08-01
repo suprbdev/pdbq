@@ -12,9 +12,9 @@ GROUP BY ()
 -- field: allPlaces
 SELECT jsonb_build_object('nodes', coalesce(jsonb_agg(__s_2.ndata ORDER BY __s_2.__rn ASC) FILTER (WHERE __s_2.__rn <= $3), '[]'::jsonb)) AS data
 FROM (
-  SELECT jsonb_build_object('id', __t_1."id") AS ndata, row_number() OVER (ORDER BY __t_1."location" <-> ST_GeomFromEWKT($1) DESC, __t_1."id" ASC) AS __rn
+  SELECT jsonb_build_object('id', __t_1."id") AS ndata, row_number() OVER (ORDER BY __t_1."location" <-> ST_GeomFromEWKT($1) DESC NULLS LAST, __t_1."id" ASC) AS __rn
   FROM "public"."places" AS __t_1
-  ORDER BY __t_1."location" <-> ST_GeomFromEWKT($1) DESC, __t_1."id" ASC
+  ORDER BY __t_1."location" <-> ST_GeomFromEWKT($1) DESC NULLS LAST, __t_1."id" ASC
   LIMIT $2
 ) AS __s_2
 GROUP BY ()

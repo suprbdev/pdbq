@@ -165,8 +165,9 @@ func (s *stmt) anchorVals(t *introspect.Table, terms []orderTerm, keys []any) ([
 // anchor row" comparison against the anchor value expressions from
 // anchorVals (parallel to terms). Mixed ASC/DESC directions forbid a tuple
 // compare, so terms nest as s1 OR (e1 AND (s2 OR (e2 AND ...))). NULL
-// ordering follows PostgreSQL defaults (ASC = NULLS LAST, DESC = NULLS
-// FIRST); flip selects the "strictly before" form.
+// ordering matches renderOrder: NULLs sort last in both directions (ASC is
+// the PostgreSQL default, DESC is emitted with NULLS LAST); flip selects the
+// "strictly before" form.
 func (s *stmt) keysetPredicate(alias string, vals []string, terms []orderTerm, t *introspect.Table, flip bool) string {
 	pred := ""
 	for i := len(terms) - 1; i >= 0; i-- {
@@ -174,11 +175,7 @@ func (s *stmt) keysetPredicate(alias string, vals []string, terms []orderTerm, t
 		desc := term.desc != flip
 		col := s.orderExprSQL(t, term, alias)
 		k := vals[i]
-		c := t.Column(term.col)
-		// Computed and relational terms are always treated as nullable: the
-		// function may return NULL for any row, and a relational subquery
-		// yields NULL when no related row exists.
-		notNull := term.fn == nil && term.rel == nil && c != nil && c.NotNull
+		notNull := !orderTermNullable(t, term)
 		op := ">"
 		if desc {
 			op = "<"
@@ -187,9 +184,9 @@ func (s *stmt) keysetPredicate(alias string, vals []string, terms []orderTerm, t
 		switch {
 		case notNull:
 			strict = fmt.Sprintf("%s %s %s", col, op, k)
-		case !desc: // nullable ASC: NULL sorts last, so NULL is strictly after any value
+		case !flip: // NULLs sort last, so NULL is strictly after any value
 			strict = fmt.Sprintf("(%s %s %s OR (%s IS NULL AND %s IS NOT NULL))", col, op, k, col, k)
-		default: // nullable DESC: NULL sorts first, so any value is strictly after NULL
+		default: // strictly before: any value is strictly before NULL
 			strict = fmt.Sprintf("(%s %s %s OR (%s IS NOT NULL AND %s IS NULL))", col, op, k, col, k)
 		}
 		if pred == "" {

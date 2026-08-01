@@ -3,9 +3,9 @@ SELECT jsonb_build_object('nodes', coalesce(jsonb_agg(__s_3.ndata ORDER BY __s_3
 FROM (
   SELECT __d_2.*, row_number() OVER (ORDER BY __d_2.__rn0) AS __rn
   FROM (
-    SELECT DISTINCT ON (__t_1."mood") jsonb_build_object('id', __t_1."id", 'mood', CASE __t_1."mood" WHEN 'happy' THEN 'HAPPY' WHEN 'ok' THEN 'OK' WHEN 'sad' THEN 'SAD' END) AS ndata, row_number() OVER (ORDER BY __t_1."mood" DESC, __t_1."id" ASC) AS __rn0
+    SELECT DISTINCT ON (__t_1."mood") jsonb_build_object('id', __t_1."id", 'mood', CASE __t_1."mood" WHEN 'happy' THEN 'HAPPY' WHEN 'ok' THEN 'OK' WHEN 'sad' THEN 'SAD' END) AS ndata, row_number() OVER (ORDER BY __t_1."mood" DESC NULLS LAST, __t_1."id" ASC) AS __rn0
     FROM "public"."users" AS __t_1
-    ORDER BY __t_1."mood" DESC, __t_1."id" ASC
+    ORDER BY __t_1."mood" DESC NULLS LAST, __t_1."id" ASC
     LIMIT $1
   ) AS __d_2
 ) AS __s_3
