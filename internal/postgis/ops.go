@@ -199,10 +199,12 @@ func BBoxSQL(minX, minY, maxX, maxY string, srid int, f Flavour) string {
 // OutputSQL renders a spatial column as the GeoJSON text the response carries.
 //
 // ST_AsGeoJSON returns text, so the result is re-parsed into jsonb to embed it
-// as a real JSON object rather than a JSON-encoded string. NULL propagates
-// through both calls untouched.
+// as a real JSON object rather than a JSON-encoded string. No NULL guard is
+// needed: ST_AsGeoJSON is STRICT (NULL in, NULL out) and NULL::jsonb is NULL —
+// and ref may be a computed-column function call, which a CASE guard would
+// evaluate twice.
 func OutputSQL(ref string) string {
-	return "CASE WHEN " + ref + " IS NULL THEN NULL ELSE ST_AsGeoJSON(" + ref + ")::jsonb END"
+	return "ST_AsGeoJSON(" + ref + ")::jsonb"
 }
 
 // Derived is one computed spatial accessor exposed as a sibling field of a

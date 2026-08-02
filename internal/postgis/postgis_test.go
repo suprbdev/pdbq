@@ -274,12 +274,19 @@ func TestBBoxSQL(t *testing.T) {
 	}
 }
 
-func TestOutputSQLIsNullSafe(t *testing.T) {
-	got := OutputSQL(`"t"."geom"`)
-	for _, want := range []string{"IS NULL", "ST_AsGeoJSON", "::jsonb"} {
+func TestOutputSQLEvaluatesRefOnce(t *testing.T) {
+	// ST_AsGeoJSON is STRICT and NULL::jsonb is NULL, so no CASE guard is
+	// needed — and ref may be a computed-column function call, so it must
+	// appear exactly once to avoid double evaluation.
+	ref := `"t"."geom"`
+	got := OutputSQL(ref)
+	for _, want := range []string{"ST_AsGeoJSON", "::jsonb"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("OutputSQL missing %q: %s", want, got)
 		}
+	}
+	if n := strings.Count(got, ref); n != 1 {
+		t.Errorf("OutputSQL references ref %d times, want 1: %s", n, got)
 	}
 }
 
