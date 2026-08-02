@@ -4,7 +4,7 @@ WITH __mut AS (
   VALUES ($1, $2)
   ON CONFLICT ("email") DO UPDATE
   SET "full_name" = EXCLUDED."full_name"
-  RETURNING *
+  RETURNING "id", "email", "full_name"
 )
 SELECT jsonb_build_object('user', __row.data, 'clientMutationId', $3::text) AS data
 FROM (
@@ -19,7 +19,7 @@ WITH __mut AS (
   VALUES ($1)
   ON CONFLICT ("email") DO UPDATE
   SET "email" = EXCLUDED."email"
-  RETURNING *
+  RETURNING "id"
 )
 SELECT jsonb_build_object('user', __row.data) AS data
 FROM (

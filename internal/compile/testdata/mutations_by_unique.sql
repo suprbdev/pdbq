@@ -3,7 +3,7 @@ WITH __mut AS (
   UPDATE "public"."users"
   SET "full_name" = $1
   WHERE "public"."users"."email" = $2
-  RETURNING *
+  RETURNING "id", "email", "full_name"
 )
 SELECT jsonb_build_object('user', __row.data) AS data
 FROM (
@@ -16,7 +16,7 @@ FROM (
 WITH __mut AS (
   DELETE FROM "public"."users"
   WHERE "public"."users"."email" = $1
-  RETURNING *
+  RETURNING "id"
 )
 SELECT jsonb_build_object('user', __row.data, 'clientMutationId', NULL::text) AS data
 FROM (

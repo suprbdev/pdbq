@@ -3,7 +3,7 @@ WITH __mut AS (
   UPDATE "public"."posts"
   SET "body" = $1
   WHERE "public"."posts"."id" = $2
-  RETURNING *
+  RETURNING "id", "author_id", "title", "body", "published"
 )
 SELECT jsonb_build_object('post', __row.data) AS data
 FROM (
@@ -16,7 +16,7 @@ FROM (
 WITH __mut AS (
   INSERT INTO "public"."users" ("email")
   VALUES ($1)
-  RETURNING *
+  RETURNING "id", "email", "full_name", "mood", "settings", "tags", "balance", "created_at", "address", "prev_addresses", "moods"
 )
 SELECT jsonb_build_object('user', __row.data) AS data
 FROM (

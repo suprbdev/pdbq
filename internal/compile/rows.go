@@ -161,7 +161,7 @@ func (s *stmt) exprJSON(ref string, c *introspect.Column) string {
 
 // computedJSON compiles a computed-column field: the row-type function called
 // with an explicit ROW(...)::table cast, which works over any row source —
-// a table scan, a function row source, or a mutation RETURNING * CTE (whose
+// a table scan, a function row source, or a mutation RETURNING CTE (whose
 // whole-row variable is an anonymous record the function would reject).
 // Set-returning functions aggregate into a scalar-transformed jsonb array
 // (SETOF <scalar>) or a fully-selected row array (SETOF <table>).
@@ -218,7 +218,10 @@ func (s *stmt) computedJSON(meta *schema.FieldMeta, f *ast.Field, alias string, 
 
 // rowParamSQL renders alias's row as an explicit ROW(...)::table value, which
 // works over any row source — a table scan, a function row source, or a
-// mutation RETURNING * CTE (whose whole-row variable is an anonymous record).
+// mutation RETURNING CTE (whose whole-row variable is an anonymous record).
+// Referencing every column here is what forces the mutation RETURNING list to
+// include the whole row when a computed field is selected — the function takes
+// the full row type, so this is inherent, not an over-projection.
 func rowParamSQL(t *introspect.Table, alias string) string {
 	cols := make([]string, len(t.Columns))
 	for i, c := range t.Columns {

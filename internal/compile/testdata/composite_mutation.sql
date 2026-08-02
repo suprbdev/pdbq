@@ -2,7 +2,7 @@
 WITH __mut AS (
   INSERT INTO "public"."users" ("address", "email", "prev_addresses")
   VALUES (jsonb_populate_record(NULL::"public"."address", $1::jsonb), $2, coalesce((SELECT array_agg(jsonb_populate_record(NULL::"public"."address", __e_1.v) ORDER BY __e_1.o) FROM jsonb_array_elements($3::jsonb) WITH ORDINALITY AS __e_1(v, o)), ARRAY[]::"public"."address"[]))
-  RETURNING *
+  RETURNING "id", "address", "prev_addresses"
 )
 SELECT jsonb_build_object('user', __row.data) AS data
 FROM (

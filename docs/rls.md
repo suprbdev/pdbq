@@ -54,6 +54,32 @@ CREATE POLICY posts_public ON posts FOR SELECT
 The connection role needs `GRANT anonymous, app_user TO <connection role>`
 (or be superuser) so `SET ROLE` succeeds.
 
+## Mutations, `RETURNING`, and column privileges
+
+PostgreSQL evaluates `RETURNING` with the same privilege rules as a `SELECT`:
+each projected column needs a column-level `SELECT` grant, and (with RLS
+enabled) each returned row must pass the table's `SELECT` policies.
+Two consequences for generated mutations:
+
+- **Column-level grants.** pdbq compiles a mutation's `RETURNING` list from
+  the payload selection, so it only names the columns the query actually
+  reads. A role granted `SELECT` on a subset of columns can therefore run
+  mutations as long as its selections stay within that subset. The exception
+  is selecting a **computed column**: the underlying function takes the whole
+  row type, so the statement must return every column and the role needs
+  `SELECT` on all of them.
+
+- **`SELECT` policies apply to rows returned by the mutation itself.** This
+  matters for nested creates (the `nested-mutations` plugin): all inserts run
+  in one statement, and rows inserted by an earlier CTE are not visible to a
+  policy's subquery in the same snapshot. A child-table `SELECT` policy that
+  `EXISTS`-checks its parent row can never pass when the parent was created in
+  the same statement — the insert succeeds but the `RETURNING` row is
+  filtered, which PostgreSQL reports as an error. Write such policies against
+  values that don't require same-statement visibility (e.g. compare the FK
+  column to a claim setting directly), or split the creates into separate
+  mutations.
+
 ## Restricting assumable roles
 
 By default any role named in the role claim may be assumed (the database

@@ -2,7 +2,7 @@
 WITH __mut AS (
   INSERT INTO "public"."places" ("area", "location", "name")
   VALUES ((ST_GeomFromEWKT($1))::geography, ST_SetSRID(ST_GeomFromGeoJSON($2), 4326), $3)
-  RETURNING *
+  RETURNING "id", "name", "location", "area"
 )
 SELECT jsonb_build_object('place', __row.data) AS data
 FROM (
@@ -16,7 +16,7 @@ WITH __mut AS (
   UPDATE "public"."places"
   SET "location" = ST_GeomFromEWKT($1)
   WHERE "public"."places"."id" = $2
-  RETURNING *
+  RETURNING "id", "location"
 )
 SELECT jsonb_build_object('place', __row.data) AS data
 FROM (

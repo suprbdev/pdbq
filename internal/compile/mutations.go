@@ -13,8 +13,11 @@ import (
 )
 
 // mutation compiles create/update/delete into a single statement: the DML
-// runs in a `WITH __mut AS (... RETURNING *)` CTE and the payload selection
+// runs in a `WITH __mut AS (... RETURNING ...)` CTE and the payload selection
 // is compiled against __mut like a regular table, so relations still work.
+// The RETURNING list projects only the columns the payload references:
+// RETURNING requires SELECT privilege per projected column, so RETURNING *
+// would break every mutation on tables using column-level grants.
 func (s *stmt) mutation(meta *schema.FieldMeta, f *ast.Field) (string, error) {
 	t := meta.Table
 	var cte string
@@ -48,7 +51,31 @@ func (s *stmt) mutation(meta *schema.FieldMeta, f *ast.Field) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	cte += "\nRETURNING " + returningList(t, payload, s.mutAliases)
 	return fmt.Sprintf("WITH __mut AS (\n%s\n)\n%s", indent(cte), payload), nil
+}
+
+// returningList renders the DML RETURNING list: exactly the table columns the
+// compiled payload references through a __mut alias. Every payload column
+// reference is rendered as `<alias>.<quoted column>` (columnJSON, nodeIDSQL,
+// rowParamSQL, relation correlation conditions), so a substring scan is exact.
+// A payload reading no columns (e.g. only clientMutationId or affectedCount)
+// falls back to a bare literal so the DML still yields its row count.
+func returningList(t *introspect.Table, payload string, aliases []string) string {
+	var cols []string
+	for _, c := range t.Columns {
+		q := quoteIdent(c.Name)
+		for _, a := range aliases {
+			if strings.Contains(payload, a+"."+q) {
+				cols = append(cols, q)
+				break
+			}
+		}
+	}
+	if len(cols) == 0 {
+		return "1"
+	}
+	return strings.Join(cols, ", ")
 }
 
 // clientMutationID extracts the clientMutationId sent by the client, if any.
@@ -108,6 +135,7 @@ func (s *stmt) payloadSelect(t *introspect.Table, f *ast.Field) (string, error) 
 		return fmt.Sprintf("SELECT %s AS data FROM __mut", buildJSONObject(pairs)), nil
 	}
 	alias := s.alias("t")
+	s.mutAliases = append(s.mutAliases, alias)
 	jsonExpr, laterals, err := s.rowJSONFromCTE(t, rowField.SelectionSet, alias)
 	if err != nil {
 		return "", err
@@ -141,6 +169,7 @@ func (s *stmt) payloadSelectMany(t *introspect.Table, f *ast.Field) (string, err
 		switch meta.Kind {
 		case schema.KindPayloadRows:
 			alias := s.alias("t")
+			s.mutAliases = append(s.mutAliases, alias)
 			jsonExpr, laterals, err := s.rowJSON(t, sub.SelectionSet, alias, 1)
 			if err != nil {
 				return "", err
@@ -230,7 +259,7 @@ func (s *stmt) createManyCTE(t *introspect.Table, f *ast.Field) (string, error) 
 		}
 		valueRows = append(valueRows, "("+strings.Join(exprs, ", ")+")")
 	}
-	return fmt.Sprintf("INSERT INTO %s (%s)\nVALUES %s\nRETURNING *",
+	return fmt.Sprintf("INSERT INTO %s (%s)\nVALUES %s",
 		tableRef(t), strings.Join(cols, ", "), strings.Join(valueRows, ",\n       ")), nil
 }
 
@@ -258,7 +287,7 @@ func (s *stmt) updateManyCTE(t *introspect.Table, f *ast.Field) (string, error) 
 	if err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("UPDATE %s\nSET %s\nWHERE %s\nRETURNING *",
+	return fmt.Sprintf("UPDATE %s\nSET %s\nWHERE %s",
 		tableRef(t), strings.Join(sets, ", "), cond), nil
 }
 
@@ -267,7 +296,7 @@ func (s *stmt) deleteManyCTE(t *introspect.Table, f *ast.Field) (string, error) 
 	if err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("DELETE FROM %s\nWHERE %s\nRETURNING *", tableRef(t), cond), nil
+	return fmt.Sprintf("DELETE FROM %s\nWHERE %s", tableRef(t), cond), nil
 }
 
 // bulkFilterCond resolves the required filter argument of a bulk mutation to
@@ -309,13 +338,13 @@ func (s *stmt) insertCTE(t *introspect.Table, f *ast.Field) (string, error) {
 		return "", err
 	}
 	if len(cols) == 0 {
-		return fmt.Sprintf("INSERT INTO %s DEFAULT VALUES RETURNING *", tableRef(t)), nil
+		return fmt.Sprintf("INSERT INTO %s DEFAULT VALUES", tableRef(t)), nil
 	}
 	quoted := make([]string, len(cols))
 	for i, c := range cols {
 		quoted[i] = quoteIdent(c)
 	}
-	return fmt.Sprintf("INSERT INTO %s (%s)\nVALUES (%s)\nRETURNING *",
+	return fmt.Sprintf("INSERT INTO %s (%s)\nVALUES (%s)",
 		tableRef(t), strings.Join(quoted, ", "), strings.Join(params, ", ")), nil
 }
 
@@ -403,7 +432,7 @@ func (s *stmt) upsertCTE(t *introspect.Table, meta *schema.FieldMeta, f *ast.Fie
 	for i, kc := range meta.KeyColumns {
 		targetCols[i] = quoteIdent(kc)
 	}
-	return fmt.Sprintf("INSERT INTO %s (%s)\nVALUES (%s)\nON CONFLICT (%s) DO UPDATE\nSET %s\nRETURNING *",
+	return fmt.Sprintf("INSERT INTO %s (%s)\nVALUES (%s)\nON CONFLICT (%s) DO UPDATE\nSET %s",
 		tableRef(t), strings.Join(quoted, ", "), strings.Join(params, ", "),
 		strings.Join(targetCols, ", "), strings.Join(sets, ", ")), nil
 }
@@ -433,7 +462,7 @@ func (s *stmt) updateCTE(t *introspect.Table, meta *schema.FieldMeta, f *ast.Fie
 	if err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("UPDATE %s\nSET %s\nWHERE %s\nRETURNING *",
+	return fmt.Sprintf("UPDATE %s\nSET %s\nWHERE %s",
 		tableRef(t), strings.Join(sets, ", "), strings.Join(conds, " AND ")), nil
 }
 
@@ -442,7 +471,7 @@ func (s *stmt) deleteCTE(t *introspect.Table, meta *schema.FieldMeta, f *ast.Fie
 	if err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("DELETE FROM %s\nWHERE %s\nRETURNING *",
+	return fmt.Sprintf("DELETE FROM %s\nWHERE %s",
 		tableRef(t), strings.Join(conds, " AND ")), nil
 }
 

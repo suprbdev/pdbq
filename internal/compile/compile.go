@@ -131,6 +131,12 @@ type stmt struct {
 	// deferred holds the first error raised from a helper with no error
 	// return (valueExpr and friends). Callers surface it via s.err().
 	deferred error
+	// mutAliases records the aliases the mutation payload reads the __mut CTE
+	// under, so the DML's RETURNING list can project only the columns the
+	// payload actually references (RETURNING requires SELECT privilege per
+	// column — RETURNING * would demand SELECT on every column and break
+	// tables using column-level grants).
+	mutAliases []string
 }
 
 // fail records an error from a rendering helper that cannot return one. The
