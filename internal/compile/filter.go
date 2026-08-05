@@ -379,14 +379,33 @@ func (s *stmt) coerce(col *introspect.Column, v any) any {
 	return coerceInput(s.c.Built, col, v)
 }
 
+// enumTypeFor returns the GraphQL enum type name for a column whose (element)
+// type is an enum — a real pg enum type, or a table-backed @enum reference
+// (Column.EnumRef). The "_" prefix is stripped so array columns resolve to the
+// same enum as their scalar counterpart.
+func enumTypeFor(built *schema.Built, col *introspect.Column) (string, bool) {
+	if col == nil {
+		return "", false
+	}
+	key := col.EnumRef
+	if key == "" {
+		base := strings.TrimPrefix(col.PGType, "_")
+		if built.Catalog.Enum(col.TypeSchema, base) == nil {
+			return "", false
+		}
+		key = col.TypeSchema + "." + base
+	}
+	name, ok := built.EnumTypeForPG[key]
+	return name, ok
+}
+
 func coerceInput(built *schema.Built, col *introspect.Column, v any) any {
 	if col == nil || v == nil {
 		return v
 	}
 	base := strings.TrimPrefix(col.PGType, "_")
-	if e := built.Catalog.Enum(col.TypeSchema, base); e != nil {
+	if enumType, ok := enumTypeFor(built, col); ok {
 		if name, ok := v.(string); ok {
-			enumType := built.EnumTypeForPG[col.TypeSchema+"."+base]
 			if vals, ok := built.EnumValues[enumType]; ok {
 				if pg, ok := vals[name]; ok {
 					return pg

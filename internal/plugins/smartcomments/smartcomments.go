@@ -38,6 +38,10 @@
 //     tables/views: declare a logical foreign key, generating relation fields
 //     both ways (repeatable; append |@fieldName x|@foreignFieldName y to name
 //     them).
+//   - @enum / @enumDescription — turn a table's rows into a GraphQL enum.
+//     Handled at introspection time (introspect.convertEnumTables), not by
+//     this plugin, because it needs the table's rows; @name on the table
+//     still renames the resulting enum through this plugin's InflectionHook.
 //
 // Tag lines are stripped from the GraphQL descriptions; the rest of the
 // comment remains the description. Everything happens at schema-build time —

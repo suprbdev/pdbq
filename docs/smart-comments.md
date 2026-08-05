@@ -35,6 +35,7 @@ Tags may repeat where noted. Disable everything with
 | `@primaryKey col[, col]` | Declare a logical primary key on a view (or PK-less table): enables `nodeId`, the by-key lookup, and keyset pagination. Mutations remain gated by real privileges, so views stay read-only. |
 | `@unique col[, col]` | Declare a logical unique constraint: generates the single-row lookup field (repeatable). |
 | `@foreignKey (col, …) references [schema.]table (col, …)` | Declare a logical foreign key (typically on views): generates relation fields in both directions and relation filters (repeatable). Append `\|@fieldName x\|@foreignFieldName y` to name the generated fields. |
+| `@enum` | Treat the table as a GraphQL enum: its **rows** become the enum values. See [Enum tables](#enum-tables). |
 
 `@omit` actions combine: `@omit create, delete` or repeated `@omit` lines.
 
@@ -76,6 +77,67 @@ Tags may repeat where noted. Disable everything with
 | Tag | Effect |
 |---|---|
 | `@name <new_name>` | Rename the GraphQL enum type. |
+
+## Enum tables
+
+`@enum` on a table turns its rows into a GraphQL enum — the PostGraphile
+pattern for lookup tables that are really a fixed vocabulary with referential
+integrity:
+
+```sql
+CREATE TABLE event_type (
+    code        text PRIMARY KEY,
+    description text
+);
+COMMENT ON TABLE event_type IS E'@enum\nKind of event.';
+
+INSERT INTO event_type (code, description) VALUES
+    ('conference', 'A large formal gathering'),
+    ('meetup',     'Casual get-together');
+
+CREATE TABLE events (
+    id         integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    name       text NOT NULL,
+    type_code  text NOT NULL REFERENCES event_type (code)
+);
+```
+
+generates
+
+```graphql
+enum EventType {
+  """A large formal gathering"""
+  CONFERENCE
+  """Casual get-together"""
+  MEETUP
+}
+
+type Event implements Node {
+  id: Int!
+  name: String!
+  typeCode: EventType!
+}
+```
+
+- The **value column** is the table's single-column primary key, or the column
+  of a single-column unique constraint commented `@enum`. It must be a
+  text-family column — the row values become the enum value names
+  (`meetup` → `MEETUP`), and clients speak names in both directions while the
+  database stores the raw values.
+- **Descriptions** come from a column commented `@enumDescription`, falling
+  back to a column named `description`.
+- The enum table itself **disappears from the API** (no type, queries, or
+  mutations), and every single-column foreign key referencing the value column
+  types its local column as the enum; those FKs generate no relation fields.
+- `@name` on the table renames the enum (`@name event_kind` → `EventKind`).
+- Tables that do not qualify (multi-column or non-text key, or no rows — an
+  empty GraphQL enum is invalid) are left as ordinary tables.
+
+Rows are read **at introspection time** and values are ordered by the value
+column; adding a row is DDL-adjacent — watch mode (or a restart) picks it up
+like any other schema change. Like `@costMultiplier`, the tag is applied
+during introspection and therefore works even with the `smart-comments`
+plugin disabled.
 
 ## Tuning advanced-filters per object
 

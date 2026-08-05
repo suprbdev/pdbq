@@ -1,0 +1,12 @@
+{
+  allEvents(
+    orderBy: [TYPE_CODE_ASC]
+    filter: { typeCode: { equalTo: MEETUP, in: [CONFERENCE, HACKATHON] } }
+  ) {
+    nodes {
+      id
+      name
+      typeCode
+    }
+  }
+}

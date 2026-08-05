@@ -59,6 +59,43 @@ func TestDefaultSchema(t *testing.T) {
 	}
 }
 
+// TestTableBackedEnum covers the @enum table conversion surface: the
+// referencing column is typed as the generated enum everywhere (output,
+// filter, create/update inputs), value descriptions render, and no table
+// surface exists for the enum table itself.
+func TestTableBackedEnum(t *testing.T) {
+	b := schema.New(testutil.FixtureCatalog(), inflect.Default, schema.Options{
+		FilterIndexedOnly: true,
+	})
+	built, err := b.Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"enum EventType ", "CONFERENCE", "HACKATHON", "MEETUP",
+		`"""A large formal gathering"""`,
+		"typeCode: EventType!",           // output field + create input
+		"typeCode: EventTypeFilterOps",   // filter
+		"TYPE_CODE_ASC",                  // orderBy
+		"allEvents(", "createEvent(",
+	} {
+		if !strings.Contains(built.SDL, want) {
+			t.Errorf("SDL missing %q", want)
+		}
+	}
+	for _, reject := range []string{"allEventTypes(", "type EventType "} {
+		if strings.Contains(built.SDL, reject) {
+			t.Errorf("SDL must not contain %q", reject)
+		}
+	}
+	if built.EnumValues["EventType"]["MEETUP"] != "meetup" {
+		t.Errorf("EnumValues[EventType][MEETUP] = %q, want meetup", built.EnumValues["EventType"]["MEETUP"])
+	}
+	if built.EnumTypeForPG["public.event_type"] != "EventType" {
+		t.Errorf("EnumTypeForPG missing table-backed enum: %v", built.EnumTypeForPG["public.event_type"])
+	}
+}
+
 func TestComputedColumns(t *testing.T) {
 	cat := testutil.FixtureCatalog()
 	cat.Functions = append(cat.Functions,

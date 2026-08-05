@@ -321,15 +321,10 @@ func (s *stmt) enumCase(ref string, c *introspect.Column) (string, bool) {
 	return b.String(), true
 }
 
-// enumValuesFor returns the GraphQL-value-name -> pg-label map for a column
-// whose (element) type is an enum. The "_" prefix is stripped so array columns
-// resolve to the same enum as their scalar counterpart.
+// enumValuesFor returns the GraphQL-value-name -> pg-value map for a column
+// whose (element) type is an enum — native or table-backed (Column.EnumRef).
 func (s *stmt) enumValuesFor(c *introspect.Column) (map[string]string, bool) {
-	if c == nil {
-		return nil, false
-	}
-	base := strings.TrimPrefix(c.PGType, "_")
-	enumType, ok := s.c.Built.EnumTypeForPG[c.TypeSchema+"."+base]
+	enumType, ok := enumTypeFor(s.c.Built, c)
 	if !ok {
 		return nil, false
 	}

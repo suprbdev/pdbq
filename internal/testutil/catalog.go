@@ -7,8 +7,9 @@ import "github.com/suprbdev/pdbq/internal/introspect"
 
 // FixtureCatalog models: users (pk id, unique email, enum mood + mood[],
 // jsonb, text[], composite address + address[]), posts (pk id, fk author_id
-// -> users.id), places (PostGIS geometry + geography, GiST-indexed), plus a
-// stable function.
+// -> users.id), places (PostGIS geometry + geography, GiST-indexed), events
+// (type_code bound to the table-backed event_type enum), plus a stable
+// function.
 func FixtureCatalog() *introspect.Catalog {
 	users := &introspect.Table{
 		Schema: "public", Name: "users", Kind: introspect.RelTable,
@@ -110,6 +111,24 @@ func FixtureCatalog() *introspect.Catalog {
 			{Name: "places_area_idx", Columns: []string{"area"}, Method: "gist"},
 		},
 	}
+	// events references the event_type @enum table. The fixture carries the
+	// post-introspection state: the enum table itself is gone (converted to
+	// the table-backed enum below), the FK is dropped, and type_code carries
+	// the EnumRef binding instead.
+	events := &introspect.Table{
+		Schema: "public", Name: "events", Kind: introspect.RelTable,
+		Privileges: introspect.Privileges{Select: true, Insert: true, Update: true, Delete: true},
+		Columns: []*introspect.Column{
+			{Name: "id", Position: 1, PGType: "int4", TypeSchema: "pg_catalog", NotNull: true, HasDefault: true, Generated: true},
+			{Name: "name", Position: 2, PGType: "text", TypeSchema: "pg_catalog", NotNull: true},
+			{Name: "type_code", Position: 3, PGType: "text", TypeSchema: "pg_catalog", NotNull: true, EnumRef: "public.event_type"},
+		},
+		PrimaryKey: &introspect.Constraint{Name: "events_pkey", Columns: []string{"id"}},
+		Indexes: []*introspect.Index{
+			{Name: "events_pkey", Columns: []string{"id"}, Unique: true, Method: "btree"},
+			{Name: "events_type_code_idx", Columns: []string{"type_code"}, Method: "btree"},
+		},
+	}
 	// metrics is a PK-less view: no nodeId, offset-cursor pagination only.
 	metrics := &introspect.Table{
 		Schema: "public", Name: "metrics", Kind: introspect.RelView,
@@ -123,8 +142,15 @@ func FixtureCatalog() *introspect.Catalog {
 		FormatVersion: introspect.CatalogFormatVersion,
 		ServerVersion: "16.0",
 		Schemas:       []string{"public"},
-		Tables:        []*introspect.Table{comments, metrics, places, posts, users},
+		Tables:        []*introspect.Table{comments, events, metrics, places, posts, users},
 		Enums: []*introspect.Enum{{
+			Schema: "public", Name: "event_type", TableBacked: true,
+			Comment: "@enum\nKind of event.",
+			Values:  []string{"conference", "hackathon", "meetup"},
+			ValueDescriptions: []string{
+				"A large formal gathering", "", "Casual get-together",
+			},
+		}, {
 			Schema: "public", Name: "mood", Values: []string{"sad", "ok", "happy"},
 		}},
 		Composites: []*introspect.Composite{{

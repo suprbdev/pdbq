@@ -859,6 +859,68 @@ func emails(t *testing.T, url, query, root, field string) []string {
 	return out
 }
 
+// TestEnumTable exercises the @enum smart comment: the event_type table's
+// rows become the EventType enum, events.type_code speaks enum value names in
+// both directions, and the enum table itself has no query surface.
+func TestEnumTable(t *testing.T) {
+	hs := testServer(t, nil)
+
+	t.Run("read and filter by enum value", func(t *testing.T) {
+		res := post(t, hs.URL, `{allEvents(orderBy: [TYPE_CODE_ASC], filter: {typeCode: {in: [CONFERENCE, MEETUP]}}) {nodes {name typeCode}}}`, nil)
+		requireNoErrors(t, res)
+		var conn struct {
+			Nodes []struct {
+				Name     string `json:"name"`
+				TypeCode string `json:"typeCode"`
+			} `json:"nodes"`
+		}
+		mustUnmarshal(t, res.Data["allEvents"], &conn)
+		if len(conn.Nodes) < 2 {
+			t.Fatalf("want at least 2 events, got %d", len(conn.Nodes))
+		}
+		for _, n := range conn.Nodes {
+			if n.TypeCode != "CONFERENCE" && n.TypeCode != "MEETUP" {
+				t.Errorf("filter leaked typeCode %s", n.TypeCode)
+			}
+		}
+	})
+
+	t.Run("enum introspection with value descriptions", func(t *testing.T) {
+		res := post(t, hs.URL, `{__type(name: "EventType") {kind enumValues {name description}}}`, nil)
+		requireNoErrors(t, res)
+		got := normalize(t, res.Data["__type"])
+		for _, want := range []string{`"kind":"ENUM"`, `"CONFERENCE"`, `"HACKATHON"`, `"MEETUP"`, "A large formal gathering"} {
+			if !strings.Contains(got, want) {
+				t.Errorf("introspection missing %s in %s", want, got)
+			}
+		}
+	})
+
+	t.Run("enum table has no query surface", func(t *testing.T) {
+		res := post(t, hs.URL, `{allEventTypes {nodes {code}}}`, nil)
+		if len(res.Errors) == 0 {
+			t.Fatal("allEventTypes must not exist")
+		}
+	})
+
+	t.Run("create with enum value", func(t *testing.T) {
+		res := post(t, hs.URL, `mutation {createEvent(input: {name: "E2E Enum", typeCode: HACKATHON}) {event {id typeCode}}}`, nil)
+		requireNoErrors(t, res)
+		var payload struct {
+			Event struct {
+				ID       int    `json:"id"`
+				TypeCode string `json:"typeCode"`
+			} `json:"event"`
+		}
+		mustUnmarshal(t, res.Data["createEvent"], &payload)
+		if payload.Event.TypeCode != "HACKATHON" {
+			t.Errorf("created typeCode = %s, want HACKATHON", payload.Event.TypeCode)
+		}
+		res = post(t, hs.URL, fmt.Sprintf(`mutation {deleteEventById(id: %d) {event {id}}}`, payload.Event.ID), nil)
+		requireNoErrors(t, res)
+	})
+}
+
 func TestMutationsAndRollback(t *testing.T) {
 	hs := testServer(t, nil)
 	// Unique emails keep reruns against a persistent dev DB idempotent.

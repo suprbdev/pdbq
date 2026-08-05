@@ -1,0 +1,9 @@
+mutation {
+  createEvent(input: { name: "PGConf", typeCode: CONFERENCE }) {
+    event {
+      id
+      name
+      typeCode
+    }
+  }
+}

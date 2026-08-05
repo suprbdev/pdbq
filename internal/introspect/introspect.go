@@ -47,6 +47,9 @@ func Introspect(ctx context.Context, db Querier, schemas []string) (*Catalog, er
 	if err := readFunctions(ctx, db, schemas, cat); err != nil {
 		return nil, err
 	}
+	if err := convertEnumTables(ctx, db, cat); err != nil {
+		return nil, err
+	}
 	cat.sortStable()
 	return cat, nil
 }

@@ -53,6 +53,33 @@ CREATE INDEX comments_parent_id_idx ON comments (parent_id);
 
 COMMENT ON CONSTRAINT comments_parent_id_fkey ON comments IS '@costMultiplier 3';
 
+-- @enum table: its rows become the values of a generated GraphQL enum
+-- (EventType), the table itself disappears from the API, and columns
+-- referencing it via FK are typed as the enum. The description column
+-- becomes per-value descriptions.
+CREATE TABLE event_type (
+    code        text PRIMARY KEY,
+    description text
+);
+COMMENT ON TABLE event_type IS E'@enum\nKind of event.';
+
+INSERT INTO event_type (code, description) VALUES
+    ('conference', 'A large formal gathering'),
+    ('hackathon',  NULL),
+    ('meetup',     'Casual get-together');
+
+CREATE TABLE events (
+    id         integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    name       text NOT NULL,
+    type_code  text NOT NULL REFERENCES event_type (code)
+);
+CREATE INDEX events_type_code_idx ON events (type_code);
+
+INSERT INTO events (name, type_code) VALUES
+    ('PGConf',         'conference'),
+    ('Hack Night',     'hackathon'),
+    ('GraphQL Meetup', 'meetup');
+
 -- PostGIS spatial fixture. The extension ships in the compose/CI image; the
 -- table is only created when it is actually available so this schema still
 -- loads against a plain postgres image.

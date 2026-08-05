@@ -159,11 +159,22 @@ func TestNameColumn(t *testing.T) {
 
 func TestNameEnumAndFunction(t *testing.T) {
 	built := build(t, func(c *introspect.Catalog) {
-		c.Enums[0].Comment = "@name feeling"
+		c.Enum("public", "mood").Comment = "@name feeling"
 		c.Functions[0].Comment = "@name findPosts" // search_posts
 	})
 	wantSDL(t, built.SDL, "enum Feeling", "mood: Feeling", "findPosts(")
 	rejectSDL(t, built.SDL, "enum Mood", "searchPosts(")
+}
+
+// TestNameEnumTable: a table-backed enum (@enum table) carries its table
+// comment, so @name renames it through the normal enum path and the tag lines
+// are stripped from the description.
+func TestNameEnumTable(t *testing.T) {
+	built := build(t, func(c *introspect.Catalog) {
+		c.Enum("public", "event_type").Comment = "@enum\n@name eventKind\nKind of event."
+	})
+	wantSDL(t, built.SDL, "enum EventKind", "typeCode: EventKind!", `"""Kind of event."""`)
+	rejectSDL(t, built.SDL, "enum EventType", "@enum")
 }
 
 func TestDeprecated(t *testing.T) {

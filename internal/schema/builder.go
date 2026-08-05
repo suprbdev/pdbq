@@ -213,13 +213,17 @@ func (b *Builder) addEnums() {
 		name := b.Inflect(inflect.KindEnumTypeName, inflect.Input{Schema: e.Schema, Enum: e.Name})
 		en := &Enum{Name: name, Description: e.Comment}
 		seen := map[string]bool{}
-		for _, v := range e.Values {
+		for i, v := range e.Values {
 			gv := b.Inflect(inflect.KindEnumValueName, inflect.Input{Enum: e.Name, Value: v})
 			for seen[gv] {
 				gv += "_"
 			}
 			seen[gv] = true
-			en.Values = append(en.Values, EnumValue{Name: gv, PGValue: v})
+			desc := ""
+			if i < len(e.ValueDescriptions) {
+				desc = e.ValueDescriptions[i]
+			}
+			en.Values = append(en.Values, EnumValue{Name: gv, PGValue: v, Description: desc})
 		}
 		b.Enums[name] = en
 	}
@@ -264,7 +268,9 @@ func (b *Builder) addComposites() {
 func (b *Builder) gqlTypeForColumn(c *introspect.Column) string {
 	base := ""
 	pg := strings.TrimPrefix(c.PGType, "_")
-	if e := b.Catalog.Enum(c.TypeSchema, pg); e != nil {
+	if e := b.Catalog.EnumByRef(c.EnumRef); e != nil {
+		base = b.Inflect(inflect.KindEnumTypeName, inflect.Input{Schema: e.Schema, Enum: e.Name})
+	} else if e := b.Catalog.Enum(c.TypeSchema, pg); e != nil {
 		base = b.Inflect(inflect.KindEnumTypeName, inflect.Input{Schema: e.Schema, Enum: e.Name})
 	} else if tn, ok := b.TypeForComposite[tableKey(c.TypeSchema, pg)]; ok {
 		base = tn
@@ -1270,6 +1276,7 @@ func (b *Builder) SDL() string {
 		writeDesc(&out, e.Description, "")
 		fmt.Fprintf(&out, "enum %s {\n", e.Name)
 		for _, v := range e.Values {
+			writeDesc(&out, v.Description, "  ")
 			fmt.Fprintf(&out, "  %s\n", v.Name)
 		}
 		out.WriteString("}\n\n")

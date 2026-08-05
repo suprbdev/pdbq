@@ -11,7 +11,7 @@ import (
 
 // CatalogFormatVersion is bumped whenever the Catalog wire format changes
 // incompatibly; the cache layer refuses to load mismatched versions.
-const CatalogFormatVersion = 2
+const CatalogFormatVersion = 3
 
 // Catalog is the complete introspected model of the database. It is the only
 // input to GraphQL schema building, which keeps caching trivial and plugin
@@ -98,6 +98,10 @@ type Column struct {
 	HasDefault bool   `json:"has_default"`
 	Generated  bool   `json:"generated"` // identity or generated column: excluded from create/update input
 	Comment    string `json:"comment,omitempty"`
+	// EnumRef binds the column to a table-backed enum ("schema.name" of the
+	// @enum table it referenced via FK). The column keeps its real pg type
+	// (text); schema building and compilation treat it as that enum.
+	EnumRef string `json:"enum_ref,omitempty"`
 }
 
 type Constraint struct {
@@ -134,6 +138,13 @@ type Enum struct {
 	Name    string   `json:"name"`
 	Values  []string `json:"values"`
 	Comment string   `json:"comment,omitempty"`
+	// ValueDescriptions holds per-value descriptions parallel to Values
+	// (table-backed enums; native pg enums have no per-value comments).
+	ValueDescriptions []string `json:"value_descriptions,omitempty"`
+	// TableBacked marks an enum synthesized from an @enum table's rows. No pg
+	// type of this name exists, so SQL must never cast to it; the underlying
+	// values live in plain text columns.
+	TableBacked bool `json:"table_backed,omitempty"`
 }
 
 type Composite struct {
@@ -182,6 +193,19 @@ func (c *Catalog) Table(schema, name string) *Table {
 func (c *Catalog) Enum(schema, name string) *Enum {
 	for _, e := range c.Enums {
 		if e.Schema == schema && e.Name == name {
+			return e
+		}
+	}
+	return nil
+}
+
+// EnumByRef returns the table-backed enum a Column.EnumRef points at, or nil.
+func (c *Catalog) EnumByRef(ref string) *Enum {
+	if ref == "" {
+		return nil
+	}
+	for _, e := range c.Enums {
+		if e.TableBacked && e.Schema+"."+e.Name == ref {
 			return e
 		}
 	}
