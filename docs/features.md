@@ -156,6 +156,7 @@ Checklist of PostgreSQL and GraphQL features pdbq supports. Checked = implemente
 - [ ] `/metrics` (Prometheus) endpoint (v1.x)
 - [x] Persisted queries / APQ (`server.apq` Apollo protocol, `server.persisted_queries_path` allowlist file, `server.persisted_only` lockdown)
 - [ ] `@defer` / `@stream` (v2)
+- [ ] Schema contracts — named schema variants that hide tagged types/fields per audience (e.g. `public`/`partner`/`internal`), each with its own SDL export and served endpoint; builds on the `@omit`/tag machinery in smart-comments (v2)
 - [x] CORS configuration (`server.cors_origins`: exact-match allowlist or `*`)
 - [x] Response compression (gzip, opt-in via `server.compression`)
 
