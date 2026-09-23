@@ -53,10 +53,11 @@ import (
 	"context"
 	"strings"
 
+	coreinflect "github.com/suprbdev/pdbcore/inflect"
+	"github.com/suprbdev/pdbcore/introspect"
+	"github.com/suprbdev/pdbcore/smarttags"
 	"github.com/suprbdev/pdbq/internal/inflect"
-	"github.com/suprbdev/pdbq/internal/introspect"
 	"github.com/suprbdev/pdbq/internal/schema"
-	"github.com/suprbdev/pdbq/internal/smarttags"
 )
 
 type Plugin struct {
@@ -254,9 +255,9 @@ func (p *Plugin) addRelationOrder(b *schema.Builder) {
 // addRelationOrderValues appends REL__COLUMN_{ASC,DESC} values for every
 // orderable column of the related table.
 func addRelationOrderValues(b *schema.Builder, en *schema.Enum, relName string, related *introspect.Table, fk *introspect.ForeignKey, forward bool) {
-	prefix := inflect.EnumValue(relName) + "__"
+	prefix := coreinflect.EnumValue(relName) + "__"
 	for _, c := range b.FilterableColumns(related) {
-		base := prefix + inflect.EnumValue(c.Name)
+		base := prefix + coreinflect.EnumValue(c.Name)
 		if hasEnumValue(en, base+"_ASC") || hasEnumValue(en, base+"_DESC") {
 			continue
 		}
@@ -305,7 +306,7 @@ func (p *Plugin) addComputed(b *schema.Builder) {
 		}
 		orderName := b.Inflect(inflect.KindOrderByTypeName, inflect.Input{Schema: t.Schema, Table: t.Name})
 		if en := b.Enums[orderName]; !skipOrder && en != nil {
-			base := inflect.EnumValue(fieldName)
+			base := coreinflect.EnumValue(fieldName)
 			if !hasEnumValue(en, base+"_ASC") && !hasEnumValue(en, base+"_DESC") {
 				en.Values = append(en.Values,
 					schema.EnumValue{Name: base + "_ASC", Computed: f},

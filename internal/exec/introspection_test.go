@@ -6,11 +6,11 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/suprbdev/pdbcore/testutil"
 	"github.com/suprbdev/pdbq/internal/compile"
 	"github.com/suprbdev/pdbq/internal/exec"
 	"github.com/suprbdev/pdbq/internal/inflect"
 	"github.com/suprbdev/pdbq/internal/schema"
-	"github.com/suprbdev/pdbq/internal/testutil"
 )
 
 func newExecutor(t *testing.T) *exec.Executor {

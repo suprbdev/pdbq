@@ -9,15 +9,15 @@ import (
 
 	flag "github.com/spf13/pflag"
 
+	"github.com/suprbdev/pdbcore/introspect"
+	"github.com/suprbdev/pdbcore/watch"
 	"github.com/suprbdev/pdbq/internal/compile"
 	"github.com/suprbdev/pdbq/internal/config"
 	"github.com/suprbdev/pdbq/internal/exec"
 	"github.com/suprbdev/pdbq/internal/inflect"
-	"github.com/suprbdev/pdbq/internal/introspect"
 	"github.com/suprbdev/pdbq/internal/plugin"
 	"github.com/suprbdev/pdbq/internal/schema"
 	"github.com/suprbdev/pdbq/internal/server"
-	"github.com/suprbdev/pdbq/internal/watch"
 )
 
 // Configuration. Section types carry a Config suffix to avoid clashing with
@@ -121,6 +121,7 @@ func (a *App) buildServer(ctx context.Context) (*server.Server, error) {
 			Pool:         a.pool,
 			Schemas:      a.Config.Schema.Schemas,
 			Channel:      a.Config.Watch.Channel,
+			TriggerName:  "pdbq_watch",
 			PollInterval: a.Config.Watch.PollInterval,
 			Log:          a.Log,
 			OnChange: func(cat *introspect.Catalog) {

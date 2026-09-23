@@ -5,10 +5,10 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/suprbdev/pdbcore/testutil"
 	"github.com/suprbdev/pdbq/internal/compile"
 	"github.com/suprbdev/pdbq/internal/inflect"
 	"github.com/suprbdev/pdbq/internal/schema"
-	"github.com/suprbdev/pdbq/internal/testutil"
 )
 
 // TestCompileSeesOperationContext proves a compile.Func (the surface

@@ -9,15 +9,15 @@ import (
 	"github.com/vektah/gqlparser/v2/parser"
 	"github.com/vektah/gqlparser/v2/validator"
 
+	"github.com/suprbdev/pdbcore/introspect"
+	"github.com/suprbdev/pdbcore/testutil"
 	"github.com/suprbdev/pdbq/internal/compile"
-	"github.com/suprbdev/pdbq/internal/introspect"
 	"github.com/suprbdev/pdbq/internal/plugin"
 	"github.com/suprbdev/pdbq/internal/plugins/advancedfilters"
 	"github.com/suprbdev/pdbq/internal/plugins/nestedmutations"
 	"github.com/suprbdev/pdbq/internal/plugins/simplenames"
 	"github.com/suprbdev/pdbq/internal/plugins/smartcomments"
 	"github.com/suprbdev/pdbq/internal/schema"
-	"github.com/suprbdev/pdbq/internal/testutil"
 )
 
 // build runs the full pipeline (catalog hooks -> inflection -> schema hooks)

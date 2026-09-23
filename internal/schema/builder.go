@@ -10,10 +10,11 @@ import (
 	"github.com/vektah/gqlparser/v2"
 	"github.com/vektah/gqlparser/v2/ast"
 
+	coreinflect "github.com/suprbdev/pdbcore/inflect"
+	"github.com/suprbdev/pdbcore/introspect"
+	"github.com/suprbdev/pdbcore/postgis"
+	"github.com/suprbdev/pdbcore/smarttags"
 	"github.com/suprbdev/pdbq/internal/inflect"
-	"github.com/suprbdev/pdbq/internal/introspect"
-	"github.com/suprbdev/pdbq/internal/postgis"
-	"github.com/suprbdev/pdbq/internal/smarttags"
 )
 
 // catalogHasSpatial reports whether any column, composite attribute, or
@@ -587,7 +588,7 @@ func (b *Builder) addDistinctOn(t *introspect.Table) string {
 		if postgis.IsSpatial(c.PGType) {
 			continue
 		}
-		en.Values = append(en.Values, EnumValue{Name: inflect.EnumValue(c.Name), Column: c.Name})
+		en.Values = append(en.Values, EnumValue{Name: coreinflect.EnumValue(c.Name), Column: c.Name})
 	}
 	b.Enums[name] = en
 	return name
@@ -608,7 +609,7 @@ func (b *Builder) addOrderBy(t *introspect.Table) string {
 		if postgis.IsSpatial(c.PGType) {
 			continue
 		}
-		base := inflect.EnumValue(c.Name)
+		base := coreinflect.EnumValue(c.Name)
 		en.Values = append(en.Values,
 			EnumValue{Name: base + "_ASC", Column: c.Name},
 			EnumValue{Name: base + "_DESC", Column: c.Name, Desc: true},
@@ -764,7 +765,7 @@ func (b *Builder) addMutations(t *introspect.Table, filterName string) {
 	payloadMany := func(verb string) string {
 		name := b.Inflect(inflect.KindPayloadTypeName, inflect.Input{Schema: t.Schema, Table: t.Name, Column: verb})
 		if _, ok := b.Objects[name]; !ok {
-			rowsField := inflect.LowerCamel(inflect.Pluralize(typeName))
+			rowsField := coreinflect.LowerCamel(coreinflect.Pluralize(typeName))
 			b.Objects[name] = &Object{Name: name, Fields: []*Field{
 				{Name: rowsField, Type: "[" + typeName + "!]!", Meta: &FieldMeta{Kind: KindPayloadRows, Table: t}},
 				{Name: "affectedCount", Type: "Int!", Meta: &FieldMeta{Kind: KindPayloadCount}},
@@ -1037,7 +1038,7 @@ func (b *Builder) addFunctions() {
 			in := &Input{Name: inputName}
 			for _, a := range f.Args {
 				in.AddField(&InputField{
-					Name: inflect.LowerCamel(a.Name),
+					Name: coreinflect.LowerCamel(a.Name),
 					Type: b.argGQLType(a),
 				})
 			}
@@ -1064,7 +1065,7 @@ func (b *Builder) addFunctions() {
 		var args []Arg
 		for _, a := range f.Args {
 			args = append(args, Arg{
-				Name: inflect.LowerCamel(a.Name),
+				Name: coreinflect.LowerCamel(a.Name),
 				Type: b.argGQLType(a),
 			})
 		}
@@ -1158,7 +1159,7 @@ func (b *Builder) addComputedField(t *introspect.Table, f *introspect.Function) 
 	var args []Arg
 	for _, a := range f.Args[1:] {
 		args = append(args, Arg{
-			Name: inflect.LowerCamel(a.Name),
+			Name: coreinflect.LowerCamel(a.Name),
 			Type: b.argGQLType(a),
 		})
 	}

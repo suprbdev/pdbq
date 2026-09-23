@@ -11,6 +11,15 @@ import (
 	"github.com/suprbdev/pdbq/internal/config"
 )
 
+func testAuth() *Authenticator {
+	return NewAuthenticator(config.RLS{
+		Enabled:       true,
+		AnonymousRole: "anonymous",
+		RoleClaim:     "role",
+		Auth:          config.Auth{Mode: "jwt", JWTSecret: "test-secret"},
+	})
+}
+
 func testServer(cfg config.Server) *Server {
 	s, err := New(cfg, testAuth(), nil, "type Query { ok: Boolean }", slog.Default())
 	if err != nil {
@@ -183,28 +192,6 @@ func TestGzipSkipsCORSPreflight(t *testing.T) {
 	}
 	if rec.Body.Len() != 0 {
 		t.Fatalf("preflight body = %q, want empty", rec.Body.String())
-	}
-}
-
-func TestAcceptsGzip(t *testing.T) {
-	cases := []struct {
-		header string
-		want   bool
-	}{
-		{"", false},
-		{"gzip", true},
-		{"gzip, deflate, br", true},
-		{"deflate", false},
-		{"*", true},
-		{"gzip;q=0", false},
-		{"gzip;q=0.5", true},
-		{"identity;q=1, gzip;q=0", false},
-		{"br;q=1.0, gzip;q=0.8", true},
-	}
-	for _, tc := range cases {
-		if got := acceptsGzip(tc.header); got != tc.want {
-			t.Errorf("acceptsGzip(%q) = %v, want %v", tc.header, got, tc.want)
-		}
 	}
 }
 

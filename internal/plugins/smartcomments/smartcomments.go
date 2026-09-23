@@ -52,265 +52,30 @@ package smartcomments
 import (
 	"context"
 	"log/slog"
-	"regexp"
 	"strings"
 
+	coreinflect "github.com/suprbdev/pdbcore/inflect"
+	"github.com/suprbdev/pdbcore/introspect"
+	"github.com/suprbdev/pdbcore/smartcomments/catalog"
+	"github.com/suprbdev/pdbcore/smarttags"
 	"github.com/suprbdev/pdbq/internal/inflect"
-	"github.com/suprbdev/pdbq/internal/introspect"
 	"github.com/suprbdev/pdbq/internal/schema"
-	"github.com/suprbdev/pdbq/internal/smarttags"
 )
 
+// Plugin embeds pdbcore's catalog half (tag index + CatalogHook) and adds
+// the GraphQL naming (InflectionHook) and surface (SchemaHook) halves.
 type Plugin struct {
-	// Tag indexes, rebuilt on every TransformCatalog (watch-mode rebuilds
-	// reuse the plugin instance). The *ByName maps are schema-less fallbacks
-	// for inflection call sites that don't carry the pg schema; an ambiguous
-	// name (same table name in two schemas) maps to nil.
-	tables      map[string]smarttags.Tags // "schema.table"
-	tablesBy    map[string]smarttags.Tags // "table"
-	columns     map[string]smarttags.Tags // "schema.table.column"
-	columnsBy   map[string]smarttags.Tags // "table.column"
-	enums       map[string]smarttags.Tags // "schema.enum"
-	enumsBy     map[string]smarttags.Tags // "enum"
-	functions   map[string]smarttags.Tags // "schema.function"
-	functionsBy map[string]smarttags.Tags // "function"
-	constraints map[string]smarttags.Tags // "schema.constraint"
-
+	*catalog.Hook
 	log *slog.Logger
 }
 
-func New() *Plugin { return &Plugin{log: slog.Default()} }
-
-func (p *Plugin) Name() string { return "smart-comments" }
+func New() *Plugin { return &Plugin{Hook: catalog.New(), log: slog.Default()} }
 
 // Priority 50: the CatalogHook shapes the catalog before other plugins read
 // it, the InflectionHook applies @name before naming plugins (simple-names,
 // 100) format, and the SchemaHook removes omitted filter/orderBy types before
 // advanced-filters (150) references them.
-func (p *Plugin) Priority() int { return 50 }
-
-// ---- CatalogHook ----
-
-func (p *Plugin) TransformCatalog(_ context.Context, c *introspect.Catalog) error {
-	p.indexTags(c)
-
-	// Filter fully-omitted tables first, then apply the remaining tags:
-	// @foreignKey validation must not see tables that are about to vanish.
-	tables := make([]*introspect.Table, 0, len(c.Tables))
-	for _, t := range c.Tables {
-		if _, everything := p.tables[tableKey(t.Schema, t.Name)].Omits(); !everything {
-			tables = append(tables, t)
-		}
-	}
-	c.Tables = tables
-	for _, t := range c.Tables {
-		p.applyTableCatalogTags(c, t, p.tables[tableKey(t.Schema, t.Name)])
-	}
-
-	functions := c.Functions[:0]
-	for _, f := range c.Functions {
-		tags := p.functions[f.Schema+"."+f.Name]
-		if _, everything := tags.Omits(); everything {
-			continue
-		}
-		functions = append(functions, f)
-	}
-	c.Functions = functions
-	return nil
-}
-
-// indexTags parses and indexes the smart tags of every commented object.
-func (p *Plugin) indexTags(c *introspect.Catalog) {
-	p.tables = map[string]smarttags.Tags{}
-	p.tablesBy = map[string]smarttags.Tags{}
-	p.columns = map[string]smarttags.Tags{}
-	p.columnsBy = map[string]smarttags.Tags{}
-	p.enums = map[string]smarttags.Tags{}
-	p.enumsBy = map[string]smarttags.Tags{}
-	p.functions = map[string]smarttags.Tags{}
-	p.functionsBy = map[string]smarttags.Tags{}
-	p.constraints = map[string]smarttags.Tags{}
-
-	index := func(exact, by map[string]smarttags.Tags, exactKey, byKey, comment string) {
-		tags, _ := smarttags.Parse(comment)
-		if tags == nil {
-			return
-		}
-		exact[exactKey] = tags
-		if _, dup := by[byKey]; dup {
-			by[byKey] = nil // ambiguous across schemas: exact lookups only
-		} else {
-			by[byKey] = tags
-		}
-	}
-	for _, t := range c.Tables {
-		index(p.tables, p.tablesBy, tableKey(t.Schema, t.Name), t.Name, t.Comment)
-		for _, col := range t.Columns {
-			index(p.columns, p.columnsBy,
-				tableKey(t.Schema, t.Name)+"."+col.Name, t.Name+"."+col.Name, col.Comment)
-		}
-		for _, fk := range t.ForeignKeys {
-			if tags, _ := smarttags.Parse(fk.Comment); tags != nil {
-				p.constraints[t.Schema+"."+fk.Name] = tags
-			}
-		}
-		for _, u := range t.Uniques {
-			if tags, _ := smarttags.Parse(u.Comment); tags != nil {
-				p.constraints[t.Schema+"."+u.Name] = tags
-			}
-		}
-	}
-	for _, e := range c.Enums {
-		index(p.enums, p.enumsBy, e.Schema+"."+e.Name, e.Name, e.Comment)
-	}
-	for _, f := range c.Functions {
-		index(p.functions, p.functionsBy, f.Schema+"."+f.Name, f.Name, f.Comment)
-	}
-}
-
-// applyTableCatalogTags applies the catalog-level tags of one table: mutation
-// gating, logical keys/relations, column nullability and filterability, and
-// omitted constraints.
-func (p *Plugin) applyTableCatalogTags(c *introspect.Catalog, t *introspect.Table, tags smarttags.Tags) {
-	omits, _ := tags.Omits()
-	if omits["create"] {
-		t.Privileges.Insert = false
-	}
-	if omits["update"] {
-		t.Privileges.Update = false
-	}
-	if omits["delete"] {
-		t.Privileges.Delete = false
-	}
-
-	if v := tags.First("primaryKey"); v != "" {
-		cols := smarttags.SplitList(v)
-		switch {
-		case t.PrimaryKey != nil:
-			p.log.Warn("smart-comments: @primaryKey ignored, table already has one",
-				"table", tableKey(t.Schema, t.Name))
-		case !columnsExist(t, cols):
-			p.log.Warn("smart-comments: @primaryKey references unknown column",
-				"table", tableKey(t.Schema, t.Name), "value", v)
-		default:
-			t.PrimaryKey = &introspect.Constraint{Name: "@primaryKey", Columns: cols}
-		}
-	}
-	for _, v := range tags.All("unique") {
-		cols := smarttags.SplitList(v)
-		if len(cols) == 0 || !columnsExist(t, cols) {
-			p.log.Warn("smart-comments: @unique references unknown column",
-				"table", tableKey(t.Schema, t.Name), "value", v)
-			continue
-		}
-		t.Uniques = append(t.Uniques, &introspect.Constraint{Name: "@unique " + v, Columns: cols})
-	}
-	for _, v := range tags.All("foreignKey") {
-		fk := p.parseForeignKey(c, t, v)
-		if fk != nil {
-			t.ForeignKeys = append(t.ForeignKeys, fk)
-		}
-	}
-
-	for _, col := range t.Columns {
-		ctags := p.columns[tableKey(t.Schema, t.Name)+"."+col.Name]
-		if ctags == nil {
-			continue
-		}
-		if ctags.Has("notNull") {
-			col.NotNull = true
-		}
-		if ctags.Has("nullable") {
-			col.NotNull = false
-		}
-		// @filterable / @sortable bypass filters.indexed_only via a synthetic
-		// index (the builder's allow-set is "leading column of any index").
-		// The SchemaHook does not prune the other half: both tags admit the
-		// column to filtering and ordering; combine with @omit filter/order.
-		if ctags.Has("filterable") || ctags.Has("sortable") {
-			t.Indexes = append(t.Indexes, &introspect.Index{
-				Name: "@filterable " + col.Name, Columns: []string{col.Name}, Method: "btree",
-			})
-		}
-	}
-
-	uniques := t.Uniques[:0]
-	for _, u := range t.Uniques {
-		if _, everything := p.constraints[t.Schema+"."+u.Name].Omits(); everything {
-			continue // drop the lookup field; filterability persists via the backing index
-		}
-		uniques = append(uniques, u)
-	}
-	t.Uniques = uniques
-
-	fks := t.ForeignKeys[:0]
-	for _, fk := range t.ForeignKeys {
-		if _, everything := p.constraints[t.Schema+"."+fk.Name].Omits(); everything {
-			continue // both relation fields and relation filters disappear
-		}
-		fks = append(fks, fk)
-	}
-	t.ForeignKeys = fks
-}
-
-// fkRe matches "@foreignKey (a, b) references [schema.]table (x, y)".
-var fkRe = regexp.MustCompile(`(?i)^\(([^)]+)\)\s+references\s+(?:([\w$]+)\.)?([\w$]+)\s*\(([^)]+)\)$`)
-
-// parseForeignKey parses a @foreignKey value into a logical ForeignKey.
-// Trailing "|@fieldName x|@foreignFieldName y" segments name the generated
-// relation fields (the synthetic constraint cannot carry its own comment).
-func (p *Plugin) parseForeignKey(c *introspect.Catalog, t *introspect.Table, v string) *introspect.ForeignKey {
-	warn := func(reason string) *introspect.ForeignKey {
-		p.log.Warn("smart-comments: @foreignKey ignored: "+reason,
-			"table", tableKey(t.Schema, t.Name), "value", v)
-		return nil
-	}
-	spec, rest, _ := strings.Cut(v, "|")
-	m := fkRe.FindStringSubmatch(strings.TrimSpace(spec))
-	if m == nil {
-		return warn("want (cols) references [schema.]table (cols)")
-	}
-	cols, refSchema, refTable, refCols := smarttags.SplitList(m[1]), m[2], m[3], smarttags.SplitList(m[4])
-	if refSchema == "" {
-		refSchema = t.Schema
-	}
-	ref := c.Table(refSchema, refTable)
-	switch {
-	case len(cols) == 0 || len(cols) != len(refCols):
-		return warn("column lists must be non-empty and the same length")
-	case !columnsExist(t, cols):
-		return warn("unknown local column")
-	case ref == nil:
-		return warn("unknown referenced table")
-	case !columnsExist(ref, refCols):
-		return warn("unknown referenced column")
-	}
-	name := "@foreignKey " + spec
-	fk := &introspect.ForeignKey{
-		Name: name, Columns: cols,
-		RefSchema: refSchema, RefTable: refTable, RefColumns: refCols,
-	}
-	if rest != "" {
-		tags := smarttags.Tags{}
-		for _, part := range strings.Split(rest, "|") {
-			if part = strings.TrimPrefix(strings.TrimSpace(part), "@"); part != "" {
-				n, val, _ := strings.Cut(part, " ")
-				tags[n] = append(tags[n], strings.TrimSpace(val))
-			}
-		}
-		p.constraints[t.Schema+"."+name] = tags
-	}
-	return fk
-}
-
-func columnsExist(t *introspect.Table, cols []string) bool {
-	for _, c := range cols {
-		if t.Column(c) == nil {
-			return false
-		}
-	}
-	return true
-}
+func (p *Plugin) Priority() int { return catalog.Priority }
 
 func tableKey(schema, name string) string { return schema + "." + name }
 
@@ -323,90 +88,41 @@ func tableKey(schema, name string) string { return schema + "." + name }
 func (p *Plugin) Inflect(kind inflect.Kind, in inflect.Input, next inflect.Next) string {
 	switch kind {
 	case inflect.KindRelationForward:
-		if name := p.constraintTags(in.Schema, in.Constraint).First("fieldName"); name != "" {
+		if name := p.Index().Constraint(in.Schema, in.Constraint).First("fieldName"); name != "" {
 			return name
 		}
 	case inflect.KindRelationBackward:
-		if name := p.constraintTags(in.Schema, in.Constraint).First("foreignFieldName"); name != "" {
+		if name := p.Index().Constraint(in.Schema, in.Constraint).First("foreignFieldName"); name != "" {
 			return name
 		}
 		// in.Table/in.Columns identify the child table here.
-		in.Columns = p.renamedColumns(in.Schema, in.Table, in.Columns)
-		in.Table = p.renamedTable(in.Schema, in.Table)
+		in.Columns = p.Index().RenamedColumns(in.Schema, in.Table, in.Columns)
+		in.Table = p.Index().RenamedTable(in.Schema, in.Table)
 	case inflect.KindTypeName, inflect.KindAllRowsField, inflect.KindFilterTypeName,
 		inflect.KindConditionTypeName,
 		inflect.KindOrderByTypeName, inflect.KindCreateMutation, inflect.KindCreateInput,
 		inflect.KindUpdateInput, inflect.KindPayloadTypeName,
 		inflect.KindCreateManyMutation, inflect.KindUpdateManyMutation, inflect.KindDeleteManyMutation:
-		in.Table = p.renamedTable(in.Schema, in.Table)
+		in.Table = p.Index().RenamedTable(in.Schema, in.Table)
 	case inflect.KindRowByPKField, inflect.KindRowByUniqueField,
 		inflect.KindUpdateMutation, inflect.KindDeleteMutation,
 		inflect.KindUpdateByUniqueMutation, inflect.KindDeleteByUniqueMutation,
 		inflect.KindUpsertMutation, inflect.KindUpsertByUniqueMutation:
-		in.Columns = p.renamedColumns(in.Schema, in.Table, in.Columns)
-		in.Table = p.renamedTable(in.Schema, in.Table)
+		in.Columns = p.Index().RenamedColumns(in.Schema, in.Table, in.Columns)
+		in.Table = p.Index().RenamedTable(in.Schema, in.Table)
 	case inflect.KindFieldName:
-		in.Column = p.renamedColumn(in.Schema, in.Table, in.Column)
+		in.Column = p.Index().RenamedColumn(in.Schema, in.Table, in.Column)
 	case inflect.KindEnumTypeName:
-		if name := p.lookup(p.enums, p.enumsBy, in.Schema, in.Enum).First("name"); name != "" {
+		if name := p.Index().Enum(in.Schema, in.Enum).First("name"); name != "" {
 			in.Enum = name
 		}
 	case inflect.KindFunctionField, inflect.KindFunctionInput, inflect.KindFunctionPayload,
 		inflect.KindComputedField:
-		if name := p.lookup(p.functions, p.functionsBy, in.Schema, in.Function).First("name"); name != "" {
+		if name := p.Index().Function(in.Schema, in.Function).First("name"); name != "" {
 			in.Function = name
 		}
 	}
 	return next(kind, in)
-}
-
-// lookup resolves tags by "schema.name", falling back to the schema-less
-// index when the call site did not carry the pg schema.
-func (p *Plugin) lookup(exact, by map[string]smarttags.Tags, schema, name string) smarttags.Tags {
-	if schema != "" {
-		return exact[schema+"."+name]
-	}
-	return by[name]
-}
-
-func (p *Plugin) tableTags(schema, table string) smarttags.Tags {
-	return p.lookup(p.tables, p.tablesBy, schema, table)
-}
-
-func (p *Plugin) columnTags(schema, table, column string) smarttags.Tags {
-	if schema != "" {
-		return p.columns[schema+"."+table+"."+column]
-	}
-	return p.columnsBy[table+"."+column]
-}
-
-func (p *Plugin) constraintTags(schema, constraint string) smarttags.Tags {
-	if constraint == "" {
-		return nil
-	}
-	return p.constraints[schema+"."+constraint]
-}
-
-func (p *Plugin) renamedTable(schema, table string) string {
-	if name := p.tableTags(schema, table).First("name"); name != "" {
-		return name
-	}
-	return table
-}
-
-func (p *Plugin) renamedColumn(schema, table, column string) string {
-	if name := p.columnTags(schema, table, column).First("name"); name != "" {
-		return name
-	}
-	return column
-}
-
-func (p *Plugin) renamedColumns(schema, table string, cols []string) []string {
-	out := make([]string, len(cols))
-	for i, c := range cols {
-		out[i] = p.renamedColumn(schema, table, c)
-	}
-	return out
 }
 
 // ---- SchemaHook ----
@@ -414,6 +130,7 @@ func (p *Plugin) renamedColumns(schema, table string, cols []string) []string {
 func (p *Plugin) TransformSchema(_ context.Context, b *schema.Builder) error {
 	if b.Options.Logger != nil {
 		p.log = b.Options.Logger
+		p.SetLogger(b.Options.Logger)
 	}
 	for _, t := range b.Catalog.Tables {
 		p.applyTableOmits(b, t)
@@ -428,7 +145,7 @@ func (p *Plugin) TransformSchema(_ context.Context, b *schema.Builder) error {
 // applyTableOmits removes generated surface per the table's @omit actions
 // that have no catalog-level representation.
 func (p *Plugin) applyTableOmits(b *schema.Builder, t *introspect.Table) {
-	omits, _ := p.tableTags(t.Schema, t.Name).Omits()
+	omits, _ := p.Index().Table(t.Schema, t.Name).Omits()
 	if len(omits) == 0 {
 		return
 	}
@@ -472,7 +189,7 @@ func (p *Plugin) applyColumnTags(b *schema.Builder, t *introspect.Table) {
 	orderEnum := b.Enums[b.Inflect(inflect.KindOrderByTypeName, inflect.Input{Schema: t.Schema, Table: t.Name})]
 
 	for _, c := range t.Columns {
-		tags := p.columnTags(t.Schema, t.Name, c.Name)
+		tags := p.Index().Column(t.Schema, t.Name, c.Name)
 		if tags == nil {
 			continue
 		}
@@ -517,7 +234,7 @@ func (p *Plugin) applyColumnTags(b *schema.Builder, t *introspect.Table) {
 // resolved at the catalog level; filter omission is advanced-filters' side).
 func (p *Plugin) applyRelationOmits(b *schema.Builder, t *introspect.Table) {
 	for _, fk := range t.ForeignKeys {
-		omits, _ := p.constraintTags(t.Schema, fk.Name).Omits()
+		omits, _ := p.Index().Constraint(t.Schema, fk.Name).Omits()
 		if omits["many"] {
 			removeFields(b, func(f *schema.Field) bool {
 				return f.Meta != nil && f.Meta.Kind == schema.KindRelationBackward && f.Meta.FK == fk
@@ -530,7 +247,7 @@ func (p *Plugin) applyRelationOmits(b *schema.Builder, t *introspect.Table) {
 // deprecated.
 func (p *Plugin) applyFunctionTags(b *schema.Builder) {
 	for _, fn := range b.Catalog.Functions {
-		tags := p.functions[fn.Schema+"."+fn.Name]
+		tags := p.Index().Function(fn.Schema, fn.Name)
 		if !tags.Has("deprecated") {
 			continue
 		}
@@ -642,7 +359,7 @@ func removeOrderValues(en *schema.Enum, column string) {
 // renameOrderValues realigns orderBy enum values with a renamed column
 // (COL_ASC -> NEW_ASC).
 func renameOrderValues(en *schema.Enum, column, newName string) {
-	oldBase, newBase := inflect.EnumValue(column), inflect.EnumValue(newName)
+	oldBase, newBase := coreinflect.EnumValue(column), coreinflect.EnumValue(newName)
 	if oldBase == newBase {
 		return
 	}

@@ -7,8 +7,8 @@ import (
 
 	"github.com/vektah/gqlparser/v2/ast"
 
-	"github.com/suprbdev/pdbq/internal/inflect"
-	"github.com/suprbdev/pdbq/internal/introspect"
+	"github.com/suprbdev/pdbcore/inflect"
+	"github.com/suprbdev/pdbcore/introspect"
 	"github.com/suprbdev/pdbq/internal/schema"
 )
 

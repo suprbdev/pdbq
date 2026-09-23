@@ -7,17 +7,10 @@
 package config
 
 import (
-	"fmt"
-	"net/netip"
-	"strings"
 	"time"
 
-	"github.com/knadh/koanf/parsers/yaml"
-	"github.com/knadh/koanf/providers/env"
-	"github.com/knadh/koanf/providers/file"
-	"github.com/knadh/koanf/providers/posflag"
-	"github.com/knadh/koanf/v2"
 	flag "github.com/spf13/pflag"
+	"github.com/suprbdev/pdbcore/confx"
 )
 
 type Config struct {
@@ -33,12 +26,19 @@ type Config struct {
 	Log      Log      `koanf:"log"`
 }
 
-type Database struct {
-	URL              string        `koanf:"url" doc:"PostgreSQL connection URL, e.g. postgres://user:pass@host:5432/db. Also honours standard PG* env vars when empty."`
-	MaxConns         int32         `koanf:"max_conns" doc:"Maximum pooled connections."`
-	ConnectTimeout   time.Duration `koanf:"connect_timeout" doc:"Timeout for establishing a connection."`
-	StatementTimeout time.Duration `koanf:"statement_timeout" doc:"Per-statement timeout applied to every request (0 disables)."`
-}
+// The shared sections (koanf paths and doc strings) live in pdbcore/confx;
+// Server and TX (with per_request) are pdbq's own.
+type (
+	Database = confx.Database
+	Schema   = confx.Schema
+	Filters  = confx.Filters
+	RLS      = confx.RLS
+	Auth     = confx.Auth
+	Watch    = confx.Watch
+	Errors   = confx.Errors
+	Plugins  = confx.Plugins
+	Log      = confx.Log
+)
 
 type Server struct {
 	Addr                 string        `koanf:"addr" doc:"Listen address for the HTTP server."`
@@ -58,64 +58,11 @@ type Server struct {
 	DisableIntrospection bool          `koanf:"disable_introspection" doc:"Reject __schema / __type introspection queries (off by default). Enable in production to hide the schema shape; __typename keeps working."`
 }
 
-type Schema struct {
-	Schemas   []string `koanf:"schemas" doc:"PostgreSQL schemas to expose."`
-	CachePath string   `koanf:"cache_path" doc:"Boot from this schema cache file instead of introspecting (see pdbq schema dump)."`
-	Functions bool     `koanf:"functions" doc:"Expose PostgreSQL functions as custom queries/mutations."`
-}
-
-type Filters struct {
-	IndexedOnly  bool                `koanf:"indexed_only" doc:"Only allow filtering on columns covered by an index (default policy)."`
-	AllowColumns map[string][]string `koanf:"allow_columns" doc:"Per-table extra filterable columns, keyed by schema.table, overriding indexed_only."`
-}
-
-type RLS struct {
-	Enabled       bool     `koanf:"enabled" doc:"Run each request as a switched role with claims exposed via set_config (SET LOCAL). Disabling uses the privileged connection directly and logs a loud warning."`
-	DefaultRole   string   `koanf:"default_role" doc:"Role assumed for authenticated requests without a role claim."`
-	AnonymousRole string   `koanf:"anonymous_role" doc:"Role assumed for unauthenticated requests."`
-	RoleClaim     string   `koanf:"role_claim" doc:"JWT claim (or header name in header mode) carrying the database role."`
-	AllowedRoles  []string `koanf:"allowed_roles" doc:"Roles a request may assume via the role claim. Empty allows any role (subject to database grants); default_role and anonymous_role are always allowed."`
-	ClaimsPrefix  string   `koanf:"claims_prefix" doc:"set_config namespace for request claims, e.g. pdbq.claims."`
-	Auth          Auth     `koanf:"auth"`
-}
-
-type Auth struct {
-	Mode           string        `koanf:"mode" doc:"Claim source: 'jwt', 'headers' (behind a trusted gateway), or 'none'."`
-	JWTSecret      string        `koanf:"jwt_secret" doc:"HMAC secret for HS256/384/512 verification (jwt mode; ignored when jwks_url is set)."`
-	JWKSURL        string        `koanf:"jwks_url" doc:"JWKS endpoint for asymmetric JWT verification (RS256/384/512, ES256/384/512). Takes precedence over jwt_secret."`
-	JWKSCacheTTL   time.Duration `koanf:"jwks_cache_ttl" doc:"How long fetched JWKS keys are cached; an unknown kid triggers an early refresh (key rotation)."`
-	JWTIssuer      string        `koanf:"jwt_issuer" doc:"Expected iss claim; empty skips the check."`
-	JWTAudience    string        `koanf:"jwt_audience" doc:"Expected aud claim; empty skips the check."`
-	HeaderPrefix   string        `koanf:"header_prefix" doc:"Header prefix mapped to claims in headers mode, e.g. X-Pdbq-Claim-."`
-	TrustedProxies []string      `koanf:"trusted_proxies" doc:"CIDR blocks (or single IPs) allowed to supply claim headers in headers mode. Requests from other peers that carry claim headers are rejected. Empty trusts every peer and logs a startup warning."`
-	JWTType        string        `koanf:"jwt_type" doc:"Schema-qualified composite type (e.g. public.jwt) minted into a signed JWT: any function returning it yields an HS256 token string built from the composite's fields (an exp field becomes the token expiry). Requires jwt_secret; jwt_issuer/jwt_audience are embedded when set. Empty disables minting."`
-}
-
 type TX struct {
 	Mutations  bool   `koanf:"mutations" doc:"Wrap every mutation in a transaction."`
 	PerRequest bool   `koanf:"per_request" doc:"Use one transaction for the whole request instead of one per operation."`
 	Isolation  string `koanf:"isolation" doc:"Transaction isolation level: read_committed, repeatable_read, serializable."`
 	MaxRetries int    `koanf:"max_retries" doc:"Automatic retries of a transactional operation after a serialization failure or deadlock (SQLSTATE 40001/40P01). 0 disables; the whole operation re-runs, which is safe because the failed attempt rolled back."`
-}
-
-type Watch struct {
-	Enabled      bool          `koanf:"enabled" doc:"Re-introspect and hot-swap the schema on DDL changes (dev only; refuses to combine with schema.cache_path)."`
-	PollInterval time.Duration `koanf:"poll_interval" doc:"Poll interval used when event triggers cannot be installed."`
-	Channel      string        `koanf:"channel" doc:"NOTIFY channel used by the DDL event trigger."`
-}
-
-type Errors struct {
-	Detail string `koanf:"detail" doc:"'dev' exposes full PostgreSQL error detail in GraphQL errors; 'prod' sanitizes but passes constraint-violation and bad-input messages through; 'strict' hides every database error message (constraint and column names never leak)."`
-}
-
-type Plugins struct {
-	Disabled []string                  `koanf:"disabled" doc:"Plugin names to disable."`
-	Settings map[string]map[string]any `koanf:"settings" doc:"Per-plugin configuration, keyed by plugin name."`
-}
-
-type Log struct {
-	Level  string `koanf:"level" doc:"Log level: debug, info, warn, error."`
-	Format string `koanf:"format" doc:"Log format: text or json."`
 }
 
 // DefaultConfig returns the documented defaults.
@@ -155,30 +102,12 @@ func DefaultConfig() Config {
 }
 
 // Load builds the effective config: defaults, then optional YAML file, then
-// PDBQ_* env vars, then flags (highest precedence).
+// PDBQ_* env vars, then flags (highest precedence). Pass only the flags the
+// user set (confx.ChangedFlags) so unset flags do not shadow YAML/env.
 func Load(path string, flags *flag.FlagSet) (Config, error) {
-	k := koanf.New(".")
 	cfg := DefaultConfig()
-
-	if path != "" {
-		if err := k.Load(file.Provider(path), yaml.Parser()); err != nil {
-			return cfg, fmt.Errorf("config: read %s: %w", path, err)
-		}
-	}
-	// PDBQ_DATABASE_URL -> database.url ; single underscores map to dots,
-	// so nested keys with underscores in their names use double form:
-	// PDBQ_FILTERS_INDEXED__ONLY etc. Keep it simple: lowercase, first _ per
-	// section splits — we normalize by replacing "__" then "_".
-	if err := k.Load(env.Provider("PDBQ_", ".", envKeyMapper), nil); err != nil {
-		return cfg, fmt.Errorf("config: env: %w", err)
-	}
-	if flags != nil {
-		if err := k.Load(posflag.Provider(flags, ".", k), nil); err != nil {
-			return cfg, fmt.Errorf("config: flags: %w", err)
-		}
-	}
-	if err := k.Unmarshal("", &cfg); err != nil {
-		return cfg, fmt.Errorf("config: unmarshal: %w", err)
+	if err := confx.Load("PDBQ_", path, flags, &cfg); err != nil {
+		return cfg, err
 	}
 	if err := cfg.Validate(); err != nil {
 		return cfg, err
@@ -186,60 +115,16 @@ func Load(path string, flags *flag.FlagSet) (Config, error) {
 	return cfg, nil
 }
 
-// envKeyMapper maps PDBQ_SERVER_MAX__DEPTH -> server.max_depth: double
-// underscore preserves an underscore inside a key; single underscore is a
-// level separator.
-func envKeyMapper(s string) string {
-	s = strings.ToLower(strings.TrimPrefix(s, "PDBQ_"))
-	s = strings.ReplaceAll(s, "__", "\x00")
-	s = strings.ReplaceAll(s, "_", ".")
-	return strings.ReplaceAll(s, "\x00", "_")
-}
-
 // Validate checks cross-field invariants.
 func (c *Config) Validate() error {
 	var errs []string
-	switch c.Errors.Detail {
-	case "dev", "prod", "strict":
-	default:
-		errs = append(errs, fmt.Sprintf("errors.detail: %q is not 'dev', 'prod' or 'strict'", c.Errors.Detail))
-	}
-	switch c.RLS.Auth.Mode {
-	case "jwt", "headers", "none":
-	default:
-		errs = append(errs, fmt.Sprintf("rls.auth.mode: %q is not 'jwt', 'headers' or 'none'", c.RLS.Auth.Mode))
-	}
-	for _, p := range c.RLS.Auth.TrustedProxies {
-		if _, err := ParseTrustedProxy(p); err != nil {
-			errs = append(errs, fmt.Sprintf("rls.auth.trusted_proxies: %q is not a valid IP or CIDR block", p))
-		}
-	}
-	if c.RLS.Enabled && c.RLS.Auth.Mode == "jwt" && c.RLS.Auth.JWTSecret == "" && c.RLS.Auth.JWKSURL == "" {
-		errs = append(errs, "rls.auth.jwt_secret or rls.auth.jwks_url is required when rls.enabled and auth mode is jwt")
-	}
-	if c.RLS.Auth.JWTType != "" && c.RLS.Auth.JWTSecret == "" {
-		errs = append(errs, "rls.auth.jwt_type requires rls.auth.jwt_secret: minting signs with the HMAC secret (JWKS keys are verify-only)")
-	}
-	if jt := c.RLS.Auth.JWTType; jt != "" && (strings.Count(jt, ".") != 1 || strings.HasPrefix(jt, ".") || strings.HasSuffix(jt, ".")) {
-		errs = append(errs, fmt.Sprintf("rls.auth.jwt_type: %q must be schema-qualified, e.g. public.jwt", jt))
-	}
-	if c.RLS.Enabled && c.RLS.AnonymousRole == "" {
-		errs = append(errs, "rls.anonymous_role is required when rls.enabled: an empty role would run unauthenticated requests as the privileged connection role, bypassing RLS")
-	}
-	switch c.TX.Isolation {
-	case "read_committed", "repeatable_read", "serializable":
-	default:
-		errs = append(errs, fmt.Sprintf("transactions.isolation: %q invalid", c.TX.Isolation))
-	}
-	if c.Watch.Enabled && c.Schema.CachePath != "" {
-		errs = append(errs, "watch.enabled cannot be combined with schema.cache_path")
-	}
-	if c.Watch.Enabled && !validChannelName(c.Watch.Channel) {
-		errs = append(errs, fmt.Sprintf("watch.channel: %q invalid: only letters, digits and underscores are allowed", c.Watch.Channel))
-	}
-	if len(c.Schema.Schemas) == 0 {
-		errs = append(errs, "schema.schemas must list at least one schema")
-	}
+	errs = append(errs, confx.ValidateErrors(c.Errors)...)
+	errs = append(errs, confx.ValidateRLS(c.RLS)...)
+	// max_retries is checked below, after the server rules, to keep the
+	// pre-pdbcore message order.
+	errs = append(errs, confx.ValidateTX(confx.TX{Mutations: c.TX.Mutations, Isolation: c.TX.Isolation})...)
+	errs = append(errs, confx.ValidateWatch(c.Watch, c.Schema.CachePath)...)
+	errs = append(errs, confx.ValidateSchema(c.Schema)...)
 	if c.Server.PersistedOnly && !c.Server.APQ && c.Server.PersistedQueriesPath == "" {
 		errs = append(errs, "server.persisted_only requires server.apq or server.persisted_queries_path")
 	}
@@ -252,48 +137,9 @@ func (c *Config) Validate() error {
 	if c.Server.MaxPageSize < 1 {
 		errs = append(errs, "server.max_page_size must be >= 1")
 	}
-	switch c.Log.Level {
-	case "debug", "info", "warn", "error":
-	default:
-		errs = append(errs, fmt.Sprintf("log.level: %q invalid", c.Log.Level))
-	}
-	if len(errs) > 0 {
-		return fmt.Errorf("invalid config:\n  - %s", strings.Join(errs, "\n  - "))
-	}
-	return nil
-}
-
-// ParseTrustedProxy parses one rls.auth.trusted_proxies entry: either a CIDR
-// block ("10.0.0.0/8") or a single IP ("10.0.0.1", treated as /32 or /128).
-func ParseTrustedProxy(s string) (netip.Prefix, error) {
-	if strings.Contains(s, "/") {
-		return netip.ParsePrefix(s)
-	}
-	addr, err := netip.ParseAddr(s)
-	if err != nil {
-		return netip.Prefix{}, err
-	}
-	return netip.PrefixFrom(addr, addr.BitLen()), nil
-}
-
-// validChannelName restricts the watch NOTIFY channel to [a-zA-Z0-9_]; the
-// value is interpolated into trigger DDL (see internal/watch) where broader
-// characters cannot be safely escaped.
-func validChannelName(s string) bool {
-	for _, r := range s {
-		ok := r == '_' || (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9')
-		if !ok {
-			return false
-		}
-	}
-	return s != ""
+	errs = append(errs, confx.ValidateLog(c.Log)...)
+	return confx.InvalidConfig(errs)
 }
 
 // DisabledPlugins returns the disabled-plugin set for registry filtering.
-func (c *Config) DisabledPlugins() map[string]bool {
-	out := map[string]bool{}
-	for _, n := range c.Plugins.Disabled {
-		out[n] = true
-	}
-	return out
-}
+func (c *Config) DisabledPlugins() map[string]bool { return c.Plugins.DisabledSet() }

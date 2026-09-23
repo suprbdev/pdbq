@@ -8,7 +8,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"log/slog"
 	"strconv"
 	"strings"
@@ -22,6 +21,7 @@ import (
 	"github.com/vektah/gqlparser/v2/parser"
 	"github.com/vektah/gqlparser/v2/validator"
 
+	"github.com/suprbdev/pdbcore/pgexec"
 	"github.com/suprbdev/pdbq/internal/compile"
 	"github.com/suprbdev/pdbq/internal/schema"
 )
@@ -246,12 +246,20 @@ func (e *Executor) executeOperation(ctx context.Context, op *Operation, res *Res
 		(op.Type == ast.Mutation && e.Opts.TxMutations) ||
 		(e.Opts.RLS && (op.Role != "" || len(op.Claims) > 0))
 
-	run := func(q querier) {
+	// run executes every root field into res and returns the raw error of the
+	// first failed field plus the first serialization failure, if any.
+	run := func(q pgexec.Querier) (first, serialization error) {
 		for _, f := range rootFields {
 			raw, err := e.executeField(ctx, q, op, f)
 			if err != nil {
 				res.Errors = append(res.Errors, e.gqlError(err, f))
 				res.Data[f.Alias] = json.RawMessage("null")
+				if first == nil {
+					first = err
+				}
+				if serialization == nil && pgexec.IsSerializationFailure(err) {
+					serialization = err
+				}
 				if op.Type == ast.Mutation {
 					break // abort remaining mutations; tx rolls back
 				}
@@ -259,107 +267,55 @@ func (e *Executor) executeOperation(ctx context.Context, op *Operation, res *Res
 			}
 			res.Data[f.Alias] = raw
 		}
+		return first, serialization
 	}
 
 	if !needTx {
-		run(e.Pool)
+		_, _ = run(e.Pool) // errors are already in res
 		return
 	}
-	// Serialization failures and deadlocks roll the transaction back
-	// completely, so re-running the whole operation is safe.
-	for attempt := 0; ; attempt++ {
-		e.runTx(ctx, op, res, run)
-		if attempt >= e.Opts.TxRetries || !isSerializationFailure(res.Errors) || ctx.Err() != nil {
-			return
+	// RunTx re-invokes fn on serialization failures/deadlocks (the failed
+	// attempt rolled back completely), so per-attempt state is reset inside
+	// fn. lastFnErr lets the caller tell "fn's own error came back" from
+	// "a later attempt failed before reaching fn".
+	var lastFnErr error
+	err := pgexec.RunTx(ctx, e.Pool, pgexec.TxOptions{
+		Isolation:  e.Opts.Isolation,
+		MaxRetries: e.Opts.TxRetries,
+		RLS:        e.Opts.RLS,
+		Log:        e.Opts.Logger.With("operation", op.Name),
+	}, pgexec.Identity{
+		Role:         op.Role,
+		Claims:       op.Claims,
+		ClaimsPrefix: e.Opts.ClaimsPrefix,
+	}, func(q pgexec.Querier) error {
+		res.Data = map[string]json.RawMessage{}
+		res.Errors = nil
+		first, serialization := run(q)
+		switch {
+		case serialization != nil:
+			// Queries retry too: the raw PG error drives RunTx's retry.
+			lastFnErr = serialization
+		case first != nil && op.Type == ast.Mutation:
+			lastFnErr = first // no commit; rollback via RunTx
+		default:
+			lastFnErr = nil // queries commit even after a field error
 		}
-		e.Opts.Logger.Warn("retrying after serialization failure",
-			"operation", op.Name, "attempt", attempt+1, "max_retries", e.Opts.TxRetries)
+		return lastFnErr
+	})
+	if err == nil || (lastFnErr != nil && errors.Is(err, lastFnErr)) {
+		return // fn's errors are already in res
+	}
+	if lastFnErr != nil {
+		// A retry attempt failed in begin/identity before reaching fn: drop
+		// the previous attempt's results as fn would have.
 		res.Data = map[string]json.RawMessage{}
 		res.Errors = nil
 	}
+	res.Errors = append(res.Errors, e.gqlError(err, nil))
 }
 
-// runTx executes one transactional attempt of the operation into res.
-func (e *Executor) runTx(ctx context.Context, op *Operation, res *Result, run func(querier)) {
-	tx, err := e.Pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: e.Opts.Isolation})
-	if err != nil {
-		res.Errors = append(res.Errors, e.gqlError(err, nil))
-		return
-	}
-	defer tx.Rollback(ctx) //nolint:errcheck // no-op after commit
-	if err := e.applyRLS(ctx, tx, op); err != nil {
-		res.Errors = append(res.Errors, e.gqlError(err, nil))
-		return
-	}
-	run(tx)
-	if len(res.Errors) > 0 && op.Type == ast.Mutation {
-		return // rollback via defer
-	}
-	if err := tx.Commit(ctx); err != nil {
-		res.Errors = append(res.Errors, e.gqlError(err, nil))
-	}
-}
-
-// isSerializationFailure reports whether any error carries SQLSTATE 40001
-// (serialization_failure) or 40P01 (deadlock_detected). The codes survive
-// error mapping in both dev and prod detail modes via the code extension.
-func isSerializationFailure(errs gqlerror.List) bool {
-	for _, ge := range errs {
-		if code, ok := ge.Extensions["code"].(string); ok && (code == "40001" || code == "40P01") {
-			return true
-		}
-	}
-	return false
-}
-
-type querier interface {
-	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
-	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
-}
-
-// applyRLS switches role and exposes claims inside the transaction. It uses
-// SET LOCAL exclusively (never SET) so pooled connections cannot leak
-// request identity across requests once the connection is reused.
-func (e *Executor) applyRLS(ctx context.Context, tx pgx.Tx, op *Operation) error {
-	if !e.Opts.RLS {
-		return nil
-	}
-	if op.Role != "" {
-		if !validRole(op.Role) {
-			return fmt.Errorf("invalid role %q", op.Role)
-		}
-		if _, err := tx.Exec(ctx, "SET LOCAL ROLE "+quoteIdent(op.Role)); err != nil {
-			return fmt.Errorf("set role: %w", err)
-		}
-	}
-	prefix := e.Opts.ClaimsPrefix
-	if prefix == "" {
-		prefix = "pdbq.claims"
-	}
-	for k, v := range op.Claims {
-		if !validClaimKey(k) {
-			continue
-		}
-		val := ""
-		switch tv := v.(type) {
-		case string:
-			val = tv
-		default:
-			b, err := json.Marshal(v)
-			if err != nil {
-				continue
-			}
-			val = string(b)
-		}
-		// set_config(..., true) scopes the setting to the transaction.
-		if _, err := tx.Exec(ctx, "SELECT set_config($1, $2, true)", prefix+"."+k, val); err != nil {
-			return fmt.Errorf("set claim %s: %w", k, err)
-		}
-	}
-	return nil
-}
-
-func (e *Executor) executeField(ctx context.Context, q querier, op *Operation, f *ast.Field) (json.RawMessage, error) {
+func (e *Executor) executeField(ctx context.Context, q pgexec.Querier, op *Operation, f *ast.Field) (json.RawMessage, error) {
 	if isIntrospectionField(f.Name) {
 		return e.resolveIntrospection(op, f)
 	}
@@ -394,7 +350,7 @@ func (e *Executor) executeField(ctx context.Context, q querier, op *Operation, f
 			root = "Mutation"
 		}
 		if m, ok := e.Built.Meta[root]; ok {
-			if meta := m[f.Name]; meta != nil && meta.Kind == schema.KindFunction && e.Opts.Mint.mintsFunction(meta.Function) {
+			if meta := m[f.Name]; meta != nil && meta.Kind == schema.KindFunction && e.Opts.Mint.MintsFunction(meta.Function) {
 				return e.mintField(raw, op, f, meta)
 			}
 		}
@@ -619,7 +575,7 @@ func (e *Executor) gqlError(err error, f *ast.Field) *gqlerror.Error {
 			ext["table"] = pgErr.TableName
 			ext["constraint"] = pgErr.ConstraintName
 		} else {
-			msg = sanitizePGMessage(pgErr, e.Opts.StrictErrors)
+			msg = pgexec.SanitizeMessage(pgErr, e.Opts.StrictErrors)
 		}
 		return &gqlerror.Error{Message: msg, Path: path, Extensions: ext}
 	}
@@ -641,32 +597,6 @@ func (e *Executor) gqlError(err error, f *ast.Field) *gqlerror.Error {
 	return &gqlerror.Error{Message: msg, Path: path}
 }
 
-// sanitizePGMessage keeps actionable constraint-class errors and hides the
-// rest behind a generic message. strict hides those too: PG constraint
-// messages embed constraint/table/column names, which strict mode treats as
-// sensitive.
-func sanitizePGMessage(pgErr *pgconn.PgError, strict bool) string {
-	switch pgErr.Code[:2] {
-	case "23": // integrity constraint violations are user-actionable
-		if strict {
-			return "constraint violation"
-		}
-		return pgErr.Message
-	case "22": // data exceptions (bad input format)
-		if strict {
-			return "invalid input value"
-		}
-		return pgErr.Message
-	case "42": // syntax/authorization: could leak schema internals
-		if pgErr.Code == "42501" {
-			return "permission denied"
-		}
-		return "invalid operation"
-	default:
-		return "database error"
-	}
-}
-
 func errResult(err error) *Result {
 	var list gqlerror.List
 	if !errors.As(err, &list) {
@@ -678,30 +608,6 @@ func errResult(err error) *Result {
 		}
 	}
 	return &Result{Errors: list}
-}
-
-func quoteIdent(s string) string {
-	return `"` + strings.ReplaceAll(s, `"`, `""`) + `"`
-}
-
-func validRole(s string) bool {
-	for _, r := range s {
-		ok := r == '_' || (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9')
-		if !ok {
-			return false
-		}
-	}
-	return s != ""
-}
-
-func validClaimKey(s string) bool {
-	for _, r := range s {
-		ok := r == '_' || (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9')
-		if !ok {
-			return false
-		}
-	}
-	return s != ""
 }
 
 // MarshalJSON renders the result as a spec-shaped GraphQL response.

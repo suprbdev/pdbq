@@ -13,10 +13,10 @@ import (
 	"syscall"
 
 	"github.com/spf13/cobra"
-	flag "github.com/spf13/pflag"
 
+	"github.com/suprbdev/pdbcore/cache"
+	"github.com/suprbdev/pdbcore/confx"
 	"github.com/suprbdev/pdbq"
-	"github.com/suprbdev/pdbq/internal/cache"
 	"github.com/suprbdev/pdbq/internal/config"
 	"github.com/suprbdev/pdbq/internal/exec"
 	"github.com/suprbdev/pdbq/internal/plugin"
@@ -61,20 +61,9 @@ func registerEnumCompletion(cmd *cobra.Command, name string, values ...string) {
 func loadConfig(cmd *cobra.Command) (config.Config, error) {
 	path, _ := cmd.Flags().GetString("config")
 	if path == "" {
-		for _, cand := range []string{"pdbq.yaml", "pdbq.yml"} {
-			if _, err := os.Stat(cand); err == nil {
-				path = cand
-				break
-			}
-		}
+		path = confx.Discover("pdbq.yaml", "pdbq.yml")
 	}
-	changed := flag.NewFlagSet("changed", flag.ContinueOnError)
-	cmd.Flags().Visit(func(f *flag.Flag) {
-		if f.Name != "config" {
-			changed.AddFlag(f)
-		}
-	})
-	return config.Load(path, changed)
+	return config.Load(path, confx.ChangedFlags(cmd.Flags(), "config"))
 }
 
 func signalContext() context.Context {

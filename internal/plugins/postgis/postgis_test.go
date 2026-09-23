@@ -6,10 +6,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/suprbdev/pdbcore/introspect"
+	"github.com/suprbdev/pdbcore/testutil"
 	"github.com/suprbdev/pdbq/internal/inflect"
-	"github.com/suprbdev/pdbq/internal/introspect"
 	"github.com/suprbdev/pdbq/internal/schema"
-	"github.com/suprbdev/pdbq/internal/testutil"
 )
 
 // buildWith applies the plugin (configured by settings) to the fixture catalog

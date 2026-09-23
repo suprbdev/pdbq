@@ -11,13 +11,13 @@ import (
 	"github.com/vektah/gqlparser/v2/parser"
 	"github.com/vektah/gqlparser/v2/validator"
 
+	"github.com/suprbdev/pdbcore/introspect"
+	"github.com/suprbdev/pdbcore/testutil"
 	"github.com/suprbdev/pdbq/internal/compile"
 	"github.com/suprbdev/pdbq/internal/inflect"
-	"github.com/suprbdev/pdbq/internal/introspect"
 	"github.com/suprbdev/pdbq/internal/plugin"
 	"github.com/suprbdev/pdbq/internal/plugins/advancedfilters"
 	"github.com/suprbdev/pdbq/internal/schema"
-	"github.com/suprbdev/pdbq/internal/testutil"
 )
 
 // setup builds the fixture schema with the plugin applied.
@@ -81,8 +81,8 @@ func TestSchemaSurface(t *testing.T) {
 		"postCount: BigIntFilterOps",        // computed filter (int8 -> BigInt)
 		"POST_COUNT_ASC",                    // computed ordering
 		"POST_COUNT_DESC",
-		"AUTHOR__EMAIL_ASC",                 // forward relational ordering
-		"POSTS_BY_AUTHOR_ID__TITLE_DESC",    // reverse relational ordering
+		"AUTHOR__EMAIL_ASC",              // forward relational ordering
+		"POSTS_BY_AUTHOR_ID__TITLE_DESC", // reverse relational ordering
 	} {
 		if !strings.Contains(sdl, want) {
 			t.Errorf("SDL missing %q", want)

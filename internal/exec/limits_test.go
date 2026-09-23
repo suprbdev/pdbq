@@ -7,10 +7,10 @@ import (
 	"github.com/vektah/gqlparser/v2/parser"
 	"github.com/vektah/gqlparser/v2/validator"
 
+	"github.com/suprbdev/pdbcore/introspect"
+	"github.com/suprbdev/pdbcore/testutil"
 	"github.com/suprbdev/pdbq/internal/inflect"
-	"github.com/suprbdev/pdbq/internal/introspect"
 	"github.com/suprbdev/pdbq/internal/schema"
-	"github.com/suprbdev/pdbq/internal/testutil"
 )
 
 // cost parses+validates query against the fixture schema and returns the
@@ -101,8 +101,9 @@ func TestCostNestedPaginationCompounds(t *testing.T) {
 	}
 }
 
-// withReplyCostMultiplier returns the fixture catalog with a @costMultiplier
-// smart comment on the self-referential comments.parent_id FK.
+// withReplyCostMultiplier returns the fixture catalog with the comment on the
+// self-referential comments.parent_id FK replaced by tag (the shared fixture
+// ships it as "@costMultiplier 3"; "" gives the untagged baseline).
 func withReplyCostMultiplier(tag string) *introspect.Catalog {
 	cat := testutil.FixtureCatalog()
 	for _, fk := range cat.Table("public", "comments").ForeignKeys {
@@ -123,7 +124,7 @@ const threadQuery = `{
 }`
 
 func TestCostMultiplierLowersRecursiveEstimate(t *testing.T) {
-	plain := costWith(t, testutil.FixtureCatalog(), threadQuery, nil)
+	plain := costWith(t, withReplyCostMultiplier(""), threadQuery, nil)
 	tagged := costWith(t, withReplyCostMultiplier("@costMultiplier 3"), threadQuery, nil)
 	if tagged >= plain {
 		t.Fatalf("@costMultiplier did not lower cost: tagged=%d plain=%d", tagged, plain)
@@ -142,7 +143,7 @@ func TestCostMultiplierNeverRaisesCost(t *testing.T) {
 	// charged the smaller requested page, not the average.
 	const small = `{ allComments(first: 20) { nodes { id
 	    commentsByParentId(first: 2) { nodes { id } } } } }`
-	plain := costWith(t, testutil.FixtureCatalog(), small, nil)
+	plain := costWith(t, withReplyCostMultiplier(""), small, nil)
 	tagged := costWith(t, withReplyCostMultiplier("@costMultiplier 10"), small, nil)
 	if tagged != plain {
 		t.Fatalf("@costMultiplier raised cost above the requested page: tagged=%d plain=%d", tagged, plain)
@@ -150,7 +151,7 @@ func TestCostMultiplierNeverRaisesCost(t *testing.T) {
 }
 
 func TestCostMultiplierIgnoresInvalid(t *testing.T) {
-	plain := costWith(t, testutil.FixtureCatalog(), threadQuery, nil)
+	plain := costWith(t, withReplyCostMultiplier(""), threadQuery, nil)
 	for _, tag := range []string{"@costMultiplier 0", "@costMultiplier -5", "@costMultiplier abc", "@costMultiplier"} {
 		if got := costWith(t, withReplyCostMultiplier(tag), threadQuery, nil); got != plain {
 			t.Errorf("tag %q changed cost to %d, want unchanged %d", tag, got, plain)

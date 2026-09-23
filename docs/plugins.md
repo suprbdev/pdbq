@@ -40,6 +40,18 @@ type RequestHook interface {       // request lifecycle (auth, logging, tx polic
 }
 ```
 
+Import paths: `Plugin`, `CatalogHook` and `InflectionHook` — together with
+`introspect.Catalog`, `inflect.Kind`/`Input`/`Next` and the naming helpers
+(`inflect.UpperCamel`, `Singularize`, …) — are defined in the shared engine
+module `github.com/suprbdev/pdbcore` (`pdbcore/plugin`, `pdbcore/introspect`,
+`pdbcore/inflect`); a catalog- or naming-only plugin therefore compiles
+against pdbcore alone and works in pdbr too. pdbq's `Kind*` constants
+(`KindAllRowsField`, …) and `inflect.Default` stay in pdbq
+(`internal/inflect`), as do the GraphQL-typed `SchemaHook`, `CompileHook` and
+`RequestHook` (`internal/plugin`; re-exported for embedders through the
+`pdbq` package: `pdbq.Plugin`, `pdbq.CatalogHook`, `pdbq.InflectionHook`,
+`pdbq.SchemaHook`, `pdbq.CompileHook`, `pdbq.RequestHook`).
+
 Inside a request, the executor attaches the in-flight operation to the
 context before hooks and compilation run, so a `CompileHook` (whose
 `compile.Func` only receives a context) can read the verified claims, role,

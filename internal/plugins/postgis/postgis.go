@@ -46,11 +46,12 @@ import (
 	"context"
 	"strings"
 
+	coreinflect "github.com/suprbdev/pdbcore/inflect"
+	"github.com/suprbdev/pdbcore/introspect"
+	"github.com/suprbdev/pdbcore/postgis"
+	"github.com/suprbdev/pdbcore/smarttags"
 	"github.com/suprbdev/pdbq/internal/inflect"
-	"github.com/suprbdev/pdbq/internal/introspect"
-	"github.com/suprbdev/pdbq/internal/postgis"
 	"github.com/suprbdev/pdbq/internal/schema"
-	"github.com/suprbdev/pdbq/internal/smarttags"
 )
 
 // Plugin implements the SchemaHook adding the spatial surface.
@@ -327,7 +328,7 @@ func (p *Plugin) addDistanceOrdering(b *schema.Builder, t *introspect.Table, col
 		if !allowed[c.Name] {
 			continue
 		}
-		base := inflect.EnumValue(c.Name)
+		base := coreinflect.EnumValue(c.Name)
 		for _, dir := range []struct {
 			suffix string
 			desc   bool

@@ -12,14 +12,14 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/suprbdev/pdbq/internal/cache"
+	"github.com/suprbdev/pdbcore/cache"
+	"github.com/suprbdev/pdbcore/introspect"
+	"github.com/suprbdev/pdbcore/pgexec"
 	"github.com/suprbdev/pdbq/internal/compile"
 	"github.com/suprbdev/pdbq/internal/config"
 	"github.com/suprbdev/pdbq/internal/exec"
-	"github.com/suprbdev/pdbq/internal/introspect"
 	"github.com/suprbdev/pdbq/internal/plugin"
 	"github.com/suprbdev/pdbq/internal/plugins/advancedfilters"
 	"github.com/suprbdev/pdbq/internal/plugins/nestedmutations"
@@ -126,23 +126,14 @@ func (a *App) Connect(ctx context.Context) error {
 	if a.pool != nil {
 		return nil
 	}
-	pcfg, err := pgxpool.ParseConfig(a.Config.Database.URL)
+	pool, err := pgexec.Connect(ctx, pgexec.PoolConfig{
+		URL:              a.Config.Database.URL,
+		MaxConns:         a.Config.Database.MaxConns,
+		ConnectTimeout:   a.Config.Database.ConnectTimeout,
+		StatementTimeout: a.Config.Database.StatementTimeout,
+	})
 	if err != nil {
-		return fmt.Errorf("database url: %w", err)
-	}
-	if a.Config.Database.MaxConns > 0 {
-		pcfg.MaxConns = a.Config.Database.MaxConns
-	}
-	pcfg.ConnConfig.ConnectTimeout = a.Config.Database.ConnectTimeout
-	if t := a.Config.Database.StatementTimeout; t > 0 {
-		if pcfg.ConnConfig.RuntimeParams == nil {
-			pcfg.ConnConfig.RuntimeParams = map[string]string{}
-		}
-		pcfg.ConnConfig.RuntimeParams["statement_timeout"] = fmt.Sprintf("%d", t.Milliseconds())
-	}
-	pool, err := pgxpool.NewWithConfig(ctx, pcfg)
-	if err != nil {
-		return fmt.Errorf("connect: %w", err)
+		return err
 	}
 	a.pool = pool
 	return nil
@@ -211,13 +202,7 @@ func (a *App) Executor(built *schema.Built) *exec.Executor {
 	for _, h := range a.Registry.RequestHooks(disabled) {
 		hooks = append(hooks, h)
 	}
-	iso := pgx.ReadCommitted
-	switch a.Config.TX.Isolation {
-	case "repeatable_read":
-		iso = pgx.RepeatableRead
-	case "serializable":
-		iso = pgx.Serializable
-	}
+	iso := pgexec.ParseIsolation(a.Config.TX.Isolation)
 	var mint exec.MintOptions
 	if jt := a.Config.RLS.Auth.JWTType; jt != "" {
 		s, n, _ := strings.Cut(jt, ".")

@@ -81,19 +81,6 @@ rls:
 	}
 }
 
-func TestEnvKeyMapper(t *testing.T) {
-	cases := map[string]string{
-		"PDBQ_DATABASE_URL":         "database.url",
-		"PDBQ_SERVER_MAX__DEPTH":    "server.max_depth",
-		"PDBQ_RLS_AUTH_JWT__SECRET": "rls.auth.jwt_secret",
-	}
-	for in, want := range cases {
-		if got := envKeyMapper(in); got != want {
-			t.Errorf("envKeyMapper(%q) = %q, want %q", in, got, want)
-		}
-	}
-}
-
 func TestExampleYAMLCoversEverything(t *testing.T) {
 	out := ExampleYAML()
 	for _, key := range []string{

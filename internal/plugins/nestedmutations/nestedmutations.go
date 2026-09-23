@@ -14,11 +14,12 @@ import (
 
 	"github.com/vektah/gqlparser/v2/ast"
 
+	coreinflect "github.com/suprbdev/pdbcore/inflect"
+	"github.com/suprbdev/pdbcore/introspect"
+	"github.com/suprbdev/pdbcore/postgis"
 	"github.com/suprbdev/pdbq/internal/compile"
 	"github.com/suprbdev/pdbq/internal/exec"
 	"github.com/suprbdev/pdbq/internal/inflect"
-	"github.com/suprbdev/pdbq/internal/introspect"
-	"github.com/suprbdev/pdbq/internal/postgis"
 	"github.com/suprbdev/pdbq/internal/schema"
 )
 
@@ -157,7 +158,7 @@ func (p *Plugin) addSpec(inputName, field string, s *nestedSpec) {
 // ensureNestedInput creates `<Type><Rel>NestedInput { create, connect }`.
 func (p *Plugin) ensureNestedInput(b *schema.Builder, owner, parent *introspect.Table, fk *introspect.ForeignKey, relName string) string {
 	ownerType := b.TypeForTable[owner.Schema+"."+owner.Name]
-	name := ownerType + inflect.UpperCamel(relName) + "NestedInput"
+	name := ownerType + coreinflect.UpperCamel(relName) + "NestedInput"
 	if _, ok := b.Inputs[name]; ok {
 		return name
 	}
@@ -199,7 +200,7 @@ func (p *Plugin) ensureConnectInput(b *schema.Builder, parent *introspect.Table,
 // ensureChildrenInput creates `<Owner><Rel>NestedChildrenInput { create: [ChildCreateInput!] }`.
 func (p *Plugin) ensureChildrenInput(b *schema.Builder, child *introspect.Table, childInput, relName string) string {
 	childType := b.TypeForTable[child.Schema+"."+child.Name]
-	name := childType + inflect.UpperCamel(relName) + "NestedChildrenInput"
+	name := childType + coreinflect.UpperCamel(relName) + "NestedChildrenInput"
 	if _, ok := b.Inputs[name]; ok {
 		return name
 	}

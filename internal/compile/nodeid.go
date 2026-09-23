@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/suprbdev/pdbq/internal/introspect"
+	"github.com/suprbdev/pdbcore/introspect"
 )
 
 // Global identifiers and keyset cursors share one format: base64 of the JSON

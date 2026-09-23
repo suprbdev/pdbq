@@ -8,8 +8,9 @@ package simplenames
 import (
 	"context"
 
+	coreinflect "github.com/suprbdev/pdbcore/inflect"
+	"github.com/suprbdev/pdbcore/introspect"
 	"github.com/suprbdev/pdbq/internal/inflect"
-	"github.com/suprbdev/pdbq/internal/introspect"
 )
 
 type Plugin struct {
@@ -32,20 +33,20 @@ func (p *Plugin) TransformCatalog(_ context.Context, c *introspect.Catalog) erro
 func (p *Plugin) Inflect(kind inflect.Kind, in inflect.Input, next inflect.Next) string {
 	switch kind {
 	case inflect.KindAllRowsField:
-		return inflect.LowerCamel(inflect.Pluralize(inflect.Singularize(in.Table)))
+		return coreinflect.LowerCamel(coreinflect.Pluralize(coreinflect.Singularize(in.Table)))
 	case inflect.KindRowByPKField:
-		return inflect.LowerCamel(inflect.Singularize(in.Table))
+		return coreinflect.LowerCamel(coreinflect.Singularize(in.Table))
 	case inflect.KindUpdateMutation:
-		return "update" + inflect.UpperCamel(inflect.Singularize(in.Table))
+		return "update" + coreinflect.UpperCamel(coreinflect.Singularize(in.Table))
 	case inflect.KindDeleteMutation:
-		return "delete" + inflect.UpperCamel(inflect.Singularize(in.Table))
+		return "delete" + coreinflect.UpperCamel(coreinflect.Singularize(in.Table))
 	case inflect.KindUpsertMutation:
-		return "upsert" + inflect.UpperCamel(inflect.Singularize(in.Table))
+		return "upsert" + coreinflect.UpperCamel(coreinflect.Singularize(in.Table))
 	case inflect.KindRelationBackward:
 		// Shorten postsByAuthorId -> posts, but only when there is exactly
 		// one FK from that table to any given target (unambiguous).
 		if p.fkCountFrom(in.Schema, in.Table) <= 1 {
-			return inflect.LowerCamel(inflect.Pluralize(inflect.Singularize(in.Table)))
+			return coreinflect.LowerCamel(coreinflect.Pluralize(coreinflect.Singularize(in.Table)))
 		}
 		return next(kind, in)
 	default:

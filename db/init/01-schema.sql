@@ -1,6 +1,7 @@
--- pdbq development / integration fixture schema.
--- Exercises: enums, arrays, jsonb, FKs, unique constraints, indexes,
--- functions, RLS policies, and role switching.
+-- pdbcore fixture schema, shared by pdbq and pdbr (development stacks, e2e
+-- suites, and testutil.FixtureCatalog which mirrors it).
+-- Exercises: enums, arrays, jsonb, FKs, unique constraints, indexes, views,
+-- functions, composites, PostGIS, RLS policies, and role switching.
 
 CREATE TYPE mood AS ENUM ('sad', 'ok', 'happy');
 
@@ -99,6 +100,12 @@ CREATE TABLE places (
 CREATE INDEX places_owner_id_idx ON places (owner_id);
 CREATE INDEX places_location_idx ON places USING gist (location);
 CREATE INDEX places_area_idx ON places USING gist (area);
+
+-- PK-less view: no node identity, offset pagination only.
+CREATE VIEW metrics AS
+    SELECT 'users'::text AS name, count(*)::integer AS value FROM users
+    UNION ALL
+    SELECT 'posts'::text, count(*)::integer FROM posts;
 
 CREATE FUNCTION search_posts(term text) RETURNS SETOF posts
 STABLE LANGUAGE sql AS $$
@@ -222,8 +229,9 @@ DO $$ BEGIN
 END $$;
 
 GRANT USAGE ON SCHEMA public TO anonymous, app_user;
-GRANT SELECT ON users, posts, places TO anonymous;
+GRANT SELECT ON users, posts, places, metrics TO anonymous;
 GRANT SELECT, INSERT, UPDATE, DELETE ON users, posts, places TO app_user;
+GRANT SELECT ON metrics TO app_user;
 GRANT EXECUTE ON FUNCTION search_posts(text), users_post_count(users), posts_excerpt(posts, integer),
     users_recent_posts(users, integer), users_tag_words(users), retry_probe(),
     add_numbers(integer, integer), publish_post(integer), unpublish_post(integer),

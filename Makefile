@@ -2,7 +2,7 @@ GO      ?= go
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 IMAGE   ?= suprbdev/pdbq
 
-.PHONY: help build dev test test-e2e bench lint docs docker-build docker-push compose-up compose-down example-config fuzz release
+.PHONY: help build dev test test-e2e bench lint docs docker-build docker-push compose-up compose-down example-config fixture fuzz release
 
 .DEFAULT_GOAL := help
 
@@ -37,6 +37,9 @@ lint: ## Run golangci-lint (falls back to go vet)
 
 example-config: build ## Regenerate the committed reference YAML from the structs
 	./bin/pdbq config example > examples/pdbq.example.yaml
+
+fixture: ## Regenerate db/init/01-schema.sql from pdbcore's shared test fixture
+	$(GO) run github.com/suprbdev/pdbcore/testutil/cmd/fixture > db/init/01-schema.sql
 
 # Verifies, tags, and pushes; the Release workflow (release.yaml) then builds
 # the binaries/image and publishes the GitHub release with generated notes.

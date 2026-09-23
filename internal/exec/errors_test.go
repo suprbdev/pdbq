@@ -8,11 +8,11 @@ import (
 
 	"github.com/jackc/pgx/v5/pgconn"
 
+	"github.com/suprbdev/pdbcore/testutil"
 	"github.com/suprbdev/pdbq/internal/compile"
 	"github.com/suprbdev/pdbq/internal/exec"
 	"github.com/suprbdev/pdbq/internal/inflect"
 	"github.com/suprbdev/pdbq/internal/schema"
-	"github.com/suprbdev/pdbq/internal/testutil"
 )
 
 // newErrorExecutor builds an executor over the fixture schema with a nil

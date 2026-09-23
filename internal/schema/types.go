@@ -8,7 +8,7 @@
 package schema
 
 import (
-	"github.com/suprbdev/pdbq/internal/introspect"
+	"github.com/suprbdev/pdbcore/introspect"
 )
 
 // FieldKind tells the compiler how to resolve a field.
@@ -25,10 +25,10 @@ const (
 	KindCreate           FieldKind = "create"
 	KindUpdate           FieldKind = "update"
 	KindDelete           FieldKind = "delete"
-	KindUpsert           FieldKind = "upsert"      // INSERT ... ON CONFLICT (KeyColumns) DO UPDATE
-	KindCreateMany       FieldKind = "create_many" // multi-row INSERT
-	KindUpdateMany       FieldKind = "update_many" // filtered UPDATE
-	KindDeleteMany       FieldKind = "delete_many" // filtered DELETE
+	KindUpsert           FieldKind = "upsert"        // INSERT ... ON CONFLICT (KeyColumns) DO UPDATE
+	KindCreateMany       FieldKind = "create_many"   // multi-row INSERT
+	KindUpdateMany       FieldKind = "update_many"   // filtered UPDATE
+	KindDeleteMany       FieldKind = "delete_many"   // filtered DELETE
 	KindPayloadRows      FieldKind = "payload_rows"  // list of mutated rows in a bulk payload
 	KindPayloadCount     FieldKind = "payload_count" // affected-row count in a bulk payload
 	KindFunction         FieldKind = "function"

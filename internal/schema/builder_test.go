@@ -5,13 +5,13 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/suprbdev/pdbcore/introspect"
+	"github.com/suprbdev/pdbcore/testutil"
 	"github.com/suprbdev/pdbq/internal/inflect"
-	"github.com/suprbdev/pdbq/internal/introspect"
 	"github.com/suprbdev/pdbq/internal/plugin"
 	"github.com/suprbdev/pdbq/internal/plugins/nestedmutations"
 	"github.com/suprbdev/pdbq/internal/plugins/simplenames"
 	"github.com/suprbdev/pdbq/internal/schema"
-	"github.com/suprbdev/pdbq/internal/testutil"
 )
 
 func TestDefaultSchema(t *testing.T) {
@@ -74,9 +74,9 @@ func TestTableBackedEnum(t *testing.T) {
 	for _, want := range []string{
 		"enum EventType ", "CONFERENCE", "HACKATHON", "MEETUP",
 		`"""A large formal gathering"""`,
-		"typeCode: EventType!",           // output field + create input
-		"typeCode: EventTypeFilterOps",   // filter
-		"TYPE_CODE_ASC",                  // orderBy
+		"typeCode: EventType!",         // output field + create input
+		"typeCode: EventTypeFilterOps", // filter
+		"TYPE_CODE_ASC",                // orderBy
 		"allEvents(", "createEvent(",
 	} {
 		if !strings.Contains(built.SDL, want) {

@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/suprbdev/pdbq/internal/introspect"
-	"github.com/suprbdev/pdbq/internal/postgis"
+	"github.com/suprbdev/pdbcore/introspect"
+	"github.com/suprbdev/pdbcore/postgis"
 	"github.com/suprbdev/pdbq/internal/schema"
 )
 

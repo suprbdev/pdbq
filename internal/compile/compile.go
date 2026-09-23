@@ -14,8 +14,8 @@ import (
 
 	"github.com/vektah/gqlparser/v2/ast"
 
-	"github.com/suprbdev/pdbq/internal/introspect"
-	"github.com/suprbdev/pdbq/internal/postgis"
+	"github.com/suprbdev/pdbcore/introspect"
+	"github.com/suprbdev/pdbcore/postgis"
 	"github.com/suprbdev/pdbq/internal/schema"
 )
 
@@ -100,8 +100,8 @@ func (c *Compiler) Compile(ctx context.Context, req *Request) (*Statement, error
 		return nil, err
 	}
 	return &Statement{
-		SQL:      sql,
-		Args:     s.args,
+		SQL:  sql,
+		Args: s.args,
 		Mutation: meta.Kind == schema.KindCreate || meta.Kind == schema.KindUpdate ||
 			meta.Kind == schema.KindDelete || meta.Kind == schema.KindUpsert ||
 			meta.Kind == schema.KindCreateMany || meta.Kind == schema.KindUpdateMany ||

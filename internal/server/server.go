@@ -4,21 +4,26 @@
 package server
 
 import (
-	"compress/gzip"
 	"context"
 	"encoding/json"
-	"io"
 	"log/slog"
 	"net/http"
-	"strconv"
-	"strings"
-	"sync"
 	"sync/atomic"
-	"time"
 
+	"github.com/suprbdev/pdbcore/auth"
+	"github.com/suprbdev/pdbcore/confx"
+	"github.com/suprbdev/pdbcore/httpx"
 	"github.com/suprbdev/pdbq/internal/config"
 	"github.com/suprbdev/pdbq/internal/exec"
 )
+
+// Authenticator turns an HTTP request into (claims, role); see pdbcore/auth.
+type Authenticator = auth.Authenticator
+
+// NewAuthenticator builds the request authenticator from the rls section.
+func NewAuthenticator(cfg config.RLS) *Authenticator {
+	return auth.New(confx.AuthConfig(cfg))
+}
 
 // Server is the HTTP front end. Executor is stored atomically so watch mode
 // can swap in a new schema without a restart.
@@ -32,8 +37,8 @@ type Server struct {
 	pq *pqStore
 }
 
-func New(cfg config.Server, auth *Authenticator, ex *exec.Executor, sdl string, log *slog.Logger) (*Server, error) {
-	s := &Server{cfg: cfg, auth: auth, log: log}
+func New(cfg config.Server, authn *Authenticator, ex *exec.Executor, sdl string, log *slog.Logger) (*Server, error) {
+	s := &Server{cfg: cfg, auth: authn, log: log}
 	s.executor.Store(ex)
 	s.sdl.Store(&sdl)
 	if cfg.APQ || cfg.PersistedQueriesPath != "" {
@@ -58,10 +63,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /graphql", s.handleGraphQL)
 	mux.HandleFunc("GET /graphql", s.handleGraphQL)
 	if len(s.cfg.CORSOrigins) > 0 {
-		mux.HandleFunc("OPTIONS /graphql", s.handleCORSPreflight)
+		mux.HandleFunc("OPTIONS /graphql", httpx.Preflight(s.cfg.CORSOrigins, "POST, GET, OPTIONS"))
 	}
-	mux.HandleFunc("GET /healthz", s.handleHealthz)
-	mux.HandleFunc("GET /readyz", s.handleHealthz)
+	mux.HandleFunc("GET /healthz", httpx.Healthz)
+	mux.HandleFunc("GET /readyz", httpx.Healthz)
 	if s.cfg.ExposeSchema {
 		mux.HandleFunc("GET /schema.graphql", s.handleSDL)
 	}
@@ -73,129 +78,22 @@ func (s *Server) Handler() http.Handler {
 		h = http.TimeoutHandler(h, s.cfg.RequestTimeout, `{"errors":[{"message":"request timeout"}]}`)
 	}
 	if len(s.cfg.CORSOrigins) > 0 {
-		h = s.withCORS(h)
+		h = httpx.CORS(s.cfg.CORSOrigins, h)
 	}
 	if s.cfg.Compression {
-		h = withGzip(h)
+		h = httpx.Gzip(h)
 	}
 	return h
 }
 
-var gzipPool = sync.Pool{New: func() any { return gzip.NewWriter(io.Discard) }}
-
-type gzipResponseWriter struct {
-	http.ResponseWriter
-	gz *gzip.Writer
-}
-
-func (w *gzipResponseWriter) Write(p []byte) (int, error) { return w.gz.Write(p) }
-
-// withGzip compresses responses for clients that accept gzip. OPTIONS
-// (CORS preflight) is skipped: those responses have no body, and wrapping
-// them would emit an empty gzip frame against a 204.
-func withGzip(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodOptions || !acceptsGzip(r.Header.Get("Accept-Encoding")) {
-			next.ServeHTTP(w, r)
-			return
-		}
-		w.Header().Set("Content-Encoding", "gzip")
-		w.Header().Add("Vary", "Accept-Encoding")
-		gz := gzipPool.Get().(*gzip.Writer)
-		gz.Reset(w)
-		defer func() {
-			gz.Close() //nolint:errcheck
-			gzipPool.Put(gz)
-		}()
-		next.ServeHTTP(&gzipResponseWriter{ResponseWriter: w, gz: gz}, r)
-	})
-}
-
-// acceptsGzip reports whether an Accept-Encoding header value asks for gzip
-// (directly or via "*"), honoring q=0 exclusions.
-func acceptsGzip(header string) bool {
-	for _, part := range strings.Split(header, ",") {
-		token, params, _ := strings.Cut(strings.TrimSpace(part), ";")
-		if tok := strings.TrimSpace(token); tok != "gzip" && tok != "*" {
-			continue
-		}
-		if q, ok := strings.CutPrefix(strings.TrimSpace(params), "q="); ok {
-			if v, err := strconv.ParseFloat(strings.TrimSpace(q), 64); err == nil && v == 0 {
-				continue
-			}
-		}
-		return true
-	}
-	return false
-}
-
-// withCORS sets Access-Control-Allow-Origin on responses whose Origin header
-// matches an allowed origin (exact match, or "*" to allow any). Preflight
-// (OPTIONS) requests are answered directly by handleCORSPreflight.
-func (s *Server) withCORS(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if origin := r.Header.Get("Origin"); origin != "" && s.originAllowed(origin) {
-			w.Header().Set("Access-Control-Allow-Origin", origin)
-			w.Header().Set("Vary", "Origin")
-		}
-		next.ServeHTTP(w, r)
-	})
-}
-
-func (s *Server) originAllowed(origin string) bool {
-	for _, o := range s.cfg.CORSOrigins {
-		if o == "*" || o == origin {
-			return true
-		}
-	}
-	return false
-}
-
-func (s *Server) handleCORSPreflight(w http.ResponseWriter, r *http.Request) {
-	origin := r.Header.Get("Origin")
-	if origin == "" || !s.originAllowed(origin) {
-		w.WriteHeader(http.StatusNoContent)
-		return
-	}
-	h := w.Header()
-	h.Set("Access-Control-Allow-Origin", origin)
-	h.Set("Vary", "Origin")
-	h.Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS")
-	if reqHeaders := r.Header.Get("Access-Control-Request-Headers"); reqHeaders != "" {
-		h.Set("Access-Control-Allow-Headers", reqHeaders)
-	}
-	h.Set("Access-Control-Max-Age", "600")
-	w.WriteHeader(http.StatusNoContent)
-}
-
 // ListenAndServe runs the server until ctx is cancelled.
 func (s *Server) ListenAndServe(ctx context.Context) error {
-	// ReadTimeout must outlast the handler: the request body is read inside
-	// the handler, so it needs headroom beyond RequestTimeout. IdleTimeout
-	// reaps kept-alive connections; both close the slowloris window that
-	// ReadHeaderTimeout alone leaves open on the body.
-	readTimeout := 60 * time.Second
-	if s.cfg.RequestTimeout > 0 {
-		readTimeout = s.cfg.RequestTimeout + 10*time.Second
-	}
-	srv := &http.Server{
-		Addr:              s.cfg.Addr,
-		Handler:           s.Handler(),
-		ReadHeaderTimeout: 10 * time.Second,
-		ReadTimeout:       readTimeout,
-		IdleTimeout:       120 * time.Second,
-	}
-	errCh := make(chan error, 1)
-	go func() { errCh <- srv.ListenAndServe() }()
-	s.log.Info("listening", "addr", s.cfg.Addr, "graphiql", s.cfg.GraphiQL)
-	select {
-	case <-ctx.Done():
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		return srv.Shutdown(shutdownCtx)
-	case err := <-errCh:
-		return err
-	}
+	return httpx.ListenAndServe(ctx, s.Handler(), httpx.ServeOptions{
+		Addr:           s.cfg.Addr,
+		RequestTimeout: s.cfg.RequestTimeout,
+		Log:            s.log,
+		LogAttrs:       []any{"graphiql", s.cfg.GraphiQL},
+	})
 }
 
 type gqlHTTPRequest struct {
@@ -254,11 +152,6 @@ func (s *Server) handleGraphQL(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewEncoder(w).Encode(res); err != nil {
 		s.log.Error("write response", "err", err)
 	}
-}
-
-func (s *Server) handleHealthz(w http.ResponseWriter, _ *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	w.Write([]byte(`{"status":"ok"}`)) //nolint:errcheck
 }
 
 func (s *Server) handleSDL(w http.ResponseWriter, _ *http.Request) {

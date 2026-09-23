@@ -1,6 +1,6 @@
 package schema
 
-import "github.com/suprbdev/pdbq/internal/postgis"
+import "github.com/suprbdev/pdbcore/postgis"
 
 // Custom scalar names emitted into every schema.
 var customScalars = []string{"BigInt", "BigFloat", "Datetime", "Date", "Time", "UUID", "JSON", "Cursor"}
