@@ -41,7 +41,7 @@ func BenchmarkCompile(b *testing.B) {
 		if perr != nil {
 			b.Fatal(perr)
 		}
-		if errs := validator.Validate(built.Schema, doc); len(errs) > 0 {
+		if errs := validator.ValidateWithRules(built.Schema, doc, nil); len(errs) > 0 {
 			b.Fatal(errs)
 		}
 		field := doc.Operations[0].SelectionSet[0].(*ast.Field)

@@ -92,7 +92,7 @@ func httpPost(url string, body []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	return io.ReadAll(resp.Body)
 }
 
@@ -101,7 +101,7 @@ func httpGet(url string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	return io.ReadAll(resp.Body)
 }
 
@@ -1169,7 +1169,7 @@ func TestJWTMint(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		raw, _ := io.ReadAll(resp.Body)
 		var out gqlResp
 		if err := json.Unmarshal(raw, &out); err != nil {
@@ -1298,7 +1298,7 @@ func TestRLSMatrix(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		raw, _ := io.ReadAll(resp.Body)
 		var out gqlResp
 		if err := json.Unmarshal(raw, &out); err != nil {
@@ -1397,7 +1397,7 @@ func TestSmartComments(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer conn.Close(ctx)
+	defer func() { _ = conn.Close(ctx) }()
 
 	comments := map[string]string{
 		`COLUMN users.full_name`:                   `E'@name display_name\nThe name shown in the UI.'`,
@@ -1458,7 +1458,7 @@ func TestCostMultiplierThread(t *testing.T) {
 	// Registered before the row/comment cleanups below so it runs after them
 	// (t.Cleanup is LIFO): a deferred Close would fire first and leave the
 	// fixture data behind.
-	t.Cleanup(func() { conn.Close(ctx) })
+	t.Cleanup(func() { _ = conn.Close(ctx) })
 
 	// A three-deep thread: root -> reply -> reply.
 	var postID int

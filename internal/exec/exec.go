@@ -144,7 +144,7 @@ func (e *Executor) prepare(ctx context.Context, req Request) (context.Context, *
 	if err != nil {
 		return ctx, nil, err
 	}
-	if listErr := validator.Validate(e.Built.Schema, doc); len(listErr) > 0 {
+	if listErr := validator.ValidateWithRules(e.Built.Schema, doc, nil); len(listErr) > 0 {
 		return ctx, nil, listErr
 	}
 	opDef := doc.Operations.ForName(req.OperationName)

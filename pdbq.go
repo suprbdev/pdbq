@@ -37,7 +37,6 @@ type App struct {
 
 	pool  *pgxpool.Pool
 	built *schema.Built
-	exec  *exec.Executor
 
 	// readOnly lives on the App (not in exec.Options as a value) so a single
 	// flag is shared by every executor the App builds — flipping it at

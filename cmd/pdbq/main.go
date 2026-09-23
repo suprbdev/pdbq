@@ -192,7 +192,7 @@ func collectVars(pairs []string, varsFile string) (map[string]any, error) {
 			if err != nil {
 				return nil, err
 			}
-			defer f.Close()
+			defer func() { _ = f.Close() }()
 			r = f
 		}
 		if err := json.NewDecoder(r).Decode(&out); err != nil {

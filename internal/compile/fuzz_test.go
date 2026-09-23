@@ -31,7 +31,7 @@ func FuzzFilter(f *testing.F) {
 	if perr != nil {
 		f.Fatal(perr)
 	}
-	if errs := validator.Validate(built.Schema, doc); len(errs) > 0 {
+	if errs := validator.ValidateWithRules(built.Schema, doc, nil); len(errs) > 0 {
 		f.Fatal(errs)
 	}
 	op := doc.Operations[0]
@@ -97,7 +97,7 @@ func FuzzSpatial(f *testing.F) {
 	if perr != nil {
 		f.Fatal(perr)
 	}
-	if errs := validator.Validate(built.Schema, doc); len(errs) > 0 {
+	if errs := validator.ValidateWithRules(built.Schema, doc, nil); len(errs) > 0 {
 		f.Fatal(errs)
 	}
 	op := doc.Operations[0]

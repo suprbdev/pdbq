@@ -36,7 +36,7 @@ func costWith(t *testing.T, cat *introspect.Catalog, query string, rawVars map[s
 	if perr != nil {
 		t.Fatalf("parse: %v", perr)
 	}
-	if errs := validator.Validate(built.Schema, doc); len(errs) > 0 {
+	if errs := validator.ValidateWithRules(built.Schema, doc, nil); len(errs) > 0 {
 		t.Fatalf("validate: %v", errs)
 	}
 	op := doc.Operations[0]
