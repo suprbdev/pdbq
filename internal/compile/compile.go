@@ -203,9 +203,15 @@ func (s *stmt) argValue(f *ast.Field, name string) (any, bool) {
 
 // expandFor resolves fragment spreads and inline fragments to a flat field
 // list, keeping only fragments whose type condition matches typeName (either
-// exactly or via an interface typeName implements, e.g. `... on Node`) and
-// dropping selections excluded by @skip/@include.
+// exactly or via an interface typeName implements, e.g. `... on Node`),
+// dropping selections excluded by @skip/@include, and merging fields that
+// share a response key (see mergeFields).
 func (s *stmt) expandFor(sel ast.SelectionSet, typeName string) []*ast.Field {
+	return mergeFields(s.collectFields(sel, typeName))
+}
+
+// collectFields is expandFor without the merge step.
+func (s *stmt) collectFields(sel ast.SelectionSet, typeName string) []*ast.Field {
 	var out []*ast.Field
 	for _, item := range sel {
 		switch v := item.(type) {
@@ -219,16 +225,42 @@ func (s *stmt) expandFor(sel ast.SelectionSet, typeName string) []*ast.Field {
 				continue
 			}
 			if s.fragmentApplies(v.TypeCondition, typeName) {
-				out = append(out, s.expandFor(v.SelectionSet, typeName)...)
+				out = append(out, s.collectFields(v.SelectionSet, typeName)...)
 			}
 		case *ast.FragmentSpread:
 			if SkipByDirectives(v.Directives, s.req.Vars) {
 				continue
 			}
 			if def := s.req.Fragments.ForName(v.Name); def != nil && s.fragmentApplies(def.TypeCondition, typeName) {
-				out = append(out, s.expandFor(def.SelectionSet, typeName)...)
+				out = append(out, s.collectFields(def.SelectionSet, typeName)...)
 			}
 		}
+	}
+	return out
+}
+
+// mergeFields collapses fields sharing a response key into the first of them,
+// concatenating their sub-selections, as GraphQL field merging requires:
+// `location { x } location { y }`, or the same relation selected through two
+// fragments, must yield one key holding both selections rather than two
+// jsonb_build_object pairs of which only the last survives. Validation
+// guarantees that such fields have the same name and arguments.
+func mergeFields(fields []*ast.Field) []*ast.Field {
+	var out []*ast.Field
+	index := map[string]int{}
+	for _, f := range fields {
+		i, ok := index[f.Alias]
+		if !ok {
+			index[f.Alias] = len(out)
+			out = append(out, f)
+			continue
+		}
+		if len(f.SelectionSet) == 0 {
+			continue
+		}
+		merged := *out[i]
+		merged.SelectionSet = append(append(ast.SelectionSet{}, out[i].SelectionSet...), f.SelectionSet...)
+		out[i] = &merged
 	}
 	return out
 }

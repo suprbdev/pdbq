@@ -118,6 +118,36 @@ func TestQueries(t *testing.T) {
 		}
 	})
 
+	t.Run("repeated selections merge", func(t *testing.T) {
+		res := post(t, hs.URL, `{
+			postById(id: 1) {
+				author { email }
+				... on Post { author { id } }
+				...authorName
+			}
+			userById(id: 1) {
+				address { city }
+				address { street }
+				postsByAuthorId(orderBy: [ID_ASC]) { nodes { id } }
+				postsByAuthorId(orderBy: [ID_ASC]) { totalCount nodes { title } }
+			}
+		}
+		fragment authorName on Post { author { fullName } }`, nil)
+		requireNoErrors(t, res)
+		if got, want := normalize(t, res.Data["postById"]), normalizeStr(t, `{"author": {"email": "ada@example.com", "id": 1, "fullName": "Ada Lovelace"}}`); got != want {
+			t.Errorf("merged relation: got %s want %s", got, want)
+		}
+		want := normalizeStr(t, `{
+			"address": {"city": "London", "street": "12 St James Sq"},
+			"postsByAuthorId": {"totalCount": 2, "nodes": [
+				{"id": 1, "title": "Notes on the Analytical Engine"},
+				{"id": 2, "title": "Unpublished draft"}]}
+		}`)
+		if got := normalize(t, res.Data["userById"]); got != want {
+			t.Errorf("merged composite/connection: got %s want %s", got, want)
+		}
+	})
+
 	t.Run("skip and include directives", func(t *testing.T) {
 		res := post(t, hs.URL, `query ($more: Boolean!) {
 			userByEmail(email: "ada@example.com") {
@@ -1702,4 +1732,264 @@ func TestCostMultiplierThread(t *testing.T) {
 			t.Errorf("thread response missing %q: %s", want, got)
 		}
 	}
+}
+
+// TestTypedGeometry covers plugins.settings.postgis.typed_geometry: spatial
+// columns read as geometry objects typed from their typmod, compiled into the
+// same statement, while input stays GeoJSON.
+func TestTypedGeometry(t *testing.T) {
+	url := os.Getenv("PDBQ_TEST_DATABASE_URL")
+	if url == "" {
+		t.Skip("PDBQ_TEST_DATABASE_URL not set; run `make test-e2e`")
+	}
+	ctx := context.Background()
+	conn, err := pgx.Connect(ctx, url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = conn.Close(ctx) })
+	if _, err := conn.Exec(ctx, `CREATE TABLE typed_shapes (
+		id    integer PRIMARY KEY,
+		pz    geometry(PointZ, 4326),
+		line  geometry(LineString, 4326),
+		coll  geometry(GeometryCollection, 4326),
+		flat  geometry(Geometry, 4326),
+		loose geometry,
+		arc   geometry(CircularString, 4326)
+	)`); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _, _ = conn.Exec(ctx, `DROP TABLE typed_shapes`) })
+	if _, err := conn.Exec(ctx, `INSERT INTO typed_shapes VALUES
+		(1, 'SRID=4326;POINT Z(1 2 3)', 'SRID=4326;LINESTRING(0 0, 1 1, 2 0)',
+		    'SRID=4326;GEOMETRYCOLLECTION(POINT(5 6), LINESTRING(7 8, 9 10))',
+		    'SRID=4326;POLYGON((0 0, 4 0, 4 4, 0 4, 0 0), (1 1, 2 1, 2 2, 1 1))',
+		    'MULTIPOLYGON(((0 0, 1 0, 1 1, 0 0)))'),
+		(2, NULL, NULL, NULL, 'SRID=4326;POINT(1 1)', 'POINTM(3 4 5)'),
+		(3, 'SRID=4326;POINT Z EMPTY', 'SRID=4326;LINESTRING EMPTY', 'SRID=4326;GEOMETRYCOLLECTION EMPTY',
+		    'SRID=4326;POLYGON EMPTY', 'MULTIPOINT(EMPTY, 1 2)'),
+		(4, NULL, NULL, 'SRID=4326;GEOMETRYCOLLECTION(POINT EMPTY, POINT(1 2))', 'SRID=4326;POINT EMPTY', 'MULTIPOLYGON EMPTY')`); err != nil {
+		t.Fatal(err)
+	}
+
+	hs := testServer(t, func(c *config.Config) {
+		c.Plugins.Settings = map[string]map[string]any{"postgis": {"typed_geometry": true}}
+	})
+
+	t.Run("typmod-fixed point and unconstrained geography", func(t *testing.T) {
+		res := post(t, hs.URL, `{
+			placeById(id: 1) {
+				location { __typename x y srid geojson }
+				area {
+					__typename srid
+					... on GeographyPolygon {
+						exterior { __typename points { longitude latitude } }
+						interiors { points { longitude } }
+					}
+				}
+			}
+			nullArea: placeById(id: 2) { area { srid } }
+		}`, nil)
+		requireNoErrors(t, res)
+		want := normalizeStr(t, `{
+			"location": {"__typename": "GeometryPoint", "x": -0.1281, "y": 51.508, "srid": 4326,
+				"geojson": {"type": "Point", "coordinates": [-0.1281, 51.508]}},
+			"area": {"__typename": "GeographyPolygon", "srid": 4326, "interiors": [],
+				"exterior": {"__typename": "GeographyLineString", "points": [
+					{"longitude": -0.13, "latitude": 51.507}, {"longitude": -0.126, "latitude": 51.507},
+					{"longitude": -0.126, "latitude": 51.509}, {"longitude": -0.13, "latitude": 51.509},
+					{"longitude": -0.13, "latitude": 51.507}]}}
+		}`)
+		if got := normalize(t, res.Data["placeById"]); got != want {
+			t.Errorf("place:\n got %s\nwant %s", got, want)
+		}
+		if got := normalize(t, res.Data["nullArea"]); got != `{"area":null}` {
+			t.Errorf("null geography: got %s", got)
+		}
+	})
+
+	t.Run("projection arguments apply before typing", func(t *testing.T) {
+		res := post(t, hs.URL, `{placeById(id: 1) { location(transform: 3857) { srid x } }}`, nil)
+		requireNoErrors(t, res)
+		var got struct {
+			Location struct {
+				Srid int     `json:"srid"`
+				X    float64 `json:"x"`
+			} `json:"location"`
+		}
+		mustUnmarshal(t, res.Data["placeById"], &got)
+		if got.Location.Srid != 3857 || got.Location.X > -14000 || got.Location.X < -14500 {
+			t.Errorf("transformed point = %+v", got.Location)
+		}
+	})
+
+	t.Run("mutation payload and GeoJSON input", func(t *testing.T) {
+		res := post(t, hs.URL, `mutation {
+			createPlace(input: {name: "Typed", location: {type: "Point", coordinates: [10, 20]}}) {
+				place { id location { x y } }
+			}
+		}`, nil)
+		requireNoErrors(t, res)
+		var payload struct {
+			Place struct {
+				ID       int             `json:"id"`
+				Location json.RawMessage `json:"location"`
+			} `json:"place"`
+		}
+		mustUnmarshal(t, res.Data["createPlace"], &payload)
+		post(t, hs.URL, fmt.Sprintf(`mutation { deletePlaceById(id: %d) { place { id } } }`, payload.Place.ID), nil)
+		if got := normalize(t, payload.Place.Location); got != `{"x":10,"y":20}` {
+			t.Errorf("payload location = %s", got)
+		}
+	})
+
+	t.Run("concrete, dimension and top-level interface columns", func(t *testing.T) {
+		res := post(t, hs.URL, `{
+			allTypedShapes(orderBy: [ID_ASC], filter: {id: {lessThan: 3}}) {
+				nodes {
+					pz { __typename x y z srid }
+					line { __typename points { __typename x y } }
+					coll {
+						geometries {
+							__typename
+							... on GeometryPoint { x y }
+							... on GeometryLineString { points { x } }
+						}
+					}
+					flat {
+						__typename
+						... on GeometryPolygon { exterior { points { x } } interiors { points { x y } } }
+						... on GeometryPoint { x }
+					}
+					loose {
+						__typename srid
+						... on GeometryMultiPolygon { polygons { exterior { points { x y } } } }
+						... on GeometryPointM { x y }
+					}
+				}
+			}
+		}`, nil)
+		requireNoErrors(t, res)
+		want := normalizeStr(t, `{"nodes": [
+			{
+				"pz": {"__typename": "GeometryPointZ", "x": 1, "y": 2, "z": 3, "srid": 4326},
+				"line": {"__typename": "GeometryLineString", "points": [
+					{"__typename": "GeometryPoint", "x": 0, "y": 0},
+					{"__typename": "GeometryPoint", "x": 1, "y": 1},
+					{"__typename": "GeometryPoint", "x": 2, "y": 0}]},
+				"coll": {"geometries": [
+					{"__typename": "GeometryPoint", "x": 5, "y": 6},
+					{"__typename": "GeometryLineString", "points": [{"x": 7}, {"x": 9}]}]},
+				"flat": {"__typename": "GeometryPolygon",
+					"exterior": {"points": [{"x": 0}, {"x": 4}, {"x": 4}, {"x": 0}, {"x": 0}]},
+					"interiors": [{"points": [{"x": 1, "y": 1}, {"x": 2, "y": 1}, {"x": 2, "y": 2}, {"x": 1, "y": 1}]}]},
+				"loose": {"__typename": "GeometryMultiPolygon", "srid": 0, "polygons": [
+					{"exterior": {"points": [{"x": 0, "y": 0}, {"x": 1, "y": 0}, {"x": 1, "y": 1}, {"x": 0, "y": 0}]}}]}
+			},
+			{
+				"pz": null, "line": null, "coll": null,
+				"flat": {"__typename": "GeometryPoint", "x": 1},
+				"loose": {"__typename": "GeometryPointM", "srid": 0, "x": 3, "y": 4}
+			}
+		]}`)
+		if got := normalize(t, res.Data["allTypedShapes"]); got != want {
+			t.Errorf("shapes:\n got %s\nwant %s", got, want)
+		}
+	})
+
+	t.Run("empty geometries", func(t *testing.T) {
+		res := post(t, hs.URL, `{
+			allTypedShapes(orderBy: [ID_ASC], filter: {id: {greaterThanOrEqualTo: 3}}) {
+				nodes {
+					pz { x y z }
+					line { points { x } }
+					coll { geometries { __typename ... on GeometryPoint { x y } } }
+					flat {
+						__typename
+						... on GeometryPolygon { exterior { points { x } } interiors { points { x } } }
+						... on GeometryPoint { x }
+					}
+					loose {
+						__typename
+						... on GeometryMultiPoint { points { x y } }
+						... on GeometryMultiPolygon { polygons { exterior { points { x } } } }
+					}
+				}
+			}
+		}`, nil)
+		requireNoErrors(t, res)
+		want := normalizeStr(t, `{"nodes": [
+			{
+				"pz": null, "line": {"points": []}, "coll": {"geometries": []},
+				"flat": {"__typename": "GeometryPolygon", "exterior": null, "interiors": []},
+				"loose": {"__typename": "GeometryMultiPoint", "points": [null, {"x": 1, "y": 2}]}
+			},
+			{
+				"pz": null, "line": null,
+				"coll": {"geometries": [null, {"__typename": "GeometryPoint", "x": 1, "y": 2}]},
+				"flat": null,
+				"loose": {"__typename": "GeometryMultiPolygon", "polygons": []}
+			}
+		]}`)
+		if got := normalize(t, res.Data["allTypedShapes"]); got != want {
+			t.Errorf("empty shapes:\n got %s\nwant %s", got, want)
+		}
+	})
+
+	t.Run("curve columns stay GeoJSON", func(t *testing.T) {
+		res := post(t, hs.URL, `{allTypedShapes(orderBy: [ID_ASC], first: 1) { nodes { arc } }}`, nil)
+		requireNoErrors(t, res)
+		if got := normalize(t, res.Data["allTypedShapes"]); got != `{"nodes":[{"arc":null}]}` {
+			t.Errorf("arc = %s", got)
+		}
+	})
+
+	t.Run("repeated selections merge", func(t *testing.T) {
+		res := post(t, hs.URL, `{
+			placeById(id: 1) {
+				location { x }
+				location { y }
+				... on Place { location { srid } }
+			}
+		}`, nil)
+		requireNoErrors(t, res)
+		if got := normalize(t, res.Data["placeById"]); got != `{"location":{"srid":4326,"x":-0.1281,"y":51.508}}` {
+			t.Errorf("merged location = %s", got)
+		}
+	})
+
+	t.Run("a page of polygons stays under the default cost limit", func(t *testing.T) {
+		res := post(t, hs.URL, `{ allPlaces(first: 100) { nodes { area { ... on GeographyPolygon {
+			exterior { points { longitude latitude } }
+			interiors { points { longitude latitude } }
+		} } } } }`, nil)
+		requireNoErrors(t, res)
+	})
+
+	t.Run("introspection lists interface implementations", func(t *testing.T) {
+		res := post(t, hs.URL, `{__type(name: "GeometryGeometryZ") { kind possibleTypes { name } }}`, nil)
+		requireNoErrors(t, res)
+		var got struct {
+			Kind          string `json:"kind"`
+			PossibleTypes []struct {
+				Name string `json:"name"`
+			} `json:"possibleTypes"`
+		}
+		mustUnmarshal(t, res.Data["__type"], &got)
+		names := make([]string, len(got.PossibleTypes))
+		for i, p := range got.PossibleTypes {
+			names[i] = p.Name
+		}
+		if got.Kind != "INTERFACE" || len(names) != 7 || !contains(names, "GeometryPointZ") || !contains(names, "GeometryGeometryCollectionZ") {
+			t.Errorf("GeometryGeometryZ = %s %v", got.Kind, names)
+		}
+	})
+
+	t.Run("off by default", func(t *testing.T) {
+		plain := testServer(t, nil)
+		res := post(t, plain.URL, `{placeById(id: 1) { location { x } }}`, nil)
+		if len(res.Errors) == 0 {
+			t.Error("location must stay a GeoJSON scalar without typed_geometry")
+		}
+	})
 }

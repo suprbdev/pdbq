@@ -249,6 +249,107 @@ directly — this is the fast "nearest N" path:
 (falling back to the primary-key order) rather than inventing a reference
 point and returning a result that looks sorted but is not.
 
+## Typed geometry
+
+With `plugins.settings.postgis.typed_geometry: true`, spatial column fields
+return objects instead of the `GeoJSON` scalar, in the shape of PostGraphile's
+`@graphile/postgis` plugin. The default stays off, and with it off the schema
+is byte-for-byte the same as without the setting.
+
+```yaml
+plugins:
+  settings:
+    postgis:
+      typed_geometry: true
+```
+
+```graphql
+{
+  allPlaces {
+    nodes {
+      location { x y srid }            # geometry(Point, 4326) -> GeometryPoint
+      area {                           # unconstrained geography -> GeographyInterface
+        __typename
+        geojson
+        ... on GeographyPolygon {
+          exterior { points { longitude latitude } }
+          interiors { points { longitude latitude } }
+        }
+      }
+    }
+  }
+}
+```
+
+**Types.** Every type has `geojson: GeoJSON` and `srid: Int!`. Geometry types
+are generated for geometry columns and an identical `Geography…` family for
+geography columns:
+
+| Type | Fields |
+|---|---|
+| `GeometryInterface` | interface implemented by every geometry type |
+| `GeometryGeometry`, `…GeometryZ`, `…GeometryM`, `…GeometryZM` | one interface per coordinate dimension |
+| `GeometryPoint` | `x: Float!`, `y: Float!` (`z: Float!` on `PointZ`/`PointZM`) |
+| `GeometryLineString` | `points: [GeometryPoint]` |
+| `GeometryPolygon` | `exterior: GeometryLineString`, `interiors: [GeometryLineString]` |
+| `GeometryMultiPoint` | `points: [GeometryPoint]` |
+| `GeometryMultiLineString` | `lines: [GeometryLineString]` |
+| `GeometryMultiPolygon` | `polygons: [GeometryPolygon]` |
+| `GeometryGeometryCollection` | `geometries: [GeometryGeometry]` |
+
+Every concrete type has `Z`, `M` and `ZM` variants (`GeometryPolygonZ`, whose
+rings are `GeometryLineStringZ`, and so on), and implements its dimension
+interface and `GeometryInterface`. On geography types the point fields are
+`longitude`, `latitude` and `height`. As in `@graphile/postgis`, points have
+no `m` field: `ST_AsGeoJSON` drops the M coordinate.
+
+**Field type from the typmod.** The column's type modifier decides the field
+type:
+
+| Column | Field type |
+|---|---|
+| `geometry(Point, 4326)` | `GeometryPoint` |
+| `geometry(MultiPolygonZ, 4326)` | `GeometryMultiPolygonZ` |
+| `geometry(Geometry, 4326)` | `GeometryGeometry` (dimensions fixed, subtype not) |
+| `geometry`, `geography` | `GeometryInterface`, `GeographyInterface` |
+| `geometry(CircularString, 4326)`, `geometry(Tin, 4326)`, other curve and surface subtypes | stays `GeoJSON` |
+
+Curve and surface subtypes stay on the scalar because GeoJSON has no
+representation for most of them (`ST_AsGeoJSON` rejects curves and
+PolyhedralSurface). Such a value in an unconstrained column fails to encode
+exactly as it does with the scalar.
+
+When the field type is an interface, select type-specific fields with inline
+fragments. `__typename` comes from the value's actual type and dimensions. A
+value whose GeoJSON type is not one of the seven simple-feature types
+resolves to `null` rather than to a type the schema does not define.
+
+**Empty geometries.** An empty point (`POINT EMPTY`) is `null`: its
+coordinates do not exist, and `x`/`y` are non-null. The same applies to
+empty points inside `points` and `geometries` lists. Other empty geometries
+are objects with empty lists (`LINESTRING EMPTY` has `points: []`), and an
+empty polygon has `exterior: null`. A `NOT NULL` point column holding
+`POINT EMPTY` therefore violates its non-null field type.
+
+**Cost.** The list fields of geometry objects (`points`, `interiors`, `lines`,
+`polygons`, `geometries`) are read from a value already in hand, so they do
+not add the ×10 list fan-out to the query cost estimate.
+
+**Single statement.** Each selected spatial field compiles into one scalar
+subquery inside the same statement. The value is encoded once with
+`ST_AsGeoJSON` (after any `transform:`/`simplify:`), and every nested field
+(`x`, `points`, `exterior`, `geometries`, …) is read from that jsonb with
+JSON operators, so only the selected fields are built. Interface fields
+dispatch on `__typename` with a `CASE` that has an arm only for the types
+whose selections differ.
+
+**Unchanged:** inputs (filters, `createX`, `updateX`) still take GeoJSON or
+WKT, derived accessors (`locationCentroid`, …) still return `GeoJSON`, and
+spatial arrays, composite-type attributes and function results stay on the
+scalar. If a table or composite type already uses one of the generated names
+(say a `geometry_points` table, whose type is `GeometryPoint`), that flavour
+keeps the scalar and pdbq logs a warning.
+
 ## Indexing
 
 Spatial filters and ordering respect `filters.indexed_only` exactly like
@@ -277,6 +378,7 @@ plugins:
       derived: true      # <field>Area, <field>Centroid, ...
       ordering: true     # <COLUMN>_DISTANCE_ASC/_DESC + near:
       projection: true   # transform:/simplify: field arguments
+      typed_geometry: false  # typed geometry objects instead of GeoJSON
 ```
 
 Per-column control uses the usual [smart comments](smart-comments.md):
@@ -294,7 +396,7 @@ COMMENT ON COLUMN places.secret_location IS '@omit filter,order';
 - **Malformed input fails fast.** A value that is neither valid GeoJSON nor
   plausible WKT is rejected at compile time with a GraphQL error, rather than
   reaching Postgres as a type error mid-statement.
-- **Not covered:** raster and topology types. `geometry(TypeName, SRID)` type
-  modifiers only decide which derived accessors are generated; every spatial
-  column is still the same `GeoJSON` scalar regardless of its declared
-  geometry subtype.
+- **Not covered:** raster and topology types. Unless
+  [typed geometry](#typed-geometry) is on, `geometry(TypeName, SRID)` type
+  modifiers only decide which derived accessors are generated, and every
+  spatial column is the same `GeoJSON` scalar whatever its declared subtype.
