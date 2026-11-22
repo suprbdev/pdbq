@@ -1059,6 +1059,7 @@ func TestMutationsAndRollback(t *testing.T) {
 	// Unique emails keep reruns against a persistent dev DB idempotent.
 	run := time.Now().UnixNano()
 	email := func(prefix string) string { return fmt.Sprintf("%s-%d@example.com", prefix, run) }
+	sweepUsers(t, fmt.Sprintf("%%-%d@example.com", run))
 
 	res := post(t, hs.URL, fmt.Sprintf(`mutation {
 		createUser(input: {email: %q, mood: OK}) { user { id email } }
@@ -1203,6 +1204,36 @@ func TestMutationsAndRollback(t *testing.T) {
 
 	// Cleanup.
 	post(t, hs.URL, fmt.Sprintf(`mutation { deleteUserById(id: %d) { user { id } } }`, id), nil)
+}
+
+// sweepUsers deletes, once the test finishes (even after a Fatal), every user
+// whose email matches the LIKE pattern together with the posts and places
+// referencing them, so the read tests keep seeing the pristine fixture on a
+// rerun against the same database.
+func sweepUsers(t *testing.T, pattern string) {
+	t.Helper()
+	url := os.Getenv("PDBQ_TEST_DATABASE_URL")
+	if url == "" {
+		return
+	}
+	t.Cleanup(func() {
+		ctx := context.Background()
+		conn, err := pgx.Connect(ctx, url)
+		if err != nil {
+			t.Errorf("sweep: %v", err)
+			return
+		}
+		defer func() { _ = conn.Close(ctx) }()
+		for _, q := range []string{
+			`DELETE FROM places WHERE owner_id IN (SELECT id FROM users WHERE email LIKE $1)`,
+			`DELETE FROM posts WHERE author_id IN (SELECT id FROM users WHERE email LIKE $1)`,
+			`DELETE FROM users WHERE email LIKE $1`,
+		} {
+			if _, err := conn.Exec(ctx, q, pattern); err != nil {
+				t.Errorf("sweep: %v", err)
+			}
+		}
+	})
 }
 
 func TestPerRequestTransaction(t *testing.T) {
@@ -1530,7 +1561,10 @@ func TestSmartComments(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = conn.Close(ctx) }()
+	// Registered before the comment reset below so it runs after it
+	// (t.Cleanup is LIFO); a deferred Close would fire first and the reset
+	// would silently fail on a closed connection.
+	t.Cleanup(func() { _ = conn.Close(ctx) })
 
 	comments := map[string]string{
 		`COLUMN users.full_name`:                   `E'@name display_name\nThe name shown in the UI.'`,
