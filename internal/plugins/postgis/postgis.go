@@ -7,17 +7,25 @@
 //
 //   - spatial filters: every geometry/geography column gets a
 //     GeometryFilterOps operand set covering bounding-box operators
-//     (bboxIntersects/&&, bboxContains/~, bboxContainedBy/@), the DE-9IM
-//     predicates (intersects, contains, within, covers, crosses, touches,
-//     overlaps, equals, disjoint, containsProperly, coveredBy), and radius
-//     search (dwithin/beyond). Bounding-box and dwithin operators are
-//     GiST-index-usable, which is what keeps viewport and "near me" queries
-//     fast on large tables.
+//     (bboxIntersects/&&, bboxContains/~, bboxContainedBy/@, the directional
+//     bboxLeftOf/<< ... bboxOverlapsOrAbove/|&>, bboxEquals/~=,
+//     bboxIntersectsND/&&&), the DE-9IM predicates (intersects, contains,
+//     within, covers, crosses, touches, overlaps, equals, disjoint,
+//     containsProperly, coveredBy, intersects3D), exact and ordering equality
+//     (exactlyEquals/=, orderingEquals), and radius search (dwithin/beyond).
+//     Bounding-box and dwithin operators are GiST-index-usable, which is what
+//     keeps viewport and "near me" queries fast on large tables.
 //
 //   - derived accessors: each spatial column gains sibling fields for the
 //     scalar properties PostGIS can compute in the same statement —
 //     <field>Area, <field>Length, <field>Perimeter, <field>Centroid,
-//     <field>Envelope, <field>Srid, <field>GeometryType, <field>IsValid.
+//     <field>Envelope, <field>Srid, <field>GeometryType, <field>IsValid,
+//     <field>X/Y/Z/M, <field>NumPoints, <field>NumGeometries,
+//     <field>StartPoint/EndPoint, <field>PointOnSurface, <field>Wkt/Ewkt,
+//     <field>IsEmpty, <field>IsSimple and <field>Xmin/Ymin/Xmax/Ymax.
+//     Accessors that only answer for some geometry types are omitted on a
+//     column whose typmod rules them out (no locationX on a LineString
+//     column, no locationZ on a 2D Point column).
 //
 //   - projection arguments: spatial fields accept transform: (reproject to an
 //     SRID) and simplify: (ST_SimplifyPreserveTopology tolerance), so clients
@@ -258,7 +266,8 @@ func (p *Plugin) ensureOpsInput(b *schema.Builder) {
 }
 
 // addDerivedFields adds the computed spatial accessors as sibling fields of
-// each spatial column (location -> locationArea, locationCentroid, ...).
+// each spatial column (location -> locationArea, locationCentroid, ...),
+// skipping accessors the column's typmod makes always-null.
 func (p *Plugin) addDerivedFields(b *schema.Builder, t *introspect.Table, cols []*introspect.Column) {
 	typeName := b.TypeForTable[t.Schema+"."+t.Name]
 	obj, ok := b.Objects[typeName]
@@ -268,6 +277,9 @@ func (p *Plugin) addDerivedFields(b *schema.Builder, t *introspect.Table, cols [
 	for _, c := range cols {
 		base := b.Inflect(inflect.KindFieldName, inflect.Input{Schema: t.Schema, Table: t.Name, Column: c.Name})
 		for _, d := range postgis.Deriveds {
+			if !derivedApplies(d, c) {
+				continue
+			}
 			name := base + d.Suffix
 			if obj.Field(name) != nil {
 				// A real column already owns the name; leave it alone.
@@ -286,6 +298,16 @@ func (p *Plugin) addDerivedFields(b *schema.Builder, t *introspect.Table, cols [
 			})
 		}
 	}
+}
+
+// derivedApplies reports whether accessor d can be non-null on column c. A
+// column without typmod information (an old schema cache, or a hand-built
+// catalog) is treated as unconstrained.
+func derivedApplies(d postgis.Derived, c *introspect.Column) bool {
+	if c.Spatial == nil {
+		return true
+	}
+	return d.AppliesTo(string(c.Spatial.Subtype), c.Spatial.HasZ, c.Spatial.HasM)
 }
 
 // addProjectionArgs adds transform:/simplify: to each spatial column field.

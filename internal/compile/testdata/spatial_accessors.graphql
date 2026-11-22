@@ -1,0 +1,31 @@
+# Derived accessors added for PostGIS parity. Type-specific accessors (X/Y,
+# StartPoint/EndPoint) are CASE-guarded so a non-matching geometry yields
+# null; location is typmod-constrained to Point, so only X/Y exist there,
+# while the unconstrained area column carries every accessor.
+{
+  allPlaces {
+    nodes {
+      locationX
+      locationY
+      locationNumPoints
+      locationNumGeometries
+      locationPointOnSurface
+      locationWkt
+      locationEwkt
+      locationIsEmpty
+      locationIsSimple
+      locationXmin
+      locationYmin
+      locationXmax
+      locationYmax
+      areaX
+      areaZ
+      areaM
+      areaStartPoint
+      areaEndPoint
+      areaPointOnSurface
+      areaWkt
+      areaXmin
+    }
+  }
+}

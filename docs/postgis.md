@@ -82,6 +82,29 @@ rows, so pair them with a bounding-box operator when the table is large.
 | `dwithin` | `DWithinInput` | `ST_DWithin` | ✔ |
 | `beyond` | `DWithinInput` | `NOT ST_DWithin` | |
 | `isNull` | `Boolean` | `IS NULL` | |
+| `bboxLeftOf` | `GeoJSON` | `<<` | ✔ |
+| `bboxRightOf` | `GeoJSON` | `>>` | ✔ |
+| `bboxBelow` | `GeoJSON` | `<<\|` | ✔ |
+| `bboxAbove` | `GeoJSON` | `\|>>` | ✔ |
+| `bboxOverlapsOrLeftOf` | `GeoJSON` | `&<` | ✔ |
+| `bboxOverlapsOrRightOf` | `GeoJSON` | `&>` | ✔ |
+| `bboxOverlapsOrBelow` | `GeoJSON` | `&<\|` | ✔ |
+| `bboxOverlapsOrAbove` | `GeoJSON` | `\|&>` | ✔ |
+| `bboxEquals` | `GeoJSON` | `~=` | ✔ |
+| `exactlyEquals` | `GeoJSON` | `=` | B-tree |
+| `orderingEquals` | `GeoJSON` | `ST_OrderingEquals` | ✔ |
+| `intersects3D` | `GeoJSON` | `ST_3DIntersects` | ✔ |
+| `bboxIntersectsND` | `GeoJSON` | `&&&` | n-D GiST |
+
+The directional and equality bounding-box operators (`bboxLeftOf` through
+`bboxIntersectsND`) compare against the **bounding box of a geometry**, not a
+`BBoxInput`, as `postgraphile-plugin-connection-filter-postgis` does; pass an
+envelope polygon to compare against a box. `exactlyEquals` (`=`) is true only
+for the same coordinates in the same order with the same SRID, and is served
+by a B-tree rather than a GiST index. `bboxIntersectsND` (`&&&`) includes Z
+and M in the comparison and needs an n-D GiST index
+(`USING gist (col gist_geometry_ops_nd)`); `intersects3D` prefilters on the 2D
+box with the default index.
 
 Spatial columns get **only** these operators: `equalTo`, `lessThan`, `in` and
 friends are not generated, because PostGIS types have no meaningful scalar
@@ -104,10 +127,12 @@ This is the cheap first pass for "what is on screen":
 ### Geography columns
 
 PostGIS provides geography overloads only for `bboxIntersects`, `intersects`,
-`covers`, `coveredBy`, `dwithin` and `beyond`; these run natively (spheroidal,
-metres). Every other predicate (`within`, `contains`, `crosses`, `touches`,
-`disjoint`, `bboxContains`, ...) casts the column and the operand to
-`geometry`, so it uses planar semantics.
+`covers`, `coveredBy`, `dwithin`, `beyond` and `exactlyEquals`; these run
+natively (spheroidal, metres). Every other predicate (`within`, `contains`,
+`crosses`, `touches`, `disjoint`, `bboxContains`, `bboxLeftOf`,
+`intersects3D`, ...) casts the column and the operand to `geometry`, so it
+uses planar semantics; a GiST index on the geography column cannot serve
+those (an expression index on `(col::geometry)` can).
 
 ### Radius search
 
@@ -145,6 +170,17 @@ extra round trip:
 | `<field>Srid` | `Int` | `ST_SRID` |
 | `<field>GeometryType` | `String` | `ST_GeometryType` (e.g. `ST_Point`) |
 | `<field>IsValid` | `Boolean` | `ST_IsValid` |
+| `<field>X` / `<field>Y` | `Float` | `ST_X` / `ST_Y` (points only) |
+| `<field>Z` / `<field>M` | `Float` | `ST_Z` / `ST_M` (points only) |
+| `<field>NumPoints` | `Int` | `ST_NPoints` |
+| `<field>NumGeometries` | `Int` | `ST_NumGeometries` |
+| `<field>StartPoint` / `<field>EndPoint` | `GeoJSON` | `ST_StartPoint` / `ST_EndPoint` (curves only) |
+| `<field>PointOnSurface` | `GeoJSON` | `ST_PointOnSurface` |
+| `<field>Wkt` | `String` | `ST_AsText` |
+| `<field>Ewkt` | `String` | `ST_AsEWKT` (with `SRID=n;`) |
+| `<field>IsEmpty` | `Boolean` | `ST_IsEmpty` |
+| `<field>IsSimple` | `Boolean` | `ST_IsSimple` |
+| `<field>Xmin` / `<field>Ymin` / `<field>Xmax` / `<field>Ymax` | `Float` | `ST_XMin` / `ST_YMin` / `ST_XMax` / `ST_YMax` |
 
 ```graphql
 {
@@ -156,6 +192,21 @@ extra round trip:
 
 A real column that already owns one of these names keeps it; the accessor is
 skipped rather than shadowing your data.
+
+**Type-specific accessors follow the column's type modifier.** `X`, `Y`, `Z`
+and `M` only answer for points, `StartPoint` and `EndPoint` only for
+LineString, CircularString and CompoundCurve. On an unconstrained column
+(`geometry`, `geography`, `geometry(Geometry, 4326)`) they are all generated
+and yield `null` for any other geometry type. When the typmod rules them out
+they are not generated at all:
+
+| Column | Gets | Omitted |
+|---|---|---|
+| `geometry(Point, 4326)` | `X`, `Y` | `Z`, `M`, `StartPoint`, `EndPoint` |
+| `geometry(PointZ, 4326)` | `X`, `Y`, `Z` | `M`, `StartPoint`, `EndPoint` |
+| `geometry(LineString, 4326)` | `StartPoint`, `EndPoint` | `X`, `Y`, `Z`, `M` |
+| `geometry(Polygon, 4326)` | — | all six |
+| `geography` | all six | — |
 
 ## Reprojection and simplification
 
@@ -243,6 +294,7 @@ COMMENT ON COLUMN places.secret_location IS '@omit filter,order';
 - **Malformed input fails fast.** A value that is neither valid GeoJSON nor
   plausible WKT is rejected at compile time with a GraphQL error, rather than
   reaching Postgres as a type error mid-statement.
-- **Not covered:** raster and topology types, and `geometry(TypeName, SRID)`
-  type modifiers are not reflected in the GraphQL type (every spatial column is
-  the same `GeoJSON` scalar regardless of its declared geometry subtype).
+- **Not covered:** raster and topology types. `geometry(TypeName, SRID)` type
+  modifiers only decide which derived accessors are generated; every spatial
+  column is still the same `GeoJSON` scalar regardless of its declared
+  geometry subtype.

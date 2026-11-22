@@ -1,0 +1,37 @@
+# The directional and equality bounding-box operators, exact/ordering
+# equality and the 3D/n-D predicates all take a geometry operand. On the
+# geography column only exactlyEquals keeps the native type; the rest cast the
+# column and operand to geometry.
+{
+  geometry: allPlaces(filter: {
+    location: {
+      bboxLeftOf: "SRID=4326;POINT(1 51)"
+      bboxRightOf: "SRID=4326;POINT(-1 51)"
+      bboxBelow: "SRID=4326;POINT(0 52)"
+      bboxAbove: "SRID=4326;POINT(0 50)"
+      bboxOverlapsOrLeftOf: "SRID=4326;POINT(1 51)"
+      bboxOverlapsOrRightOf: "SRID=4326;POINT(-1 51)"
+      bboxOverlapsOrBelow: "SRID=4326;POINT(0 52)"
+      bboxOverlapsOrAbove: "SRID=4326;POINT(0 50)"
+      bboxEquals: {type: "Point", coordinates: [-0.1281, 51.508]}
+      exactlyEquals: {type: "Point", coordinates: [-0.1281, 51.508]}
+      orderingEquals: {type: "Point", coordinates: [-0.1281, 51.508]}
+      intersects3D: "SRID=4326;POLYGON((-1 51,1 51,1 52,-1 51))"
+      bboxIntersectsND: "SRID=4326;POLYGON((-1 51,1 51,1 52,-1 51))"
+    }
+  }) {
+    nodes { id }
+  }
+  geography: allPlaces(filter: {
+    area: {
+      bboxLeftOf: "SRID=4326;POINT(1 51)"
+      bboxEquals: "SRID=4326;POINT(0 51)"
+      exactlyEquals: "SRID=4326;POINT(0 51)"
+      orderingEquals: "SRID=4326;POINT(0 51)"
+      intersects3D: "SRID=4326;POINT(0 51)"
+      bboxIntersectsND: "SRID=4326;POINT(0 51)"
+    }
+  }) {
+    nodes { id }
+  }
+}

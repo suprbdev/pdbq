@@ -776,17 +776,105 @@ func TestAdvancedFilters(t *testing.T) {
 			`dwithin: {geometry: {type: "Point", coordinates: [-0.128, 51.508]}, distance: 500}`,
 			`beyond: {geometry: {type: "Point", coordinates: [-0.128, 51.508]}, distance: 500}`,
 			"isNull: false",
+			"bboxLeftOf: " + pt,
+			"bboxRightOf: " + pt,
+			"bboxBelow: " + pt,
+			"bboxAbove: " + pt,
+			"bboxOverlapsOrLeftOf: " + pt,
+			"bboxOverlapsOrRightOf: " + pt,
+			"bboxOverlapsOrBelow: " + pt,
+			"bboxOverlapsOrAbove: " + pt,
+			"bboxEquals: " + poly,
+			"exactlyEquals: " + poly,
+			"orderingEquals: " + poly,
+			"intersects3D: " + poly,
+			"bboxIntersectsND: " + poly,
 		}
-		for _, op := range ops {
-			res := post(t, hs.URL, `{allPlaces(filter: {area: {`+op+`}}) { nodes { id } }}`, nil)
-			if len(res.Errors) > 0 {
-				t.Errorf("%s: %v", op, res.Errors)
+		for _, col := range []string{"area", "location"} {
+			for _, op := range ops {
+				res := post(t, hs.URL, `{allPlaces(filter: {`+col+`: {`+op+`}}) { nodes { id } }}`, nil)
+				if len(res.Errors) > 0 {
+					t.Errorf("%s %s: %v", col, op, res.Errors)
+				}
 			}
 		}
 		res := post(t, hs.URL, `{allPlaces(filter: {area: {within: `+poly+`}}) { nodes { name } }}`, nil)
 		requireNoErrors(t, res)
 		if names := nodeNames(t, res.Data["allPlaces"]); len(names) != 1 || names[0] != "Trafalgar Square" {
 			t.Errorf("within = %v, want [Trafalgar Square]", names)
+		}
+	})
+
+	t.Run("postgis directional and equality operators", func(t *testing.T) {
+		const origin = `"SRID=4326;POINT(0 0)"`
+		const trafalgar = `{type: "Point", coordinates: [-0.1281, 51.508]}`
+		const london = `"SRID=4326;POLYGON((-0.5 51.3, 0.3 51.3, 0.3 51.7, -0.5 51.7, -0.5 51.3))"`
+		const trafalgarArea = `"SRID=4326;POLYGON((-0.130 51.507, -0.126 51.507, -0.126 51.509, -0.130 51.509, -0.130 51.507))"`
+		londoners := []string{"Trafalgar Square", "British Museum", "Greenwich"}
+		cases := []struct {
+			filter string
+			want   []string
+		}{
+			{"location: {bboxLeftOf: " + origin + "}", londoners},
+			{"location: {bboxRightOf: " + origin + "}", []string{"Sydney Opera House"}},
+			{"location: {bboxBelow: " + origin + "}", []string{"Sydney Opera House"}},
+			{"location: {bboxAbove: " + origin + "}", londoners},
+			{"location: {bboxOverlapsOrLeftOf: " + origin + "}", londoners},
+			{"location: {bboxOverlapsOrRightOf: " + origin + "}", []string{"Sydney Opera House"}},
+			{"location: {bboxOverlapsOrBelow: " + origin + "}", []string{"Sydney Opera House"}},
+			{"location: {bboxOverlapsOrAbove: " + origin + "}", londoners},
+			{"location: {bboxEquals: " + trafalgar + "}", []string{"Trafalgar Square"}},
+			{"location: {exactlyEquals: " + trafalgar + "}", []string{"Trafalgar Square"}},
+			{"location: {orderingEquals: " + trafalgar + "}", []string{"Trafalgar Square"}},
+			{"location: {intersects3D: " + london + "}", londoners},
+			{"location: {bboxIntersectsND: " + london + "}", londoners},
+			{"area: {exactlyEquals: " + trafalgarArea + "}", []string{"Trafalgar Square"}},
+			{"area: {bboxEquals: " + trafalgarArea + "}", []string{"Trafalgar Square"}},
+			{"area: {orderingEquals: " + trafalgarArea + "}", []string{"Trafalgar Square"}},
+			{"area: {bboxLeftOf: " + origin + "}", []string{"Trafalgar Square"}},
+			{"area: {bboxIntersectsND: " + london + "}", []string{"Trafalgar Square"}},
+		}
+		for _, tc := range cases {
+			res := post(t, hs.URL, `{allPlaces(filter: {`+tc.filter+`}, orderBy: [ID_ASC]) { nodes { name } }}`, nil)
+			if len(res.Errors) > 0 {
+				t.Errorf("%s: %v", tc.filter, res.Errors)
+				continue
+			}
+			if got := nodeNames(t, res.Data["allPlaces"]); strings.Join(got, ",") != strings.Join(tc.want, ",") {
+				t.Errorf("%s: got %v, want %v", tc.filter, got, tc.want)
+			}
+		}
+	})
+
+	t.Run("postgis point and bounding-box accessors", func(t *testing.T) {
+		res := post(t, hs.URL, `{
+			placeById(id: 1) {
+				locationX locationY locationNumPoints locationNumGeometries locationPointOnSurface
+				locationWkt locationEwkt locationIsEmpty locationIsSimple
+				locationXmin locationYmin locationXmax locationYmax
+				areaX areaY areaZ areaM areaStartPoint areaEndPoint areaNumPoints areaXmin areaYmax areaIsEmpty
+			}
+		}`, nil)
+		requireNoErrors(t, res)
+		want := normalizeStr(t, `{
+			"locationX": -0.1281, "locationY": 51.508, "locationNumPoints": 1, "locationNumGeometries": 1,
+			"locationPointOnSurface": {"type": "Point", "coordinates": [-0.1281, 51.508]},
+			"locationWkt": "POINT(-0.1281 51.508)", "locationEwkt": "SRID=4326;POINT(-0.1281 51.508)",
+			"locationIsEmpty": false, "locationIsSimple": true,
+			"locationXmin": -0.1281, "locationYmin": 51.508, "locationXmax": -0.1281, "locationYmax": 51.508,
+			"areaX": null, "areaY": null, "areaZ": null, "areaM": null, "areaStartPoint": null, "areaEndPoint": null,
+			"areaNumPoints": 5, "areaXmin": -0.13, "areaYmax": 51.509, "areaIsEmpty": false
+		}`)
+		if got := normalize(t, res.Data["placeById"]); got != want {
+			t.Errorf("accessors:\n got %s\nwant %s", got, want)
+		}
+		// location is geometry(Point,4326): accessors that are always null on
+		// a 2D point are not generated.
+		for _, field := range []string{"locationZ", "locationM", "locationStartPoint", "locationEndPoint"} {
+			res := post(t, hs.URL, `{placeById(id: 1) { `+field+` }}`, nil)
+			if len(res.Errors) == 0 {
+				t.Errorf("%s should not exist on a Point column", field)
+			}
 		}
 	})
 
@@ -971,6 +1059,7 @@ func TestMutationsAndRollback(t *testing.T) {
 	// Unique emails keep reruns against a persistent dev DB idempotent.
 	run := time.Now().UnixNano()
 	email := func(prefix string) string { return fmt.Sprintf("%s-%d@example.com", prefix, run) }
+	sweepUsers(t, fmt.Sprintf("%%-%d@example.com", run))
 
 	res := post(t, hs.URL, fmt.Sprintf(`mutation {
 		createUser(input: {email: %q, mood: OK}) { user { id email } }
@@ -1115,6 +1204,36 @@ func TestMutationsAndRollback(t *testing.T) {
 
 	// Cleanup.
 	post(t, hs.URL, fmt.Sprintf(`mutation { deleteUserById(id: %d) { user { id } } }`, id), nil)
+}
+
+// sweepUsers deletes, once the test finishes (even after a Fatal), every user
+// whose email matches the LIKE pattern together with the posts and places
+// referencing them, so the read tests keep seeing the pristine fixture on a
+// rerun against the same database.
+func sweepUsers(t *testing.T, pattern string) {
+	t.Helper()
+	url := os.Getenv("PDBQ_TEST_DATABASE_URL")
+	if url == "" {
+		return
+	}
+	t.Cleanup(func() {
+		ctx := context.Background()
+		conn, err := pgx.Connect(ctx, url)
+		if err != nil {
+			t.Errorf("sweep: %v", err)
+			return
+		}
+		defer func() { _ = conn.Close(ctx) }()
+		for _, q := range []string{
+			`DELETE FROM places WHERE owner_id IN (SELECT id FROM users WHERE email LIKE $1)`,
+			`DELETE FROM posts WHERE author_id IN (SELECT id FROM users WHERE email LIKE $1)`,
+			`DELETE FROM users WHERE email LIKE $1`,
+		} {
+			if _, err := conn.Exec(ctx, q, pattern); err != nil {
+				t.Errorf("sweep: %v", err)
+			}
+		}
+	})
 }
 
 func TestPerRequestTransaction(t *testing.T) {
@@ -1442,7 +1561,10 @@ func TestSmartComments(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = conn.Close(ctx) }()
+	// Registered before the comment reset below so it runs after it
+	// (t.Cleanup is LIFO); a deferred Close would fire first and the reset
+	// would silently fail on a closed connection.
+	t.Cleanup(func() { _ = conn.Close(ctx) })
 
 	comments := map[string]string{
 		`COLUMN users.full_name`:                   `E'@name display_name\nThe name shown in the UI.'`,
