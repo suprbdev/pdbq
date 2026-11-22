@@ -1,0 +1,20 @@
+# Fields sharing a response key merge into one key holding both selections,
+# whether they repeat directly or arrive through fragments: forward and
+# backward relations, connection internals and composite columns alike.
+{
+  postById(id: 1) {
+    author { email }
+    ... on Post { author { id } }
+    ...authorName
+  }
+  userById(id: 1) {
+    address { city }
+    address { street }
+    postsByAuthorId { nodes { id } }
+    postsByAuthorId { totalCount nodes { title } }
+  }
+}
+
+fragment authorName on Post {
+  author { fullName }
+}

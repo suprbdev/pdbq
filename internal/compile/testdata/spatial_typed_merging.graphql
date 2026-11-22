@@ -1,0 +1,15 @@
+# Typed geometry fields merge like any object field: both selections of
+# location land in one object, and the polygon fragment's exterior merges
+# with the interface-level one.
+{
+  allPlaces {
+    nodes {
+      location { x }
+      location { y }
+      area {
+        ... on GeographyPolygon { exterior { points { longitude } } }
+        ... on GeographyPolygon { exterior { points { latitude } } }
+      }
+    }
+  }
+}

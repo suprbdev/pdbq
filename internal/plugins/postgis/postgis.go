@@ -348,7 +348,10 @@ func (p *Plugin) addTypedGeometry(b *schema.Builder) {
 			if f == nil || f.Meta == nil || f.Meta.Kind != schema.KindColumn || f.Meta.Column != c {
 				continue
 			}
-			gt := geotype.ForColumn(c)
+			gt, ok := geotype.ForColumn(c)
+			if !ok {
+				continue
+			}
 			byFlavour[gt.Flavour] = append(byFlavour[gt.Flavour], target{f, gt})
 		}
 	}
@@ -402,7 +405,7 @@ func geometryObject(gt geotype.Type) *schema.Object {
 			Name:        f.Name,
 			Type:        f.Type,
 			Description: f.Description,
-			Meta:        &schema.FieldMeta{Kind: schema.KindSynthetic},
+			Meta:        &schema.FieldMeta{Kind: schema.KindSynthetic, CostMultiplier: 1},
 		})
 	}
 	return obj

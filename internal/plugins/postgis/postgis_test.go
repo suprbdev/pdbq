@@ -364,6 +364,8 @@ func TestTypedGeometryFieldTypes(t *testing.T) {
 				Spatial: &introspect.SpatialType{Subtype: introspect.SpatialGeometry, SRID: 4326, HasM: true}},
 			&introspect.Column{Name: "legacy", Position: 8, PGType: "geometry", TypeSchema: "public"},
 			&introspect.Column{Name: "history", Position: 9, PGType: "geometry", TypeSchema: "public", IsArray: true},
+			&introspect.Column{Name: "arc", Position: 10, PGType: "geometry", TypeSchema: "public",
+				Spatial: &introspect.SpatialType{Subtype: "CircularString", SRID: 4326}},
 		)
 	})
 	obj := b.Objects["Place"]
@@ -374,6 +376,7 @@ func TestTypedGeometryFieldTypes(t *testing.T) {
 		"shape":    "GeometryGeometryM",
 		"legacy":   "GeometryInterface",
 		"history":  "[GeoJSON!]",
+		"arc":      "GeoJSON",
 	} {
 		if got := obj.Field(field).Type; got != want {
 			t.Errorf("%s type = %q, want %q", field, got, want)

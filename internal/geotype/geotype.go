@@ -296,18 +296,24 @@ var kindBySubtype = map[introspect.SpatialSubtype]Kind{
 // ForColumn picks the field type for a spatial column from its typmod: the
 // concrete type when the modifier fixes a simple-feature subtype
 // (geometry(PointZ,4326) -> GeometryPointZ), the dimension interface when it
-// fixes only the dimensions (geometry(Geometry,4326) -> GeometryGeometry, or
-// a curve subtype), and the top-level interface for an unconstrained column
-// or one without typmod information.
-func ForColumn(c *introspect.Column) Type {
+// fixes only the dimensions (geometry(Geometry,4326) -> GeometryGeometry),
+// and the top-level interface for an unconstrained column or one without
+// typmod information. ok is false for a column constrained to a curve or
+// surface subtype (CircularString, Tin, PolyhedralSurface, ...): GeoJSON
+// cannot represent most of them, so such columns stay on the GeoJSON scalar.
+func ForColumn(c *introspect.Column) (t Type, ok bool) {
 	f := postgis.FlavourOf(c.PGType)
 	st := c.Spatial
 	if st == nil || !st.Constrained() {
-		return Type{Flavour: f, AnyDims: true}
+		return Type{Flavour: f, AnyDims: true}, true
 	}
 	d := DimsOf(st.HasZ, st.HasM)
-	if k, ok := kindBySubtype[st.Subtype]; ok {
-		return Type{Flavour: f, Kind: k, Dims: d}
+	if st.Subtype == introspect.SpatialGeometry || st.Subtype == "" {
+		return Type{Flavour: f, Dims: d}, true
 	}
-	return Type{Flavour: f, Dims: d}
+	k, known := kindBySubtype[st.Subtype]
+	if !known {
+		return Type{}, false
+	}
+	return Type{Flavour: f, Kind: k, Dims: d}, true
 }

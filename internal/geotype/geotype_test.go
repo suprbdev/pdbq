@@ -40,11 +40,16 @@ func TestForColumn(t *testing.T) {
 		{col("geography", &introspect.SpatialType{Subtype: introspect.SpatialPoint, SRID: 4326, HasM: true}), "GeographyPointM"},
 		{col("geometry", &introspect.SpatialType{Subtype: introspect.SpatialGeometry, SRID: 4326}), "GeometryGeometry"},
 		{col("geometry", &introspect.SpatialType{Subtype: introspect.SpatialGeometry, SRID: 4326, HasZ: true, HasM: true}), "GeometryGeometryZM"},
-		{col("geometry", &introspect.SpatialType{Subtype: "CircularString", SRID: 4326, HasZ: true}), "GeometryGeometryZ"},
 	}
 	for _, tc := range tests {
-		if got := ForColumn(tc.col).Name(); got != tc.want {
-			t.Errorf("%s %+v: got %s, want %s", tc.col.PGType, tc.col.Spatial, got, tc.want)
+		got, ok := ForColumn(tc.col)
+		if !ok || got.Name() != tc.want {
+			t.Errorf("%s %+v: got %s (%v), want %s", tc.col.PGType, tc.col.Spatial, got.Name(), ok, tc.want)
+		}
+	}
+	for _, sub := range []introspect.SpatialSubtype{"CircularString", "CompoundCurve", "CurvePolygon", "MultiCurve", "MultiSurface", "PolyhedralSurface", "Triangle", "Tin"} {
+		if _, ok := ForColumn(col("geometry", &introspect.SpatialType{Subtype: sub, SRID: 4326})); ok {
+			t.Errorf("%s column should stay on the GeoJSON scalar", sub)
 		}
 	}
 }

@@ -310,11 +310,30 @@ type:
 |---|---|
 | `geometry(Point, 4326)` | `GeometryPoint` |
 | `geometry(MultiPolygonZ, 4326)` | `GeometryMultiPolygonZ` |
-| `geometry(Geometry, 4326)`, `geometry(CircularString, 4326)` | `GeometryGeometry` (dimensions fixed, subtype not) |
+| `geometry(Geometry, 4326)` | `GeometryGeometry` (dimensions fixed, subtype not) |
 | `geometry`, `geography` | `GeometryInterface`, `GeographyInterface` |
+| `geometry(CircularString, 4326)`, `geometry(Tin, 4326)`, other curve and surface subtypes | stays `GeoJSON` |
+
+Curve and surface subtypes stay on the scalar because GeoJSON has no
+representation for most of them (`ST_AsGeoJSON` rejects curves and
+PolyhedralSurface). Such a value in an unconstrained column fails to encode
+exactly as it does with the scalar.
 
 When the field type is an interface, select type-specific fields with inline
-fragments. `__typename` comes from the value's actual type and dimensions.
+fragments. `__typename` comes from the value's actual type and dimensions. A
+value whose GeoJSON type is not one of the seven simple-feature types
+resolves to `null` rather than to a type the schema does not define.
+
+**Empty geometries.** An empty point (`POINT EMPTY`) is `null`: its
+coordinates do not exist, and `x`/`y` are non-null. The same applies to
+empty points inside `points` and `geometries` lists. Other empty geometries
+are objects with empty lists (`LINESTRING EMPTY` has `points: []`), and an
+empty polygon has `exterior: null`. A `NOT NULL` point column holding
+`POINT EMPTY` therefore violates its non-null field type.
+
+**Cost.** The list fields of geometry objects (`points`, `interiors`, `lines`,
+`polygons`, `geometries`) are read from a value already in hand, so they do
+not add the ×10 list fan-out to the query cost estimate.
 
 **Single statement.** Each selected spatial field compiles into one scalar
 subquery inside the same statement. The value is encoded once with

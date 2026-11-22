@@ -92,7 +92,9 @@ func (s *stmt) typedGeometrySQL(expr string, t geotype.Type, sel ast.SelectionSe
 
 // geoObject renders node as static type t. An interface dispatches over its
 // possible concrete types; types whose selections render identically share a
-// CASE arm, and the largest group becomes the ELSE.
+// CASE arm, and the largest group becomes the ELSE. The dispatch is guarded
+// by the seven GeoJSON geometry types, so a value of any other type renders
+// as null instead of carrying a __typename the schema does not define.
 func (s *stmt) geoObject(ctx geoCtx, n geoNode, t geotype.Type, sel ast.SelectionSet, depth int) (string, error) {
 	if depth > s.maxDepth {
 		return "", errUser("selection depth exceeds limit (%d)", s.maxDepth)
@@ -100,10 +102,17 @@ func (s *stmt) geoObject(ctx geoCtx, n geoNode, t geotype.Type, sel ast.Selectio
 	if t.Concrete() {
 		return s.geoConcrete(ctx, n, t, quoteLiteral(t.Name()), sel, depth)
 	}
-	typename := quoteLiteral(t.Prefix()) + " || (" + n.geojson + "->>'type')"
+	kind := "(" + n.geojson + "->>'type')"
+	typename := quoteLiteral(t.Prefix()) + " || " + kind
 	if ctx.dims != "''" {
 		typename += " || " + ctx.dims
 	}
+	known := make([]string, len(geotype.Kinds))
+	for i, k := range geotype.Kinds {
+		known[i] = quoteLiteral(k.GeoJSON())
+	}
+	guard := "CASE WHEN " + kind + " IN (" + strings.Join(known, ", ") + ") THEN "
+
 	var order []string
 	groups := map[string][]string{}
 	for _, p := range t.Possible() {
@@ -117,7 +126,7 @@ func (s *stmt) geoObject(ctx geoCtx, n geoNode, t geotype.Type, sel ast.Selectio
 		groups[obj] = append(groups[obj], p.Name())
 	}
 	if len(order) == 1 {
-		return order[0], nil
+		return guard + order[0] + " END", nil
 	}
 	fallback := order[0]
 	for _, obj := range order[1:] {
@@ -126,7 +135,7 @@ func (s *stmt) geoObject(ctx geoCtx, n geoNode, t geotype.Type, sel ast.Selectio
 		}
 	}
 	var b strings.Builder
-	b.WriteString("CASE")
+	b.WriteString(guard + "CASE")
 	for _, obj := range order {
 		if obj == fallback {
 			continue
@@ -139,20 +148,17 @@ func (s *stmt) geoObject(ctx geoCtx, n geoNode, t geotype.Type, sel ast.Selectio
 		}
 		fmt.Fprintf(&b, " WHEN %s IN (%s) THEN %s", typename, strings.Join(quoted, ", "), obj)
 	}
-	fmt.Fprintf(&b, " ELSE %s END", fallback)
+	fmt.Fprintf(&b, " ELSE %s END END", fallback)
 	return b.String(), nil
 }
 
 // geoConcrete renders node as concrete type t, with typename the SQL text of
-// its __typename.
+// its __typename. An empty point (ST_AsGeoJSON's "coordinates": []) has no
+// value for its non-null coordinate fields, so it renders as null.
 func (s *stmt) geoConcrete(ctx geoCtx, n geoNode, t geotype.Type, typename string, sel ast.SelectionSet, depth int) (string, error) {
-	fields := mergeFields(s.expandFor(sel, t.Name()))
-	if len(fields) == 0 {
-		return "'{}'::jsonb", nil
-	}
 	coords := n.coordinates()
 	var pairs []string
-	for _, f := range fields {
+	for _, f := range s.expandFor(sel, t.Name()) {
 		key := quoteLiteral(f.Alias)
 		var expr string
 		switch f.Name {
@@ -189,7 +195,11 @@ func (s *stmt) geoConcrete(ctx geoCtx, n geoNode, t geotype.Type, typename strin
 		}
 		pairs = append(pairs, key, expr)
 	}
-	return buildJSONObject(pairs), nil
+	obj := buildJSONObject(pairs)
+	if t.Kind == geotype.Point {
+		obj = "CASE WHEN jsonb_array_length(" + coords + ") = 0 THEN NULL ELSE " + obj + " END"
+	}
+	return obj, nil
 }
 
 // geoList renders a list field (points, interiors, lines, polygons,
@@ -213,24 +223,4 @@ func (s *stmt) geoList(ctx geoCtx, parent geoNode, field string, elem geotype.Ty
 	}
 	return fmt.Sprintf("(SELECT coalesce(jsonb_agg(%s ORDER BY %s.i), '[]'::jsonb) FROM jsonb_array_elements(%s) WITH ORDINALITY AS %s(v, i)%s)",
 		obj, a, src, a, where), nil
-}
-
-// mergeFields collapses fields sharing a response key into one, concatenating
-// their sub-selections, as GraphQL field merging requires (the same list
-// selected through two fragments must yield one key holding both selections).
-func mergeFields(fields []*ast.Field) []*ast.Field {
-	var out []*ast.Field
-	index := map[string]int{}
-	for _, f := range fields {
-		i, ok := index[f.Alias]
-		if !ok {
-			index[f.Alias] = len(out)
-			out = append(out, f)
-			continue
-		}
-		merged := *out[i]
-		merged.SelectionSet = append(append(ast.SelectionSet{}, out[i].SelectionSet...), f.SelectionSet...)
-		out[i] = &merged
-	}
-	return out
 }

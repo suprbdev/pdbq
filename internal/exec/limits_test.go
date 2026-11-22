@@ -1,6 +1,7 @@
 package exec
 
 import (
+	"context"
 	"testing"
 
 	"github.com/vektah/gqlparser/v2/ast"
@@ -9,7 +10,9 @@ import (
 
 	"github.com/suprbdev/pdbcore/introspect"
 	"github.com/suprbdev/pdbcore/testutil"
+	"github.com/suprbdev/pdbq/internal/config"
 	"github.com/suprbdev/pdbq/internal/inflect"
+	postgisplugin "github.com/suprbdev/pdbq/internal/plugins/postgis"
 	"github.com/suprbdev/pdbq/internal/schema"
 )
 
@@ -24,10 +27,22 @@ func cost(t *testing.T, query string, rawVars map[string]any) int {
 // database COMMENTs (e.g. @costMultiplier) before the schema is built.
 func costWith(t *testing.T, cat *introspect.Catalog, query string, rawVars map[string]any) int {
 	t.Helper()
+	return costFor(t, cat, nil, query, rawVars)
+}
+
+// costFor is costWith with the postgis plugin applied first when
+// postgisSettings is non-nil.
+func costFor(t *testing.T, cat *introspect.Catalog, postgisSettings map[string]any, query string, rawVars map[string]any) int {
+	t.Helper()
 	b := schema.New(cat, inflect.Default, schema.Options{
 		FilterIndexedOnly: true,
 		Functions:         true,
 	})
+	if postgisSettings != nil {
+		if err := postgisplugin.New(postgisSettings).TransformSchema(context.Background(), b); err != nil {
+			t.Fatal(err)
+		}
+	}
 	built, err := b.Build()
 	if err != nil {
 		t.Fatal(err)
@@ -156,5 +171,19 @@ func TestCostMultiplierIgnoresInvalid(t *testing.T) {
 		if got := costWith(t, withReplyCostMultiplier(tag), threadQuery, nil); got != plain {
 			t.Errorf("tag %q changed cost to %d, want unchanged %d", tag, got, plain)
 		}
+	}
+}
+
+// Typed geometry list fields (points, interiors, ...) read from one
+// in-statement GeoJSON value, so they must not be charged the ×10 list
+// fan-out: a full page of polygons stays under the default limit.
+func TestCostTypedGeometryLists(t *testing.T) {
+	const query = `{ allPlaces(first: 100) { nodes { area { ... on GeographyPolygon {
+		exterior { points { longitude latitude } }
+		interiors { points { longitude latitude } }
+	} } } } }`
+	got := costFor(t, testutil.FixtureCatalog(), map[string]any{"typed_geometry": true}, query, nil)
+	if limit := config.DefaultConfig().Server.MaxCost; got > limit {
+		t.Errorf("typed polygon page costs %d, over the default max_cost %d", got, limit)
 	}
 }
