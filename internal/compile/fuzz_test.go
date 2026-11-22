@@ -90,6 +90,8 @@ func FuzzSpatial(f *testing.F) {
 				intersects: $wkt
 				bboxIntersects: {minX: $x, minY: $x, maxX: $x, maxY: $x}
 				dwithin: {geometry: $wkt, distance: $d}
+				bboxLeftOf: $wkt
+				bboxIntersectsND: $wkt
 			}
 		}) { nodes { id } }
 	}`

@@ -776,17 +776,105 @@ func TestAdvancedFilters(t *testing.T) {
 			`dwithin: {geometry: {type: "Point", coordinates: [-0.128, 51.508]}, distance: 500}`,
 			`beyond: {geometry: {type: "Point", coordinates: [-0.128, 51.508]}, distance: 500}`,
 			"isNull: false",
+			"bboxLeftOf: " + pt,
+			"bboxRightOf: " + pt,
+			"bboxBelow: " + pt,
+			"bboxAbove: " + pt,
+			"bboxOverlapsOrLeftOf: " + pt,
+			"bboxOverlapsOrRightOf: " + pt,
+			"bboxOverlapsOrBelow: " + pt,
+			"bboxOverlapsOrAbove: " + pt,
+			"bboxEquals: " + poly,
+			"exactlyEquals: " + poly,
+			"orderingEquals: " + poly,
+			"intersects3D: " + poly,
+			"bboxIntersectsND: " + poly,
 		}
-		for _, op := range ops {
-			res := post(t, hs.URL, `{allPlaces(filter: {area: {`+op+`}}) { nodes { id } }}`, nil)
-			if len(res.Errors) > 0 {
-				t.Errorf("%s: %v", op, res.Errors)
+		for _, col := range []string{"area", "location"} {
+			for _, op := range ops {
+				res := post(t, hs.URL, `{allPlaces(filter: {`+col+`: {`+op+`}}) { nodes { id } }}`, nil)
+				if len(res.Errors) > 0 {
+					t.Errorf("%s %s: %v", col, op, res.Errors)
+				}
 			}
 		}
 		res := post(t, hs.URL, `{allPlaces(filter: {area: {within: `+poly+`}}) { nodes { name } }}`, nil)
 		requireNoErrors(t, res)
 		if names := nodeNames(t, res.Data["allPlaces"]); len(names) != 1 || names[0] != "Trafalgar Square" {
 			t.Errorf("within = %v, want [Trafalgar Square]", names)
+		}
+	})
+
+	t.Run("postgis directional and equality operators", func(t *testing.T) {
+		const origin = `"SRID=4326;POINT(0 0)"`
+		const trafalgar = `{type: "Point", coordinates: [-0.1281, 51.508]}`
+		const london = `"SRID=4326;POLYGON((-0.5 51.3, 0.3 51.3, 0.3 51.7, -0.5 51.7, -0.5 51.3))"`
+		const trafalgarArea = `"SRID=4326;POLYGON((-0.130 51.507, -0.126 51.507, -0.126 51.509, -0.130 51.509, -0.130 51.507))"`
+		londoners := []string{"Trafalgar Square", "British Museum", "Greenwich"}
+		cases := []struct {
+			filter string
+			want   []string
+		}{
+			{"location: {bboxLeftOf: " + origin + "}", londoners},
+			{"location: {bboxRightOf: " + origin + "}", []string{"Sydney Opera House"}},
+			{"location: {bboxBelow: " + origin + "}", []string{"Sydney Opera House"}},
+			{"location: {bboxAbove: " + origin + "}", londoners},
+			{"location: {bboxOverlapsOrLeftOf: " + origin + "}", londoners},
+			{"location: {bboxOverlapsOrRightOf: " + origin + "}", []string{"Sydney Opera House"}},
+			{"location: {bboxOverlapsOrBelow: " + origin + "}", []string{"Sydney Opera House"}},
+			{"location: {bboxOverlapsOrAbove: " + origin + "}", londoners},
+			{"location: {bboxEquals: " + trafalgar + "}", []string{"Trafalgar Square"}},
+			{"location: {exactlyEquals: " + trafalgar + "}", []string{"Trafalgar Square"}},
+			{"location: {orderingEquals: " + trafalgar + "}", []string{"Trafalgar Square"}},
+			{"location: {intersects3D: " + london + "}", londoners},
+			{"location: {bboxIntersectsND: " + london + "}", londoners},
+			{"area: {exactlyEquals: " + trafalgarArea + "}", []string{"Trafalgar Square"}},
+			{"area: {bboxEquals: " + trafalgarArea + "}", []string{"Trafalgar Square"}},
+			{"area: {orderingEquals: " + trafalgarArea + "}", []string{"Trafalgar Square"}},
+			{"area: {bboxLeftOf: " + origin + "}", []string{"Trafalgar Square"}},
+			{"area: {bboxIntersectsND: " + london + "}", []string{"Trafalgar Square"}},
+		}
+		for _, tc := range cases {
+			res := post(t, hs.URL, `{allPlaces(filter: {`+tc.filter+`}, orderBy: [ID_ASC]) { nodes { name } }}`, nil)
+			if len(res.Errors) > 0 {
+				t.Errorf("%s: %v", tc.filter, res.Errors)
+				continue
+			}
+			if got := nodeNames(t, res.Data["allPlaces"]); strings.Join(got, ",") != strings.Join(tc.want, ",") {
+				t.Errorf("%s: got %v, want %v", tc.filter, got, tc.want)
+			}
+		}
+	})
+
+	t.Run("postgis point and bounding-box accessors", func(t *testing.T) {
+		res := post(t, hs.URL, `{
+			placeById(id: 1) {
+				locationX locationY locationNumPoints locationNumGeometries locationPointOnSurface
+				locationWkt locationEwkt locationIsEmpty locationIsSimple
+				locationXmin locationYmin locationXmax locationYmax
+				areaX areaY areaZ areaM areaStartPoint areaEndPoint areaNumPoints areaXmin areaYmax areaIsEmpty
+			}
+		}`, nil)
+		requireNoErrors(t, res)
+		want := normalizeStr(t, `{
+			"locationX": -0.1281, "locationY": 51.508, "locationNumPoints": 1, "locationNumGeometries": 1,
+			"locationPointOnSurface": {"type": "Point", "coordinates": [-0.1281, 51.508]},
+			"locationWkt": "POINT(-0.1281 51.508)", "locationEwkt": "SRID=4326;POINT(-0.1281 51.508)",
+			"locationIsEmpty": false, "locationIsSimple": true,
+			"locationXmin": -0.1281, "locationYmin": 51.508, "locationXmax": -0.1281, "locationYmax": 51.508,
+			"areaX": null, "areaY": null, "areaZ": null, "areaM": null, "areaStartPoint": null, "areaEndPoint": null,
+			"areaNumPoints": 5, "areaXmin": -0.13, "areaYmax": 51.509, "areaIsEmpty": false
+		}`)
+		if got := normalize(t, res.Data["placeById"]); got != want {
+			t.Errorf("accessors:\n got %s\nwant %s", got, want)
+		}
+		// location is geometry(Point,4326): accessors that are always null on
+		// a 2D point are not generated.
+		for _, field := range []string{"locationZ", "locationM", "locationStartPoint", "locationEndPoint"} {
+			res := post(t, hs.URL, `{placeById(id: 1) { `+field+` }}`, nil)
+			if len(res.Errors) == 0 {
+				t.Errorf("%s should not exist on a Point column", field)
+			}
 		}
 	})
 

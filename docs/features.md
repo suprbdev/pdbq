@@ -45,7 +45,7 @@ Checklist of PostgreSQL and GraphQL features pdbq supports. Checked = implemente
 - [ ] `hstore` (v1.x)
 - [ ] `ltree` operators (v1.x)
 - [ ] Full-text search: `tsvector`/`tsquery` filter ops (v1.x)
-- [x] PostGIS `geometry`/`geography` → `GeoJSON` scalar (GeoJSON out; GeoJSON or WKT/EWKT in), with spatial filters, derived accessors, projection arguments and distance ordering — see [PostGIS](postgis.md)
+- [x] PostGIS `geometry`/`geography` → `GeoJSON` scalar (GeoJSON out; GeoJSON or WKT/EWKT in), with spatial filters (bounding-box incl. directional/n-D, DE-9IM, 3D, exact/ordering equality, radius), derived accessors (area, length, centroid, X/Y/Z/M, start/end point, WKT/EWKT, bounds, …; type-specific ones gated by the column's typmod), projection arguments and distance ordering — see [PostGIS](postgis.md)
 
 ## Queries
 

@@ -94,8 +94,10 @@ CREATE TABLE places (
     owner_id  integer REFERENCES users (id),
     name      text NOT NULL,
     -- geometry: planar, SRID units. geography: spheroidal, metres.
+    -- location is typmod-constrained (subtype and SRID enforced); area is
+    -- unconstrained (any subtype, SRID defaulting to 4326).
     location  geometry(Point, 4326),
-    area      geography(Polygon, 4326)
+    area      geography
 );
 CREATE INDEX places_owner_id_idx ON places (owner_id);
 CREATE INDEX places_location_idx ON places USING gist (location);

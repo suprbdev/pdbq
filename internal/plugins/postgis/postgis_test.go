@@ -52,7 +52,12 @@ func TestSpatialFilterFields(t *testing.T) {
 	if !ok {
 		t.Fatal("GeometryFilterOps not generated")
 	}
-	for _, name := range []string{"bboxIntersects", "intersects", "within", "dwithin", "beyond", "isNull"} {
+	for _, name := range []string{
+		"bboxIntersects", "intersects", "within", "dwithin", "beyond", "isNull",
+		"bboxLeftOf", "bboxRightOf", "bboxBelow", "bboxAbove",
+		"bboxOverlapsOrLeftOf", "bboxOverlapsOrRightOf", "bboxOverlapsOrBelow", "bboxOverlapsOrAbove",
+		"bboxEquals", "exactlyEquals", "orderingEquals", "intersects3D", "bboxIntersectsND",
+	} {
 		if ops.Field(name) == nil {
 			t.Errorf("operator %q missing from GeometryFilterOps", name)
 		}
@@ -62,6 +67,11 @@ func TestSpatialFilterFields(t *testing.T) {
 	}
 	if got := ops.Field("dwithin").Type; got != "DWithinInput" {
 		t.Errorf("dwithin takes %q, want DWithinInput", got)
+	}
+	for _, name := range []string{"bboxLeftOf", "bboxEquals", "exactlyEquals", "intersects3D", "bboxIntersectsND"} {
+		if got := ops.Field(name).Type; got != "GeoJSON" {
+			t.Errorf("%s takes %q, want GeoJSON", name, got)
+		}
 	}
 }
 
@@ -105,7 +115,15 @@ func TestDerivedFields(t *testing.T) {
 		"locationSrid":         "Int",
 		"locationGeometryType": "String",
 		"locationIsValid":      "Boolean",
+		"locationX":            "Float",
+		"locationY":            "Float",
+		"locationNumPoints":    "Int",
+		"locationWkt":          "String",
+		"locationEwkt":         "String",
+		"locationXmin":         "Float",
 		"areaArea":             "Float",
+		"areaPointOnSurface":   "GeoJSON",
+		"areaIsEmpty":          "Boolean",
 	}
 	for name, typ := range want {
 		f := obj.Field(name)
@@ -120,6 +138,44 @@ func TestDerivedFields(t *testing.T) {
 		}
 		if f.Meta.Column == nil {
 			t.Errorf("%s is not bound to a column", name)
+		}
+	}
+}
+
+// Accessors that are always null for a column's typmod are not generated;
+// unconstrained columns keep every accessor.
+func TestDerivedFieldsGatedByTypmod(t *testing.T) {
+	b := buildWith(t, nil, func(cat *introspect.Catalog) {
+		places := cat.Table("public", "places")
+		places.Columns = append(places.Columns,
+			&introspect.Column{Name: "route", Position: 6, PGType: "geometry", TypeSchema: "public",
+				Spatial: &introspect.SpatialType{Subtype: introspect.SpatialLineString, SRID: 4326}},
+			&introspect.Column{Name: "peak", Position: 7, PGType: "geography", TypeSchema: "public",
+				Spatial: &introspect.SpatialType{Subtype: introspect.SpatialPoint, SRID: 4326, HasZ: true}},
+			&introspect.Column{Name: "legacy", Position: 8, PGType: "geometry", TypeSchema: "public"},
+		)
+	})
+	obj := b.Objects["Place"]
+	present := []string{
+		"locationX", "locationY", "locationArea",
+		"areaX", "areaY", "areaZ", "areaM", "areaStartPoint", "areaEndPoint",
+		"routeStartPoint", "routeEndPoint", "routeLength",
+		"peakX", "peakY", "peakZ",
+		"legacyX", "legacyM", "legacyStartPoint",
+	}
+	absent := []string{
+		"locationZ", "locationM", "locationStartPoint", "locationEndPoint",
+		"routeX", "routeY", "routeZ", "routeM",
+		"peakM", "peakStartPoint",
+	}
+	for _, name := range present {
+		if obj.Field(name) == nil {
+			t.Errorf("accessor %q missing", name)
+		}
+	}
+	for _, name := range absent {
+		if obj.Field(name) != nil {
+			t.Errorf("accessor %q generated although the typmod rules it out", name)
 		}
 	}
 }
