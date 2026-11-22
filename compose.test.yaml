@@ -2,8 +2,8 @@
 services:
   db:
     # PostGIS-enabled image: the fixture schema creates the extension so the
-    # e2e suite can exercise spatial filters. Same Postgres 16 otherwise.
-    image: postgis/postgis:16-3.4
+    # e2e suite can exercise spatial filters. Same Postgres 18 otherwise.
+    image: postgis/postgis:18-3.7
     environment:
       POSTGRES_USER: pdbq
       POSTGRES_PASSWORD: pdbq

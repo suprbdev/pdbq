@@ -204,7 +204,7 @@ Checklist of PostgreSQL and GraphQL features pdbq supports. Checked = implemente
 - [x] Multi-stage Dockerfile → static binary on distroless, nonroot
 - [x] Compose dev stack (Postgres + fixture + watch mode) and test stack
 - [x] Makefile: build/dev/test/test-e2e/bench/fuzz/lint/example-config/docker-build
-- [x] CI: vet, unit+golden with `-race`, e2e against Postgres 16 service, docker build
+- [x] CI: vet, unit+golden with `-race`, e2e against a Postgres 14-19 service matrix, docker build
 - [x] Golden-file compiler tests (`-update` regeneration)
 - [x] E2E suite incl. RLS matrix and nested-mutation rollback atomicity
 - [x] Fuzz: filter-input → SQL invariance (SQL text independent of values)
