@@ -35,6 +35,12 @@
 //     `near:` argument on list and connection fields, compiled to the
 //     index-assisted KNN operator (<->).
 //
+//   - typed geometry (opt-in, typed_geometry: true): spatial column fields
+//     return `@graphile/postgis`-style objects (GeometryInterface,
+//     GeometryPoint {x y}, GeometryPolygon {exterior interiors}, ...; see
+//     package geotype) instead of the GeoJSON scalar, typed from the column's
+//     typmod. Inputs stay GeoJSON.
+//
 // Geometry and geography are both supported. They share the operator
 // vocabulary but differ in units: geography measures in metres, geometry in
 // SRID units. dwithin takes a `useSpheroid` flag so lat/lon data stored as
@@ -58,6 +64,7 @@ import (
 	"github.com/suprbdev/pdbcore/introspect"
 	"github.com/suprbdev/pdbcore/postgis"
 	"github.com/suprbdev/pdbcore/smarttags"
+	"github.com/suprbdev/pdbq/internal/geotype"
 	"github.com/suprbdev/pdbq/internal/inflect"
 	"github.com/suprbdev/pdbq/internal/schema"
 )
@@ -72,16 +79,20 @@ type Plugin struct {
 	ordering bool
 	// projection generates the transform:/simplify: field arguments.
 	projection bool
+	// typedGeometry types spatial column fields as geometry objects instead
+	// of the GeoJSON scalar.
+	typedGeometry bool
 }
 
 // New builds the plugin from its `plugins.settings.postgis` map.
 func New(settings map[string]any) *Plugin {
 	p := &Plugin{filters: true, derived: true, ordering: true, projection: true}
 	for key, target := range map[string]*bool{
-		"filters":    &p.filters,
-		"derived":    &p.derived,
-		"ordering":   &p.ordering,
-		"projection": &p.projection,
+		"filters":        &p.filters,
+		"derived":        &p.derived,
+		"ordering":       &p.ordering,
+		"projection":     &p.projection,
+		"typed_geometry": &p.typedGeometry,
 	} {
 		if v, ok := settings[key].(bool); ok {
 			*target = v
@@ -120,6 +131,9 @@ func (p *Plugin) TransformSchema(_ context.Context, b *schema.Builder) error {
 		if p.ordering {
 			p.addDistanceOrdering(b, t, cols)
 		}
+	}
+	if p.typedGeometry {
+		p.addTypedGeometry(b)
 	}
 	return nil
 }
@@ -308,6 +322,90 @@ func derivedApplies(d postgis.Derived, c *introspect.Column) bool {
 		return true
 	}
 	return d.AppliesTo(string(c.Spatial.Subtype), c.Spatial.HasZ, c.Spatial.HasM)
+}
+
+// addTypedGeometry declares the geometry object types of each flavour in use
+// and retypes the spatial column fields of every table type to the type their
+// typmod implies. A flavour whose type names collide with an existing type is
+// left on the GeoJSON scalar.
+func (p *Plugin) addTypedGeometry(b *schema.Builder) {
+	type target struct {
+		field *schema.Field
+		typ   geotype.Type
+	}
+	byFlavour := map[postgis.Flavour][]target{}
+	for _, t := range b.Catalog.Tables {
+		obj, ok := b.Objects[b.TypeForTable[t.Schema+"."+t.Name]]
+		if !ok {
+			continue
+		}
+		for _, c := range spatialColumns(t) {
+			if c.IsArray {
+				continue
+			}
+			name := b.Inflect(inflect.KindFieldName, inflect.Input{Schema: t.Schema, Table: t.Name, Column: c.Name})
+			f := obj.Field(name)
+			if f == nil || f.Meta == nil || f.Meta.Kind != schema.KindColumn || f.Meta.Column != c {
+				continue
+			}
+			gt := geotype.ForColumn(c)
+			byFlavour[gt.Flavour] = append(byFlavour[gt.Flavour], target{f, gt})
+		}
+	}
+	for _, flavour := range []postgis.Flavour{postgis.Geometry, postgis.Geography} {
+		targets := byFlavour[flavour]
+		if len(targets) == 0 {
+			continue
+		}
+		types := geotype.All(flavour)
+		if clash := typeClash(b, types); clash != "" {
+			b.Options.Logger.Warn("postgis: typed geometry disabled, type name already taken",
+				"flavour", flavour.String(), "type", clash)
+			continue
+		}
+		for _, gt := range types {
+			b.Objects[gt.Name()] = geometryObject(gt)
+		}
+		for _, tg := range targets {
+			tg.field.Type = strings.Replace(tg.field.Type, postgis.TypeName, tg.typ.Name(), 1)
+		}
+	}
+}
+
+// typeClash returns the first of types whose name an existing output, input
+// or enum type already uses.
+func typeClash(b *schema.Builder, types []geotype.Type) string {
+	for _, gt := range types {
+		n := gt.Name()
+		_, obj := b.Objects[n]
+		_, in := b.Inputs[n]
+		_, en := b.Enums[n]
+		if obj || in || en {
+			return n
+		}
+	}
+	return ""
+}
+
+// geometryObject renders one geotype as a schema object or interface.
+func geometryObject(gt geotype.Type) *schema.Object {
+	obj := &schema.Object{
+		Name:        gt.Name(),
+		Description: gt.Description(),
+		IsInterface: !gt.Concrete(),
+	}
+	for _, iface := range gt.Interfaces() {
+		obj.Interfaces = append(obj.Interfaces, iface.Name())
+	}
+	for _, f := range gt.Fields() {
+		obj.Fields = append(obj.Fields, &schema.Field{
+			Name:        f.Name,
+			Type:        f.Type,
+			Description: f.Description,
+			Meta:        &schema.FieldMeta{Kind: schema.KindSynthetic},
+		})
+	}
+	return obj
 }
 
 // addProjectionArgs adds transform:/simplify: to each spatial column field.

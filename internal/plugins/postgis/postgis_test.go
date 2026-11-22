@@ -353,3 +353,90 @@ func removeTable(tables []*introspect.Table, name string) []*introspect.Table {
 	}
 	return out
 }
+
+func TestTypedGeometryFieldTypes(t *testing.T) {
+	b := buildWith(t, map[string]any{"typed_geometry": true}, func(cat *introspect.Catalog) {
+		places := cat.Table("public", "places")
+		places.Columns = append(places.Columns,
+			&introspect.Column{Name: "route", Position: 6, PGType: "geometry", TypeSchema: "public",
+				Spatial: &introspect.SpatialType{Subtype: introspect.SpatialMultiLineString, SRID: 4326, HasZ: true, HasM: true}},
+			&introspect.Column{Name: "shape", Position: 7, PGType: "geometry", TypeSchema: "public",
+				Spatial: &introspect.SpatialType{Subtype: introspect.SpatialGeometry, SRID: 4326, HasM: true}},
+			&introspect.Column{Name: "legacy", Position: 8, PGType: "geometry", TypeSchema: "public"},
+			&introspect.Column{Name: "history", Position: 9, PGType: "geometry", TypeSchema: "public", IsArray: true},
+		)
+	})
+	obj := b.Objects["Place"]
+	for field, want := range map[string]string{
+		"location": "GeometryPoint",
+		"area":     "GeographyInterface",
+		"route":    "GeometryMultiLineStringZM",
+		"shape":    "GeometryGeometryM",
+		"legacy":   "GeometryInterface",
+		"history":  "[GeoJSON!]",
+	} {
+		if got := obj.Field(field).Type; got != want {
+			t.Errorf("%s type = %q, want %q", field, got, want)
+		}
+	}
+	if got := obj.Field("locationCentroid").Type; got != "GeoJSON" {
+		t.Errorf("derived accessors stay GeoJSON, got %q", got)
+	}
+	if got := b.Inputs["PlaceCreateInput"].Field("location").Type; got != "GeoJSON" {
+		t.Errorf("input stays GeoJSON, got %q", got)
+	}
+	built, err := b.Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"interface GeometryInterface {",
+		"interface GeographyGeometryZ {",
+		"type GeometryPoint implements GeometryGeometry & GeometryInterface {",
+		"type GeographyPointZ implements GeographyGeometryZ & GeographyInterface {",
+		"  longitude: Float!\n  latitude: Float!\n  height: Float!\n",
+		"  exterior: GeometryLineStringZ\n  interiors: [GeometryLineStringZ]\n",
+		"  geometries: [GeometryGeometryM]\n",
+		"  polygons: [GeographyPolygon]\n",
+		"  lines: [GeometryLineStringZM]\n",
+	} {
+		if !strings.Contains(built.SDL, want) {
+			t.Errorf("SDL missing %q", want)
+		}
+	}
+}
+
+// typed_geometry defaults to off and must leave the schema untouched.
+func TestTypedGeometryOffIsIdentical(t *testing.T) {
+	sdl := func(settings map[string]any) string {
+		t.Helper()
+		built, err := buildWith(t, settings, nil).Build()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return built.SDL
+	}
+	def := sdl(nil)
+	if off := sdl(map[string]any{"typed_geometry": false}); off != def {
+		t.Error("typed_geometry: false changed the schema")
+	}
+	if strings.Contains(def, "GeometryInterface") || strings.Contains(def, "GeometryPoint") {
+		t.Error("typed geometry types generated without typed_geometry")
+	}
+}
+
+// A user type already owning a geometry type name keeps it; that flavour
+// falls back to the GeoJSON scalar.
+func TestTypedGeometryNameClash(t *testing.T) {
+	b := buildWith(t, nil, nil)
+	b.Objects["GeometryPoint"] = &schema.Object{Name: "GeometryPoint"}
+	if err := New(map[string]any{"typed_geometry": true}).TransformSchema(context.Background(), b); err != nil {
+		t.Fatal(err)
+	}
+	if got := b.Objects["Place"].Field("location").Type; got != "GeoJSON" {
+		t.Errorf("clashing flavour retyped location to %q", got)
+	}
+	if got := b.Objects["Place"].Field("area").Type; got != "GeographyInterface" {
+		t.Errorf("geography flavour should still be typed, got %q", got)
+	}
+}
