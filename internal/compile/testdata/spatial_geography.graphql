@@ -1,0 +1,21 @@
+# Geography columns: predicates with a geography overload stay native, the
+# rest cast the column and operand to geometry.
+{
+  native: allPlaces(filter: {
+    area: {
+      bboxIntersects: {minX: -0.2, minY: 51.4, maxX: 0.0, maxY: 51.6}
+      intersects: "SRID=4326;POINT(-0.128 51.508)"
+      dwithin: {geometry: {type: "Point", coordinates: [-0.128, 51.508]}, distance: 500}
+    }
+  }) {
+    nodes { id }
+  }
+  cast: allPlaces(filter: {
+    area: {
+      within: "SRID=4326;POLYGON((-1 51,1 51,1 52,-1 51))"
+      bboxContains: {minX: -0.2, minY: 51.4, maxX: 0.0, maxY: 51.6}
+    }
+  }) {
+    nodes { id }
+  }
+}

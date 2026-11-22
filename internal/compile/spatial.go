@@ -17,10 +17,19 @@ import (
 // a bind parameter. The SQL text depends only on which operator was used and
 // on the column's flavour, never on the values, which is what the FuzzFilter
 // invariant checks.
+//
+// PostGIS defines only some predicates for geography; for the others a
+// geography column and its operand are both cast to geometry (planar
+// semantics).
 func (s *stmt) spatialOp(f postgis.Flavour, ref, op string, val any) (string, error) {
 	spec, ok := postgis.OpByName(op)
 	if !ok {
 		return "", errUser("unknown spatial filter operator %q", op)
+	}
+	render := f
+	if f == postgis.Geography && !spec.Geography && spec.Kind() != postgis.ArgBoolean {
+		render = postgis.Geometry
+		ref += "::geometry"
 	}
 	switch spec.Kind() {
 	case postgis.ArgBoolean:
@@ -31,7 +40,7 @@ func (s *stmt) spatialOp(f postgis.Flavour, ref, op string, val any) (string, er
 		return ref + " IS NOT NULL", nil
 
 	case postgis.ArgBBox:
-		box, err := s.bboxExpr(f, val)
+		box, err := s.bboxExpr(render, val)
 		if err != nil {
 			return "", err
 		}
@@ -71,12 +80,25 @@ func (s *stmt) spatialOp(f postgis.Flavour, ref, op string, val any) (string, er
 		return spec.Render(ref, geom, s.param(dist)), nil
 
 	default:
-		geom, err := s.spatialOperand(f, val)
+		geom, err := s.spatialOperandAs(f, render, val)
 		if err != nil {
 			return "", err
 		}
 		return spec.Render(ref, geom), nil
 	}
+}
+
+// spatialOperandAs parses the operand for a column of flavour f, which fixes
+// the SRID defaults (geography input is tagged 4326), but casts the expression
+// to render so a geography column compared through a geometry-only predicate
+// gets a geometry operand with the same SRID.
+func (s *stmt) spatialOperandAs(f, render postgis.Flavour, v any) (string, error) {
+	val, err := postgis.Parse(v, f)
+	if err != nil {
+		return "", errUser("%s", err.Error())
+	}
+	val.Flavour = render
+	return val.SQL(s.param(val.Param)), nil
 }
 
 // spatialOperand renders a GeoJSON/WKT operand as a parameterized PostGIS
