@@ -101,6 +101,14 @@ This is the cheap first pass for "what is on screen":
 }
 ```
 
+### Geography columns
+
+PostGIS provides geography overloads only for `bboxIntersects`, `intersects`,
+`covers`, `coveredBy`, `dwithin` and `beyond`; these run natively (spheroidal,
+metres). Every other predicate (`within`, `contains`, `crosses`, `touches`,
+`disjoint`, `bboxContains`, ...) casts the column and the operand to
+`geometry`, so it uses planar semantics.
+
 ### Radius search
 
 `DWithinInput` is `{geometry, distance, useSpheroid}`.

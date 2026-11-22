@@ -754,6 +754,51 @@ func TestAdvancedFilters(t *testing.T) {
 		}
 	})
 
+	t.Run("postgis geography operators", func(t *testing.T) {
+		const box = `{minX: -0.5, minY: 51.3, maxX: 0.3, maxY: 51.7}`
+		const poly = `"SRID=4326;POLYGON((-0.2 51.4, 0.1 51.4, 0.1 51.6, -0.2 51.6, -0.2 51.4))"`
+		const pt = `"SRID=4326;POINT(-0.128 51.508)"`
+		ops := []string{
+			"bboxIntersects: " + box,
+			"bboxContains: " + box,
+			"bboxContainedBy: " + box,
+			"intersects: " + poly,
+			"disjoint: " + poly,
+			"contains: " + pt,
+			"containsProperly: " + pt,
+			"within: " + poly,
+			"covers: " + pt,
+			"coveredBy: " + poly,
+			"crosses: " + poly,
+			"overlaps: " + poly,
+			"touches: " + poly,
+			"equals: " + poly,
+			`dwithin: {geometry: {type: "Point", coordinates: [-0.128, 51.508]}, distance: 500}`,
+			`beyond: {geometry: {type: "Point", coordinates: [-0.128, 51.508]}, distance: 500}`,
+			"isNull: false",
+		}
+		for _, op := range ops {
+			res := post(t, hs.URL, `{allPlaces(filter: {area: {`+op+`}}) { nodes { id } }}`, nil)
+			if len(res.Errors) > 0 {
+				t.Errorf("%s: %v", op, res.Errors)
+			}
+		}
+		res := post(t, hs.URL, `{allPlaces(filter: {area: {within: `+poly+`}}) { nodes { name } }}`, nil)
+		requireNoErrors(t, res)
+		if names := nodeNames(t, res.Data["allPlaces"]); len(names) != 1 || names[0] != "Trafalgar Square" {
+			t.Errorf("within = %v, want [Trafalgar Square]", names)
+		}
+	})
+
+	t.Run("postgis geography ordering and accessors", func(t *testing.T) {
+		res := post(t, hs.URL, `{
+			allPlaces(near: {geometry: "SRID=4326;POINT(-0.1281 51.5080)"}, orderBy: [AREA_DISTANCE_ASC]) {
+				nodes { name areaArea areaLength areaPerimeter areaCentroid areaEnvelope areaSrid areaGeometryType areaIsValid }
+			}
+		}`, nil)
+		requireNoErrors(t, res)
+	})
+
 	t.Run("postgis WKT input round-trip", func(t *testing.T) {
 		res := post(t, hs.URL, `mutation {
 			createPlace(input: {name: "WKT Test", location: "SRID=4326;POINT(10 20)"}) {
