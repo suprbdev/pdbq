@@ -30,11 +30,17 @@ var update = flag.Bool("update", false, "rewrite golden files")
 // files cover that SQL.
 func build(t testing.TB) *schema.Built {
 	t.Helper()
+	return buildWith(t, nil)
+}
+
+// buildWith is build with the postgis plugin configured by settings.
+func buildWith(t testing.TB, settings map[string]any) *schema.Built {
+	t.Helper()
 	b := schema.New(testutil.FixtureCatalog(), inflect.Default, schema.Options{
 		FilterIndexedOnly: true,
 		Functions:         true,
 	})
-	if err := postgisplugin.New(nil).TransformSchema(context.Background(), b); err != nil {
+	if err := postgisplugin.New(settings).TransformSchema(context.Background(), b); err != nil {
 		t.Fatalf("postgis plugin: %v", err)
 	}
 	built, err := b.Build()
@@ -46,10 +52,11 @@ func build(t testing.TB) *schema.Built {
 
 // TestGolden compiles each testdata/*.graphql document and compares the SQL
 // (plus parameters) against the .sql golden next to it. Run with -update to
-// regenerate.
+// regenerate. Documents named spatial_typed_* compile against the schema
+// built with plugins.settings.postgis.typed_geometry on.
 func TestGolden(t *testing.T) {
-	built := build(t)
-	compiler := compile.New(built)
+	plain := build(t)
+	typed := buildWith(t, map[string]any{"typed_geometry": true})
 
 	files, err := filepath.Glob(filepath.Join("testdata", "*.graphql"))
 	if err != nil || len(files) == 0 {
@@ -57,6 +64,11 @@ func TestGolden(t *testing.T) {
 	}
 	for _, file := range files {
 		name := strings.TrimSuffix(filepath.Base(file), ".graphql")
+		built := plain
+		if strings.HasPrefix(name, "spatial_typed_") {
+			built = typed
+		}
+		compiler := compile.New(built)
 		t.Run(name, func(t *testing.T) {
 			src, err := os.ReadFile(file)
 			if err != nil {

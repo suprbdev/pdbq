@@ -1,0 +1,35 @@
+# Typed geometry (plugins.settings.postgis.typed_geometry): location is
+# geometry(Point,4326) so it is a GeometryPoint; area is an unconstrained
+# geography, so it is a GeographyInterface dispatched on __typename. Each
+# field is one scalar subquery over a single ST_AsGeoJSON encoding.
+{
+  points: allPlaces {
+    nodes {
+      location { __typename x y srid geojson }
+      projected: location(transform: 3857, simplify: 0.5) { x y srid }
+    }
+  }
+  shared: allPlaces {
+    nodes {
+      area { __typename srid geojson }
+    }
+  }
+  dispatch: allPlaces {
+    nodes {
+      area {
+        __typename
+        ... on GeographyPoint { longitude latitude }
+        ... on GeographyPointZ { longitude latitude height }
+        ... on GeographyLineString { points { longitude latitude } }
+        ... on GeographyMultiPoint { points { longitude latitude } }
+        ... on GeographyPolygon {
+          exterior { points { longitude latitude } }
+          interiors { points { longitude latitude } }
+        }
+        ... on GeographyGeometryCollection {
+          geometries { __typename ... on GeographyPoint { longitude } }
+        }
+      }
+    }
+  }
+}

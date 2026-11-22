@@ -54,7 +54,7 @@ func (s *stmt) rowJSON(t *introspect.Table, sel ast.SelectionSet, alias string, 
 			}
 			if postgis.IsSpatial(meta.Column.PGType) && !meta.Column.IsArray {
 				// transform:/simplify: arguments apply before GeoJSON encoding.
-				expr, err := s.spatialFieldSQL(alias, meta.Column, f)
+				expr, err := s.spatialFieldSQL(alias, meta.Column, f, typeName, depth+1)
 				if err != nil {
 					return "", nil, err
 				}

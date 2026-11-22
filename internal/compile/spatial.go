@@ -211,8 +211,9 @@ func (s *stmt) nearExpr(t *introspect.Table, col string, f *ast.Field) (string, 
 
 // spatialFieldSQL renders a selected spatial column, applying the optional
 // per-field `transform:` (reproject) and `simplify:` (vertex reduction)
-// arguments before the value is encoded as GeoJSON.
-func (s *stmt) spatialFieldSQL(alias string, c *introspect.Column, f *ast.Field) (string, error) {
+// arguments before the value is encoded as GeoJSON — or, when the field is
+// typed as a geometry object (typed_geometry), as that object's selection.
+func (s *stmt) spatialFieldSQL(alias string, c *introspect.Column, f *ast.Field, typeName string, depth int) (string, error) {
 	flavour := postgis.FlavourOf(c.PGType)
 	ref := alias + "." + quoteIdent(c.Name)
 	expr := ref
@@ -238,8 +239,8 @@ func (s *stmt) spatialFieldSQL(alias string, c *introspect.Column, f *ast.Field)
 		}
 		expr = postgis.TransformSQL(expr, int(srid), flavourForTransform)
 	}
-	if expr == ref {
-		return postgis.OutputSQL(ref), nil
+	if gt, ok := s.typedGeometry(typeName, f.Name); ok {
+		return s.typedGeometrySQL(expr, gt, f.SelectionSet, depth)
 	}
 	return postgis.OutputSQL(expr), nil
 }
