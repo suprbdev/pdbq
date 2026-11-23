@@ -104,6 +104,9 @@ func TestPartialMutations(t *testing.T) {
 		if len(res.Errors) != 1 || string(res.Data["gone"]) != "null" || string(res.Data["a"]) == "null" {
 			t.Fatalf("response = %+v / %v", res.Errors, res.Data)
 		}
+		if partialPathStrings(res.Errors[0].Path) != "gone" || res.Errors[0].Message != `no row matched "gone"` {
+			t.Fatalf("error = %+v, want no row matched at gone", res.Errors[0])
+		}
 		if n := countWhere(t, `SELECT count(*) FROM users WHERE email = $1`, email("nf")); n != 1 {
 			t.Fatalf("the field after the failed one did not commit (%d)", n)
 		}
@@ -194,6 +197,26 @@ func TestPartialMutations(t *testing.T) {
 		}
 		if n := countWhere(t, `SELECT count(*) FROM posts WHERE title LIKE $1`, title+"%"); n != 2 {
 			t.Fatalf("committed %d posts, want 2", n)
+		}
+
+		var other int
+		if err := testConn(t).QueryRow(context.Background(), `SELECT id FROM posts WHERE author_id = 2 ORDER BY id LIMIT 1`).Scan(&other); err != nil {
+			t.Fatal(err)
+		}
+		update := func(alias string) string {
+			return fmt.Sprintf(`%s: updatePostById(id: %d, patch: {title: "hijack"}) { post { id } }`, alias, other)
+		}
+		res = postPartial(t, hs.URL, query(post("x", 1, "-d"), update("c"), update("d")), true, map[string]string{
+			"X-Pdbq-Claim-Role":    "app_user",
+			"X-Pdbq-Claim-User-Id": "1",
+		})
+		if len(res.Errors) != 2 || string(res.Data["x"]) == "null" || string(res.Data["c"]) != "null" || string(res.Data["d"]) != "null" {
+			t.Fatalf("response = %+v / %v, want x committed and c, d failed", res.Errors, res.Data)
+		}
+		for i, alias := range []string{"c", "d"} {
+			if got := res.Errors[i]; partialPathStrings(got.Path) != alias || got.Message != fmt.Sprintf("no row matched %q", alias) {
+				t.Errorf("error %d = %+v, want no row matched at %s", i, got, alias)
+			}
 		}
 	})
 }

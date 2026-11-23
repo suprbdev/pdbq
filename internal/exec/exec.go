@@ -869,7 +869,7 @@ func (e *Executor) queryStatement(ctx context.Context, q pgexec.Querier, op *Ope
 func (e *Executor) fieldResult(op *Operation, f *ast.Field, stmt *compile.Statement, raw []byte, err error) (json.RawMessage, error) {
 	if errors.Is(err, pgx.ErrNoRows) {
 		if stmt.Mutation {
-			return nil, gqlerror.Errorf("no row matched %q", f.Name)
+			return nil, &gqlerror.Error{Message: "no row matched " + strconv.Quote(f.Alias), Path: ast.Path{ast.PathName(f.Alias)}}
 		}
 		return json.RawMessage("null"), nil
 	}
@@ -1320,16 +1320,23 @@ func collectRootFields(sel ast.SelectionSet, frags ast.FragmentDefinitionList, v
 }
 
 // gqlError maps any execution error to a GraphQL error honouring the
-// errors.detail policy: dev exposes PG details, prod sanitizes.
+// errors.detail policy: dev exposes PG details, prod sanitizes. An error of
+// root field f carries the path of its response key; a GraphQL error that
+// has no path yet gets that path too.
 func (e *Executor) gqlError(err error, f *ast.Field) *gqlerror.Error {
 	e.Opts.Metrics.fieldError(err)
-	var gerr *gqlerror.Error
-	if errors.As(err, &gerr) {
-		return gerr
-	}
 	path := ast.Path{}
 	if f != nil {
 		path = append(path, ast.PathName(f.Alias))
+	}
+	var gerr *gqlerror.Error
+	if errors.As(err, &gerr) {
+		if len(gerr.Path) == 0 && f != nil {
+			withPath := *gerr
+			withPath.Path = path
+			return &withPath
+		}
+		return gerr
 	}
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) {
