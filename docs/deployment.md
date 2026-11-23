@@ -21,6 +21,7 @@ Distroless has no shell, so run health checks from the orchestrator against
 | `GET /` | GraphiQL (opt-in via `server.graphiql: true`; off by default) |
 | `GET /healthz`, `/readyz` | liveness/readiness |
 | `GET /schema.graphql` | generated SDL (opt-in via `server.expose_schema: true`; off by default) |
+| `GET /metrics` | Prometheus metrics (opt-in via `metrics.enabled: true`; path `metrics.path`, or on its own listener with `metrics.addr`); see [metrics.md](metrics.md) |
 
 GET requests carry the query and variables in the URL, so proxy, load
 balancer, and server access logs along the path will record them. If your
@@ -51,6 +52,9 @@ truncating the query string in intermediary log formats.
   `database.statement_timeout` (default 30s) backstops runaway queries.
 - Resource limits: `database.max_conns` bounds the pool; each request uses
   at most one connection.
+- If you enable `metrics.enabled`, set `metrics.addr` (e.g. `:9090`) to a
+  port only your Prometheus can reach: the endpoint is unauthenticated, and
+  its route and error counts describe your traffic.
 
 ## Persisted queries / APQ
 

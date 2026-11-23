@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"strings"
 	"sync"
@@ -16,7 +17,9 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/suprbdev/pdbcore/cache"
+	"github.com/suprbdev/pdbcore/httpx"
 	"github.com/suprbdev/pdbcore/introspect"
+	"github.com/suprbdev/pdbcore/metrics"
 	"github.com/suprbdev/pdbcore/pgexec"
 	"github.com/suprbdev/pdbq/internal/compile"
 	"github.com/suprbdev/pdbq/internal/config"
@@ -44,6 +47,11 @@ type App struct {
 	watchMu sync.Mutex
 	stops   []func()
 
+	metrics     *metrics.Metrics
+	metricsErr  error
+	metricsOnce sync.Once
+	instruments *exec.Metrics
+
 	// readOnly lives on the App (not in exec.Options as a value) so a single
 	// flag is shared by every executor the App builds — flipping it at
 	// runtime survives watch-mode schema swaps.
@@ -67,6 +75,17 @@ func WithLogger(l *slog.Logger) Option {
 	return func(a *App) { a.Log = l }
 }
 
+// WithMetrics makes the App record into m instead of the instance it
+// creates when metrics.enabled is set, for embedders that build m on their
+// own registry (metrics.Options.Registerer and ConstLabels). The App
+// instruments its handler, pool, executor and watcher with m whatever
+// metrics.enabled says; metrics.path and metrics.addr still decide where
+// Serve and Handler expose it. Each App needs its own m: the product
+// counters cannot be registered twice.
+func WithMetrics(m *metrics.Metrics) Option {
+	return func(a *App) { a.metrics = m }
+}
+
 // New creates an App with the built-in plugins registered.
 func New(cfg config.Config, opts ...Option) *App {
 	a := &App{
@@ -77,8 +96,34 @@ func New(cfg config.Config, opts ...Option) *App {
 	for _, o := range opts {
 		o(a)
 	}
+	if a.metrics == nil && cfg.Metrics.Enabled {
+		a.metrics, a.metricsErr = metrics.New(metrics.Options{Namespace: "pdbq"})
+	}
 	a.readOnly.Store(cfg.Server.ReadOnly)
 	return a
+}
+
+// Metrics returns the App's Prometheus instruments: the instance passed to
+// WithMetrics, the one created for metrics.enabled, or nil when metrics are
+// off. Its Handler serves the metrics, for embedders that mount them
+// themselves.
+func (a *App) Metrics() *metrics.Metrics { return a.metrics }
+
+// initMetrics registers the pool collector and the executor's product
+// counters, once, after Connect.
+func (a *App) initMetrics() error {
+	a.metricsOnce.Do(func() {
+		if a.metricsErr != nil || a.metrics == nil {
+			return
+		}
+		if a.pool != nil {
+			if a.metricsErr = a.metrics.RegisterPool(a.pool); a.metricsErr != nil {
+				return
+			}
+		}
+		a.instruments, a.metricsErr = exec.NewMetrics(a.metrics)
+	})
+	return a.metricsErr
 }
 
 // SetReadOnly toggles read-only mode at runtime: when on, every mutation
@@ -248,18 +293,42 @@ func (a *App) Executor(built *schema.Built) *exec.Executor {
 		DisableIntrospection: a.Config.Server.DisableIntrospection,
 		Mint:                 mint,
 		DocumentCacheSize:    a.Config.Server.DocumentCacheSize,
+		Metrics:              a.instruments,
 		Logger:               a.Log,
 		ReadOnly:             &a.readOnly,
 	})
 }
 
 // Serve runs the HTTP server (and watch mode when enabled) until ctx ends.
+// With metrics on and metrics.addr set, it also serves metrics.path on that
+// second listener; either listener failing stops both.
 func (a *App) Serve(ctx context.Context) error {
 	srv, err := a.buildServer(ctx)
 	if err != nil {
 		return err
 	}
-	return srv.ListenAndServe(ctx)
+	if a.metrics == nil || a.Config.Metrics.Addr == "" {
+		return srv.ListenAndServe(ctx)
+	}
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	mux := http.NewServeMux()
+	mux.Handle("GET "+a.Config.Metrics.Path, a.metrics.Handler())
+	errc := make(chan error, 2)
+	go func() { errc <- srv.ListenAndServe(ctx) }()
+	go func() {
+		errc <- httpx.ListenAndServe(ctx, mux, httpx.ServeOptions{
+			Addr:     a.Config.Metrics.Addr,
+			Log:      a.Log,
+			LogAttrs: []any{"metrics", a.Config.Metrics.Path},
+		})
+	}()
+	err = <-errc
+	cancel()
+	if err2 := <-errc; err == nil {
+		err = err2
+	}
+	return err
 }
 
 // CompileQuery compiles a one-off GraphQL request into its per-root-field SQL

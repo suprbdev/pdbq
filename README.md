@@ -107,6 +107,7 @@ See [docs/quickstart.md](docs/quickstart.md) for the full tour.
 | [docs/plugins.md](docs/plugins.md) | Hook surfaces, writing a plugin, built-ins as worked examples |
 | [docs/caching.md](docs/caching.md) | Schema cache and CI/CD gates |
 | [docs/deployment.md](docs/deployment.md) | Docker image, health checks, production checklist |
+| [docs/metrics.md](docs/metrics.md) | Prometheus `/metrics`: enabling, separate listener, metric reference |
 
 ## Development
 

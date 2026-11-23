@@ -50,6 +50,7 @@ func TestWatchHotSwap(t *testing.T) {
 	cfg.Schema.Schemas = []string{watchSchema}
 	cfg.Watch.Enabled = true
 	cfg.Watch.PollInterval = 200 * time.Millisecond
+	cfg.Metrics.Enabled = true
 	if err := cfg.Validate(); err != nil {
 		t.Fatal(err)
 	}
@@ -81,4 +82,16 @@ func TestWatchHotSwap(t *testing.T) {
 
 	exec(`CREATE TABLE ` + watchSchema + `.second (id int PRIMARY KEY)`)
 	waitFor(`{ allSeconds { totalCount } }`)
+
+	body, err := httpGet(hs.URL + "/metrics")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := samples(t, string(body))
+	if n := got[`pdbq_schema_rebuilds_total{result="success"}`]; n < 1 {
+		t.Errorf("successful rebuilds = %v, want >= 1", n)
+	}
+	if ts := got["pdbq_schema_last_rebuild_timestamp_seconds"]; ts <= 0 {
+		t.Errorf("last rebuild timestamp = %v, want > 0", ts)
+	}
 }

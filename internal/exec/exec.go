@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync/atomic"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -159,7 +160,10 @@ type Options struct {
 	// executor, so replacing the executor (watch mode) discards it with the
 	// schema it was validated against.
 	DocumentCacheSize int
-	Logger            *slog.Logger
+	// Metrics records database operations, compile time and the product
+	// counters; nil records nothing.
+	Metrics *Metrics
+	Logger  *slog.Logger
 }
 
 // Executor executes GraphQL requests against a pool.
@@ -410,6 +414,7 @@ func (e *Executor) txOptions(op *Operation) (pgexec.TxOptions, pgexec.Identity) 
 		MaxRetries: e.Opts.TxRetries,
 		RLS:        e.Opts.RLS,
 		Log:        e.Opts.Logger.With("operation", op.Name),
+		Observer:   e.Opts.Metrics.observer(),
 	}, pgexec.Identity{
 		Role:         op.Role,
 		Claims:       op.Claims,
@@ -466,8 +471,12 @@ func (e *Executor) batchTx(ctx context.Context, op *Operation, fields []txField,
 	maxRetries := opts.MaxRetries
 	opts.MaxRetries = 0
 	opts.ScanBeforeCommit = mutation
+	observer := opts.Observer
 	var err error
 	for attempt := 0; ; attempt++ {
+		if observer != nil && attempt > 0 {
+			opts.Observer = attemptObserver{next: observer, attempt: attempt}
+		}
 		scanErr, scannedAny = nil, false
 		for i := range fields {
 			if fields[i].stmt != nil {
@@ -564,6 +573,7 @@ func batchIsolation(iso pgx.TxIsoLevel) pgx.TxIsoLevel {
 }
 
 func (e *Executor) compileField(ctx context.Context, op *Operation, f *ast.Field) (*compile.Statement, error) {
+	defer e.Opts.Metrics.compiled(time.Now())
 	return e.Compile(ctx, &compile.Request{
 		Field:       f,
 		Fragments:   op.Document.Fragments,
@@ -583,7 +593,9 @@ func (e *Executor) executeField(ctx context.Context, q pgexec.Querier, op *Opera
 		return nil, err
 	}
 	var raw []byte
+	start := time.Now()
 	err = q.QueryRow(ctx, stmt.SQL, stmt.Args...).Scan(&raw)
+	pgexec.Observe(ctx, e.Opts.Metrics.observer(), "query", start, err)
 	return e.fieldResult(op, f, stmt, raw, err)
 }
 
@@ -651,6 +663,7 @@ func (e *Executor) checkLimits(doc *ast.QueryDocument, op *ast.OperationDefiniti
 		return gqlerror.Errorf("operation depth %d exceeds limit %d", depth, maxDepth)
 	}
 	if cost > maxCost {
+		e.Opts.Metrics.costRejected()
 		return gqlerror.Errorf("operation cost %d exceeds limit %d", cost, maxCost)
 	}
 	return nil
@@ -959,6 +972,7 @@ func collectRootFields(sel ast.SelectionSet, frags ast.FragmentDefinitionList, v
 // gqlError maps any execution error to a GraphQL error honouring the
 // errors.detail policy: dev exposes PG details, prod sanitizes.
 func (e *Executor) gqlError(err error, f *ast.Field) *gqlerror.Error {
+	e.Opts.Metrics.fieldError(err)
 	var gerr *gqlerror.Error
 	if errors.As(err, &gerr) {
 		return gerr

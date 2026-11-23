@@ -76,3 +76,6 @@ $ pdbq config example   # print the full annotated reference
 | `plugins.settings.postgis.typed_geometry` | `false` | spatial columns read as typed geometry objects (`GeometryPoint { x y }`, …) instead of the `GeoJSON` scalar; see [PostGIS](postgis.md#typed-geometry) |
 | `log.level` | `info` | `debug`, `info`, `warn`, `error` |
 | `log.format` | `text` | `text` or `json` |
+| `metrics.enabled` | `false` | serve Prometheus metrics; see [Metrics](metrics.md) |
+| `metrics.path` | `/metrics` | URL path of the metrics endpoint; must not be `/graphql`, `/healthz`, `/readyz` or `/schema.graphql` when served on the main listener |
+| `metrics.addr` | — | separate listen address (e.g. `:9090`) to keep metrics off the public listener; empty serves them on `server.addr` |

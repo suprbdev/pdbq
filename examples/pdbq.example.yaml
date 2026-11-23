@@ -130,3 +130,11 @@ log:
   # Log format: text or json.
   format: "text"
 
+metrics:
+  # Serve Prometheus metrics (HTTP requests, database operations, pool statistics, schema rebuilds).
+  enabled: false
+  # URL path of the metrics endpoint.
+  path: "/metrics"
+  # Separate listen address for the metrics endpoint, e.g. :9090, keeping it off the public listener; empty serves it on the main server address.
+  addr: ""
+

@@ -7,6 +7,7 @@
 package config
 
 import (
+	"fmt"
 	"time"
 
 	flag "github.com/spf13/pflag"
@@ -24,6 +25,7 @@ type Config struct {
 	Errors   Errors   `koanf:"errors"`
 	Plugins  Plugins  `koanf:"plugins"`
 	Log      Log      `koanf:"log"`
+	Metrics  Metrics  `koanf:"metrics"`
 }
 
 // The shared sections (koanf paths and doc strings) live in pdbcore/confx;
@@ -38,6 +40,7 @@ type (
 	Errors   = confx.Errors
 	Plugins  = confx.Plugins
 	Log      = confx.Log
+	Metrics  = confx.Metrics
 )
 
 type Server struct {
@@ -115,6 +118,7 @@ func DefaultConfig() Config {
 		Errors:  Errors{Detail: "prod"},
 		Plugins: Plugins{Settings: map[string]map[string]any{}},
 		Log:     Log{Level: "info", Format: "text"},
+		Metrics: confx.DefaultMetrics(),
 	}
 }
 
@@ -158,8 +162,18 @@ func (c *Config) Validate() error {
 		errs = append(errs, "server.document_cache_size must be >= 0")
 	}
 	errs = append(errs, confx.ValidateLog(c.Log)...)
+	if c.Metrics.Enabled {
+		errs = append(errs, confx.ValidateMetrics(c.Metrics, c.Server.Addr)...)
+		if c.Metrics.Addr == "" && reservedPaths[c.Metrics.Path] {
+			errs = append(errs, fmt.Sprintf("metrics.path: %q is a pdbq route; choose another path or serve metrics on metrics.addr", c.Metrics.Path))
+		}
+	}
 	return confx.InvalidConfig(errs)
 }
+
+// reservedPaths are the routes pdbq serves on the main listener, which
+// metrics.path must not shadow.
+var reservedPaths = map[string]bool{"/graphql": true, "/healthz": true, "/readyz": true, "/schema.graphql": true}
 
 // DisabledPlugins returns the disabled-plugin set for registry filtering.
 func (c *Config) DisabledPlugins() map[string]bool { return c.Plugins.DisabledSet() }

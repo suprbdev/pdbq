@@ -44,6 +44,9 @@ func TestValidateRejects(t *testing.T) {
 		"anon role":     func(c *Config) { c.RLS.AnonymousRole = "" },
 		"watch channel": func(c *Config) { c.Watch.Enabled = true; c.Watch.Channel = "bad$$chan" },
 		"trusted proxy": func(c *Config) { c.RLS.Auth.TrustedProxies = []string{"10.0.0.0/8", "not-an-ip"} },
+		"metrics path":  func(c *Config) { c.Metrics.Enabled = true; c.Metrics.Path = "metrics" },
+		"metrics route": func(c *Config) { c.Metrics.Enabled = true; c.Metrics.Path = "/graphql" },
+		"metrics addr":  func(c *Config) { c.Metrics.Enabled = true; c.Metrics.Addr = c.Server.Addr },
 	}
 	for name, mutate := range cases {
 		if err := bad(mutate); err == nil {
@@ -152,5 +155,41 @@ func TestExampleYAMLCoversEverything(t *testing.T) {
 	// Every doc tag should surface as a comment.
 	if !strings.Contains(out, "# Only allow filtering on columns covered by an index") {
 		t.Error("doc comments not rendered")
+	}
+}
+
+func TestValidateMetrics(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.RLS.Auth.JWTSecret = "s"
+	cfg.Metrics.Path = "/graphql"
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("disabled metrics must not be validated: %v", err)
+	}
+	cfg.Metrics.Enabled = true
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), `metrics.path: "/graphql" is a pdbq route`) {
+		t.Fatalf("err = %v, want the route collision", err)
+	}
+	cfg.Metrics.Addr = ":9090"
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("a route path on a separate listener must be allowed: %v", err)
+	}
+	cfg.Metrics = DefaultConfig().Metrics
+	cfg.Metrics.Enabled = true
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("enabled defaults invalid: %v", err)
+	}
+}
+
+func TestMetricsFromEnv(t *testing.T) {
+	t.Setenv("PDBQ_METRICS_ENABLED", "true")
+	t.Setenv("PDBQ_METRICS_ADDR", ":9090")
+	t.Setenv("PDBQ_RLS_AUTH_JWT__SECRET", "s")
+	cfg, err := Load("", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Metrics.Enabled || cfg.Metrics.Addr != ":9090" || cfg.Metrics.Path != "/metrics" {
+		t.Fatalf("metrics = %+v", cfg.Metrics)
 	}
 }
