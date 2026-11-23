@@ -158,9 +158,11 @@ On top of that, with `indexed_only` on (the default):
   common btree-indexed text column keeps `StringFilterOps`;
 - trigram ordering needs a GiST index (only GiST serves the KNN distance
   operators);
-- each vector distance ordering needs an index led by the column whose
-  access method can serve that metric: HNSW for all of them, IVFFlat for
-  all but L1 and `sparsevec` (and, on bit columns, Hamming only);
+- each vector distance ordering needs an index led by the column that is
+  built for that metric: HNSW with the metric's operator class
+  (`vector_l2_ops`, `vector_cosine_ops`, `bit_hamming_ops`, ...) for any
+  of them, IVFFlat for all but L1 and `sparsevec` (and, on bit columns,
+  Hamming only);
 - the vector and bit distance thresholds, which no index serves, are offered
   only on columns listed in `filters.allow_columns`;
 - the cube distance thresholds, distance orderings and the earth radius filter
@@ -171,10 +173,11 @@ On top of that, with `indexed_only` on (the default):
 Columns listed in `filters.allow_columns` get everything on their own inputs
 (trigram, unaccent, fuzzystrmatch, intarray, vector, bit, cube, earth and
 point surface, and the value filters and orderings; the hstore and ltree operators above live on
-shared inputs and stay out). Operator classes are not introspected:
-a GIN index on a text column is taken to be a trigram index, and an HNSW
-index on a vector column is taken to serve every metric, although pgvector
-uses one only for the distance of its operator class.
+shared inputs and stay out). Indexes are matched by access method and by
+the leading column's operator class: a btree_gist `gist_text_ops` index
+does not make a text column a trigram column, a GIN `array_ops` index does
+not serve intarray's `@@`, and an HNSW index serves only the metric of its
+operator class.
 
 Full-text search over plain text, `json` or `jsonb` columns
 (`to_tsvector(col) @@ ...`; pdbcore's `textsearch` and `jsonsearch`
@@ -403,7 +406,7 @@ Keyset cursors work as with similarity ordering. Rows whose vector is `NULL`
 have no distance: a sequential scan sorts them last, an index scan skips
 them, so filter them out (`{embedding: {isNull: false}}`) when that
 difference matters. Under `filters.indexed_only` each metric is offered only
-when an index led by the column has a method that serves it (see
+when an index led by the column is built for it (see
 [above](#filtersindexed_only)). The `dims` and `norm` accessors of pdbcore's
 vocabulary are not exposed, like the inet and range accessors (the ltree,
 hstore and intarray values are, see [below](#ltree-paths)).

@@ -159,6 +159,9 @@ CREATE TABLE ` + vectorSchema + `.items (
 	sparse ` + v + `.sparsevec(3)
 );
 CREATE INDEX ON ` + vectorSchema + `.items USING hnsw (embedding ` + v + `.vector_l2_ops);
+CREATE INDEX ON ` + vectorSchema + `.items USING hnsw (embedding ` + v + `.vector_ip_ops);
+CREATE INDEX ON ` + vectorSchema + `.items USING hnsw (embedding ` + v + `.vector_cosine_ops);
+CREATE INDEX ON ` + vectorSchema + `.items USING hnsw (embedding ` + v + `.vector_l1_ops);
 INSERT INTO ` + vectorSchema + `.items (id, embedding, half, sparse) VALUES
 	(1, '[2.5,1,0]', '[0.5,1,2]', '{1:1}/3'),
 	(2, '[2,2,0]', NULL, '{2:1}/3'),
@@ -257,7 +260,7 @@ func TestVector(t *testing.T) {
 		after := any(nil)
 		for range 4 {
 			res := post(t, url, `query ($after: Cursor) {
-				allItems(nearVector: {embedding: [1, 1, 0]}, orderBy: [EMBEDDING_COSINE_DISTANCE_ASC], first: 2, after: $after) {
+				allItems(nearVector: {embedding: [1, 1, 0]}, orderBy: [EMBEDDING_COSINE_DISTANCE_DESC], first: 2, after: $after) {
 					edges { cursor node { id } }
 					pageInfo { hasNextPage }
 				}
@@ -283,7 +286,7 @@ func TestVector(t *testing.T) {
 				break
 			}
 		}
-		if want := []int{2, 4, 1, 3, 5}; !slices.Equal(seen, want) {
+		if want := []int{3, 1, 4, 2, 5}; !slices.Equal(seen, want) {
 			t.Errorf("pages: got %v want %v", seen, want)
 		}
 	})

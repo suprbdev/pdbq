@@ -612,29 +612,21 @@ func OpName(v contrib.Vocabulary, o contrib.Op) string {
 	return o.Name
 }
 
-// IndexServes reports whether one of the column's index access methods
-// (from the catalog's indexes led by the column) matches one of the hints.
-// Operator classes are not introspected, so a matching method is taken to
-// carry the hinted operator class.
-func IndexServes(methods map[string]bool, hints []contrib.IndexHint) bool {
-	for _, h := range hints {
-		if methods[h.Method] {
-			return true
+// IndexServes reports whether an index of t led by column col serves one
+// of the hints: its access method matches and, when both the hint and the
+// catalog name one, so does the leading column's operator class.
+func IndexServes(t *introspect.Table, col string, hints []contrib.IndexHint) bool {
+	for _, ix := range t.Indexes {
+		if len(ix.Columns) == 0 || ix.Columns[0] != col {
+			continue
+		}
+		for _, h := range hints {
+			if h.Serves(ix.Method, ix.OpClass(0)) {
+				return true
+			}
 		}
 	}
 	return false
-}
-
-// IndexMethods returns the access methods of the indexes whose leading
-// column is col.
-func IndexMethods(t *introspect.Table, col string) map[string]bool {
-	out := map[string]bool{}
-	for _, ix := range t.Indexes {
-		if len(ix.Columns) > 0 && ix.Columns[0] == col {
-			out[ix.Method] = true
-		}
-	}
-	return out
 }
 
 // SimilarityOrder describes one trigram ordering family of a text column:
