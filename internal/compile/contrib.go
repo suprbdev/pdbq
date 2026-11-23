@@ -26,7 +26,7 @@ func contribFor(built *schema.Built, c *introspect.Column) contribtype.Column {
 
 // contribKey identifies everything contrib.ForColumn reads off a column.
 func contribKey(c *introspect.Column) string {
-	return c.PGType + "|" + strconv.FormatBool(c.IsArray) + "|" + strconv.FormatBool(c.Spatial != nil) + "|" + c.EnumRef
+	return c.BaseTypeSchema + "|" + c.PGType + "|" + strconv.FormatBool(c.IsArray) + "|" + strconv.FormatBool(c.Spatial != nil) + "|" + c.EnumRef
 }
 
 // contrib resolves a column's contrib mapping, cached per column type on
@@ -427,7 +427,7 @@ func contribLiteral(ci contribtype.Column, v any) (any, error) {
 	return v, nil
 }
 
-func integralElem(elem string) bool { return elem == "int4" || elem == "int8" }
+func integralElem(elem string) bool { return elem == "int2" || elem == "int4" || elem == "int8" }
 
 // rangeLiteral renders a range in Postgres's range text format, quoting
 // bounds so any element text survives.

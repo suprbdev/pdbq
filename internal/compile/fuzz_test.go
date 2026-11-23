@@ -2,7 +2,6 @@ package compile_test
 
 import (
 	"context"
-	"strings"
 	"testing"
 
 	"github.com/vektah/gqlparser/v2/ast"
@@ -143,9 +142,8 @@ func FuzzFilter(f *testing.F) {
 // FuzzSpatial is FuzzFilter for the PostGIS path: WKT strings and bounding-box
 // coordinates are user data, so they must move through the parameter list
 // exactly like scalars. A WKT string is the interesting case because it is
-// free text that ends up inside a PostGIS constructor. Bare WKT is tagged with
-// the column's SRID while EWKT keeps its own, so the two forms have one
-// baseline each; within a form the SQL text must not vary.
+// free text that ends up inside a PostGIS constructor. Every input form (bare
+// WKT, EWKT) compiles to the same SQL text, so one baseline covers them all.
 func FuzzSpatial(f *testing.F) {
 	built := build(f)
 	compiler := compile.New(built)
@@ -196,13 +194,10 @@ func FuzzSpatial(f *testing.F) {
 	if !ok {
 		f.Fatal("baseline spatial query failed to compile")
 	}
-	ewktBaseline, ok := compileWith(f, "SRID=3857;POINT(1 2)", 1.5, 100)
-	if !ok {
-		f.Fatal("EWKT baseline spatial query failed to compile")
-	}
 
 	f.Add("POINT(1 2)", 1.5, 100.0)
 	f.Add("SRID=4326;POLYGON((0 0,1 0,1 1,0 0))", -0.5, 0.0)
+	f.Add("SRID=3857;POINT(1 2)", 1.5, 100.0)
 	f.Add(`POINT(1 2)'); DROP TABLE places; --`, 0.0, 1.0)
 	f.Add(`'; DROP TABLE places; --`, 1e30, -1.0)
 	f.Add("", 0.0, 0.0)
@@ -212,15 +207,11 @@ func FuzzSpatial(f *testing.F) {
 		if !ok {
 			return
 		}
-		want := baseline
-		if trimmed := strings.TrimSpace(wkt); len(trimmed) >= 5 && strings.EqualFold(trimmed[:5], "SRID=") {
-			want = ewktBaseline
+		if stmt.SQL != baseline.SQL {
+			t.Fatalf("spatial SQL text varied with input values:\n--- baseline ---\n%s\n--- got ---\n%s", baseline.SQL, stmt.SQL)
 		}
-		if stmt.SQL != want.SQL {
-			t.Fatalf("spatial SQL text varied with input values:\n--- baseline ---\n%s\n--- got ---\n%s", want.SQL, stmt.SQL)
-		}
-		if len(stmt.Args) != len(want.Args) {
-			t.Fatalf("parameter count varied: %d != %d", len(stmt.Args), len(want.Args))
+		if len(stmt.Args) != len(baseline.Args) {
+			t.Fatalf("parameter count varied: %d != %d", len(stmt.Args), len(baseline.Args))
 		}
 	})
 }

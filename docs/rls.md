@@ -100,6 +100,16 @@ controls its claims can name any role granted to the connection role —
 including privileged ones. pdbq logs a startup warning in that configuration;
 set the list explicitly in production.
 
+Some names are never assumable, whatever the list says: `none` (in any
+letter case; assigning it to the role setting is `RESET ROLE`, which would
+run the request as the connection role and bypass RLS), `public`, and
+anything starting with `pg_` (the server's predefined roles). A role claim
+naming one is rejected with a 401 before the database is reached, and
+configuring one as `rls.allowed_roles`, `rls.default_role` or
+`rls.anonymous_role` fails config validation at startup. `rls.claims_prefix`
+is validated too: dot-separated identifiers whose first component is not a
+server or extension settings namespace (`plpgsql`, `pg_*`, `postgis`, ...).
+
 ## Turning it off
 
 `rls.enabled: false` runs everything as the privileged connection role and

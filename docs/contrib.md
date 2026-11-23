@@ -21,6 +21,7 @@ connection-filter operator names) wherever PostGraphile has one.
 | `ltree[]` | `[String!]` | `[String!]` | `LtreeListFilterOps` |
 | `int4range` / `int8range` / `numrange` / `daterange` / `tsrange`, `tstzrange` | `IntRange` / `BigIntRange` / `BigFloatRange` / `DateRange` / `DatetimeRange` | `<X>RangeInput` | `<X>RangeFilterOps` |
 | the matching multiranges (PostgreSQL 14+) | `[<X>Range!]` | `[<X>RangeInput!]` | `<X>MultirangeFilterOps` |
+| custom range types over a `pg_catalog` subtype (`CREATE TYPE ... AS RANGE`) | `<X>Range` of the subtype's scalar (`FloatRange` for `float8`) | `<X>RangeInput` | `<X>RangeFilterOps` |
 | `inet` / `cidr` | `InternetAddress` / `CidrAddress` | same | `InternetAddressFilterOps` / `CidrAddressFilterOps` |
 | `text`, `varchar`, `char(n)`, `citext` with `pg_trgm` installed | `String` | `String` | `StringTrgmFilterOps` (see [Trigram](#trigram-similarity-pg_trgm)) |
 
@@ -47,9 +48,17 @@ and function arguments and results. Arrays of these types (other than
 for `int4range[]`), as columns and as function arguments, VARIADIC ones
 included. `citext`, `hstore` and `ltree` map only
 when the catalog records the extension; a database that uses none of these
-types gets exactly the schema it got before. Custom range types keep the
-`String` fallback (the catalog does not record a range's subtype), as do
-arrays of these types other than `ltree[]`. If a table's type name already
+types gets exactly the schema it got before. A custom range type (`CREATE
+TYPE floatrange AS RANGE (subtype = float8)`, in any schema) maps like the
+built-in range over the same element scalar, so `floatrange` is a
+`FloatRange`, a range over `int4` shares `IntRange`, and its multirange is a
+list of them; the constructor in compiled SQL is schema-qualified
+(`"public"."floatrange"($1::float8, $2::float8, $3::text)`). A text-like
+subtype (`text`, `inet`, `interval`, ...) gives a `StringRange`. A range
+whose subtype is not a `pg_catalog` type (an enum, a domain, an extension
+type) keeps the `String` fallback, as do arrays of these types other than
+`ltree[]`. An empty custom range is accepted only for the common numeric,
+date/time, text and network subtypes. If a table's type name already
 takes one of the names above (a table called `key_value_hash`), the column
 keeps the `String` fallback and the builder logs a warning.
 

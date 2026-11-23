@@ -51,11 +51,24 @@ GeoJSON `Feature` and `FeatureCollection` documents are unwrapped
 automatically (a `FeatureCollection` becomes a `GeometryCollection`), so a
 value pasted straight out of a map library works without editing.
 
-**SRIDs.** GeoJSON is WGS84 (4326) per RFC 7946, so GeoJSON input is tagged
-`ST_SetSRID(..., 4326)` unless it carries an explicit legacy `crs` member.
-EWKT (`SRID=3857;POINT(...)`) carries its own SRID and is passed through
-unchanged. Bare WKT on a `geography` column is tagged 4326, since geography
-requires a real CRS.
+**SRIDs.** GeoJSON is WGS84 (4326) per RFC 7946, unless it carries an
+explicit legacy `crs` member (`EPSG:n` or `urn:ogc:def:crs:EPSG::n`). EWKT
+(`SRID=3857;POINT(...)`) carries its own SRID and is passed through
+unchanged. Bare WKT is rewritten to EWKT before it is bound: on a `geometry`
+column it is tagged with the column's SRID (it stays SRID 0 on an
+unconstrained column), and on a `geography` column with 4326, since
+geography requires a real CRS. The SRID therefore always travels inside the
+parameter, never in the SQL text.
+
+Every spatial value compiles to the same expression whatever its input form,
+so the SQL text depends only on the column type (one prepared statement
+serves GeoJSON, WKT and EWKT alike):
+
+| column | value expression |
+|---|---|
+| `geometry` (SRID 0) | `CASE WHEN left($1, 1) = '{' THEN ST_GeomFromGeoJSON($1) ELSE ST_GeomFromEWKT($1) END` |
+| `geometry(..., 3857)` | `CASE WHEN left($1, 1) = '{' THEN ST_Transform(ST_GeomFromGeoJSON($1), 3857) ELSE ST_GeomFromEWKT($1) END` |
+| `geography` | `(CASE WHEN left($1, 1) = '{' THEN ST_GeomFromGeoJSON($1) ELSE ST_GeomFromEWKT($1) END)::geography` |
 
 When the column's type modifier fixes an SRID (`geometry(Point, 3857)`), every
 value bound for that column (mutation inputs, filter operands, the `near:`
@@ -63,9 +76,9 @@ geometry) follows it:
 
 | input | on `geometry(..., 3857)` |
 |---|---|
-| bare WKT `POINT(1 2)` | tagged 3857 (`ST_SetSRID(..., 3857)`) |
+| bare WKT `POINT(1 2)` | bound as `SRID=3857;POINT(1 2)` |
 | EWKT `SRID=4326;POINT(1 2)` | keeps 4326; PostgreSQL rejects the mismatch |
-| GeoJSON (4326, or its `crs`) | reprojected: `ST_Transform(..., 3857)` |
+| GeoJSON (4326, or its `crs`) | reprojected by the `ST_Transform(..., 3857)` branch (a no-op when already 3857) |
 | bounding box without `srid` | built in 3857 |
 
 An unconstrained `geometry` column (SRID 0) gets the plain rules above.

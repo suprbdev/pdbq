@@ -1,7 +1,7 @@
 -- field: createPlace
 WITH __mut AS (
   INSERT INTO "public"."places" ("area", "location", "name")
-  VALUES ((ST_GeomFromEWKT($1))::geography, ST_SetSRID(ST_GeomFromGeoJSON($2), 4326), $3)
+  VALUES ((CASE WHEN left($1, 1) = '{' THEN ST_GeomFromGeoJSON($1) ELSE ST_GeomFromEWKT($1) END)::geography, CASE WHEN left($2, 1) = '{' THEN ST_Transform(ST_GeomFromGeoJSON($2), 4326) ELSE ST_GeomFromEWKT($2) END, $3)
   RETURNING "id", "name", "location", "area"
 )
 SELECT jsonb_build_object('place', __row.data) AS data
@@ -14,7 +14,7 @@ FROM (
 -- field: updatePlaceById
 WITH __mut AS (
   UPDATE "public"."places"
-  SET "location" = ST_SetSRID(ST_GeomFromEWKT($1), 4326)
+  SET "location" = CASE WHEN left($1, 1) = '{' THEN ST_Transform(ST_GeomFromGeoJSON($1), 4326) ELSE ST_GeomFromEWKT($1) END
   WHERE "public"."places"."id" = $2
   RETURNING "id", "location"
 )
@@ -23,5 +23,5 @@ FROM (
   SELECT jsonb_build_object('id', __t_1."id", 'location', ST_AsGeoJSON(__t_1."location")::jsonb) AS data
   FROM __mut AS __t_1
 ) AS __row
--- args: ["POINT(1 2)",1]
+-- args: ["SRID=4326;POINT(1 2)",1]
 

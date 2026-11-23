@@ -52,6 +52,48 @@ func TestValidateRejects(t *testing.T) {
 	}
 }
 
+func TestLoadRejectsUnsafeRLSSettings(t *testing.T) {
+	cases := []struct {
+		name, yaml string
+		want       []string
+	}{
+		{"allowed role none", "rls:\n  allowed_roles: [app_user, none]\n", []string{"rls.allowed_roles", `"none"`}},
+		{"allowed role NONE", "rls:\n  allowed_roles: [NONE]\n", []string{"rls.allowed_roles", `"NONE"`}},
+		{"allowed role public", "rls:\n  allowed_roles: [public]\n", []string{"rls.allowed_roles", `"public"`}},
+		{"allowed role pg_", "rls:\n  allowed_roles: [pg_read_all_data]\n", []string{"rls.allowed_roles", `"pg_read_all_data"`}},
+		{"anonymous role none", "rls:\n  anonymous_role: none\n", []string{"rls.anonymous_role", `"none"`}},
+		{"default role pg_", "rls:\n  default_role: pg_write_all_data\n", []string{"rls.default_role", `"pg_write_all_data"`}},
+		{"claims prefix", "rls:\n  claims_prefix: plpgsql.claims\n", []string{"rls.claims_prefix", `"plpgsql"`}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "pdbq.yaml")
+			yaml := "database:\n  url: \"postgres://file/db\"\n" + tc.yaml + "  auth:\n    jwt_secret: s\n"
+			if err := os.WriteFile(path, []byte(yaml), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			_, err := Load(path, nil)
+			if err == nil {
+				t.Fatal("Load accepted the config, want a validation error")
+			}
+			for _, w := range tc.want {
+				if !strings.Contains(err.Error(), w) {
+					t.Errorf("error %q does not mention %s", err, w)
+				}
+			}
+		})
+	}
+}
+
+func TestLoadRejectsAllowedRoleNoneFromEnv(t *testing.T) {
+	t.Setenv("PDBQ_RLS_AUTH_JWT__SECRET", "s")
+	t.Setenv("PDBQ_RLS_ALLOWED__ROLES", "app_user,none")
+	_, err := Load("", nil)
+	if err == nil || !strings.Contains(err.Error(), `rls.allowed_roles: "none"`) {
+		t.Fatalf("Load error = %v, want rls.allowed_roles: \"none\" rejected", err)
+	}
+}
+
 func TestLoadLayering(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "pdbq.yaml")

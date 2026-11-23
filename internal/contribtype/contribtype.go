@@ -18,12 +18,18 @@
 //	int4range ... daterange -> IntRange { start: IntRangeBound { value inclusive } end },
 //	                           input IntRangeInput, IntRangeFilterOps
 //	int4multirange ...      -> [IntRange!], input [IntRangeInput!], IntMultirangeFilterOps
+//	CREATE TYPE ... AS RANGE -> as the built-in range over the same element
+//	                           (floatrange over float8 -> FloatRange); String
+//	                           when the subtype is not a pg_catalog type
 //	inet / cidr             -> InternetAddress / CidrAddress scalars,
 //	                           InternetAddressFilterOps / CidrAddressFilterOps
 //
 // Range types are named after their element's scalar: Int (int4), BigInt
 // (int8), BigFloat (numeric), Date (date) and Datetime (timestamp and
-// timestamptz, which therefore share DatetimeRange).
+// timestamptz, which therefore share DatetimeRange). Custom range types
+// share these (a range over int4 is an IntRange) and add the scalars of
+// their other pg_catalog subtypes: Float (float4, float8), Time, Boolean,
+// UUID, and String for text-like subtypes (text, inet, interval, ...).
 //
 // Extension types (citext, hstore, ltree) map only when the catalog records
 // the extension; a catalog without it keeps the String fallback, so schemas
@@ -54,9 +60,9 @@ const (
 	Ltree
 	// LtreeArray is an ltree[] column ([String!]).
 	LtreeArray
-	// Range is a built-in range column (<Elem>Range object).
+	// Range is a range column (<Elem>Range object).
 	Range
-	// Multirange is a built-in multirange column ([<Elem>Range!]).
+	// Multirange is a multirange column ([<Elem>Range!]).
 	Multirange
 	// Inet is an inet or cidr column.
 	Inet
@@ -130,6 +136,10 @@ func For(cat *introspect.Catalog, col *introspect.Column) Column {
 			}
 			out.OpsInput = out.Scalar + "FilterOps"
 		case contrib.VocabRange, contrib.VocabMultirange:
+			if r := catalogRange(cat, col, v); r != nil && r.SubtypeSchema != "pg_catalog" {
+				out.Own = contrib.Vocabulary{}
+				continue
+			}
 			start, _ := v.Accessor("start")
 			out.Elem = start.Type
 			out.ElemScalar = elemScalar(start.Type)
@@ -151,20 +161,48 @@ func For(cat *introspect.Catalog, col *introspect.Column) Column {
 	return out
 }
 
+// catalogRange returns the entry of [introspect.Catalog.Ranges] that the
+// range or multirange vocabulary v of col was built from, or nil for a
+// built-in range type.
+func catalogRange(cat *introspect.Catalog, col *introspect.Column, v contrib.Vocabulary) *introspect.RangeType {
+	if cat == nil || col == nil {
+		return nil
+	}
+	for _, r := range cat.Ranges {
+		schema, name := r.Schema, r.Name
+		if v.Name == contrib.VocabMultirange {
+			schema, name = r.MultirangeSchema, r.Multirange
+		}
+		if name == v.Type && (col.BaseTypeSchema == "" || col.BaseTypeSchema == schema) {
+			return r
+		}
+	}
+	return nil
+}
+
 // elemScalar is the GraphQL scalar of a range element type; it mirrors the
-// schema builder's scalar mapping for the types ranges are built over.
+// schema builder's scalar mapping for the pg_catalog types ranges can be
+// built over.
 func elemScalar(pg string) string {
 	switch pg {
-	case "int4":
+	case "int2", "int4":
 		return "Int"
-	case "int8":
+	case "int8", "oid":
 		return "BigInt"
-	case "numeric":
+	case "float4", "float8":
+		return "Float"
+	case "numeric", "money":
 		return "BigFloat"
+	case "bool":
+		return "Boolean"
+	case "uuid":
+		return "UUID"
 	case "date":
 		return "Date"
 	case "timestamp", "timestamptz":
 		return "Datetime"
+	case "time", "timetz":
+		return "Time"
 	}
 	return "String"
 }
