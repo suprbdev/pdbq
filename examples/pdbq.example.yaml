@@ -56,6 +56,8 @@ schema:
   functions: true
   # Expose the partitions of partitioned tables as tables of their own. Off by default: their rows are reachable through the partitioned parent.
   expose_partitions: false
+  # Expose each domain over a built-in scalar type as a custom scalar named after it (PostGraphile's behaviour), described by its comment and constraints. Disable to type domain columns and arguments as their base type.
+  domain_scalars: true
 
 filters:
   # Only allow filtering on columns covered by an index (default policy).

@@ -56,6 +56,7 @@ const (
 	KindFunctionPayload        Kind = "function_payload"          // volatile function -> payload object type (LoginPayload)
 	KindComputedField          Kind = "computed_field"            // row-type function -> field on the row's type (postCount)
 	KindFunctionRecord         Kind = "function_record"           // OUT/TABLE-parameter function -> its row object type (SearchStatsRecord)
+	KindDomainTypeName         Kind = "domain_type_name"          // pg domain -> custom scalar (Email)
 )
 
 // Default is the built-in PostGraphile-flavoured verbose naming.
@@ -75,6 +76,8 @@ func Default(kind Kind, in Input) string {
 		return inflect.UpperCamel(in.Enum)
 	case KindEnumValueName:
 		return inflect.EnumValue(in.Value)
+	case KindDomainTypeName:
+		return inflect.UpperCamel(in.Domain)
 	case KindFilterTypeName:
 		return inflect.UpperCamel(inflect.Singularize(in.Table)) + "Filter"
 	case KindConditionTypeName:

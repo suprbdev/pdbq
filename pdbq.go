@@ -243,6 +243,7 @@ func (a *App) BuildSchema(ctx context.Context, cat *introspect.Catalog) (*schema
 		AllowColumns:      a.Config.Filters.AllowColumns,
 		Functions:         a.Config.Schema.Functions,
 		ExposePartitions:  a.Config.Schema.ExposePartitions,
+		DomainScalars:     a.Config.Schema.DomainScalars,
 		JWTType:           a.Config.RLS.Auth.JWTType,
 		Logger:            a.Log,
 	})

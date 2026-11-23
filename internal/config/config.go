@@ -29,8 +29,8 @@ type Config struct {
 }
 
 // The shared sections (koanf paths and doc strings) live in pdbcore/confx;
-// Server, Schema (with expose_partitions) and TX (with per_request) are
-// pdbq's own.
+// Server, Schema (with expose_partitions and domain_scalars) and TX (with
+// per_request) are pdbq's own.
 type (
 	Database = confx.Database
 	Filters  = confx.Filters
@@ -62,14 +62,15 @@ type Server struct {
 	DisableIntrospection bool          `koanf:"disable_introspection" doc:"Reject __schema / __type introspection queries (off by default). Enable in production to hide the schema shape; __typename keeps working."`
 }
 
-// Schema is confx.Schema plus expose_partitions. It repeats the shared
-// fields rather than embedding confx.Schema so composite literals keep
-// naming them directly.
+// Schema is confx.Schema plus expose_partitions and domain_scalars. It
+// repeats the shared fields rather than embedding confx.Schema so composite
+// literals keep naming them directly.
 type Schema struct {
 	Schemas          []string `koanf:"schemas" doc:"PostgreSQL schemas to expose."`
 	CachePath        string   `koanf:"cache_path" doc:"Boot from this schema cache file instead of introspecting (see pdbq schema dump)."`
 	Functions        bool     `koanf:"functions" doc:"Expose PostgreSQL functions as custom queries/mutations."`
 	ExposePartitions bool     `koanf:"expose_partitions" doc:"Expose the partitions of partitioned tables as tables of their own. Off by default: their rows are reachable through the partitioned parent."`
+	DomainScalars    bool     `koanf:"domain_scalars" doc:"Expose each domain over a built-in scalar type as a custom scalar named after it (PostGraphile's behaviour), described by its comment and constraints. Disable to type domain columns and arguments as their base type."`
 }
 
 // Shared returns the confx.Schema part of s.
@@ -102,8 +103,9 @@ func DefaultConfig() Config {
 			DocumentCacheSize: 1000,
 		},
 		Schema: Schema{
-			Schemas:   []string{"public"},
-			Functions: true,
+			Schemas:       []string{"public"},
+			Functions:     true,
+			DomainScalars: true,
 		},
 		Filters: Filters{IndexedOnly: true},
 		RLS: RLS{

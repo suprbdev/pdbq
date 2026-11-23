@@ -51,6 +51,7 @@ $ pdbq config example   # print the full annotated reference
 | `schema.cache_path` | — | boot from `pdbq schema dump` output |
 | `schema.functions` | `true` | expose PostgreSQL functions as custom queries/mutations |
 | `schema.expose_partitions` | `false` | expose partitions of partitioned tables as tables of their own (their rows are always reachable through the parent) |
+| `schema.domain_scalars` | `true` | each domain over a built-in scalar type becomes a custom scalar named after it (PostGraphile's behaviour); `false` types domains as their base type. See [Domains](domains.md) |
 | `filters.indexed_only` | `true` | see [filtering.md](filtering.md) |
 | `filters.allow_columns` | `{}` | per-table extra filterable columns, overriding `indexed_only` |
 | `rls.enabled` | `true` | see [rls.md](rls.md) for the `rls.*` and `rls.auth.*` keys |

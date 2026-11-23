@@ -21,7 +21,7 @@ Checklist of PostgreSQL and GraphQL features pdbq supports. Checked = implemente
 - [x] Schema allowlist (`schema.schemas`)
 - [x] Composite types read into the catalog
 - [x] Composite-type columns mapped to GraphQL object types (matching `<Type>Input` on mutations; composite arrays included)
-- [ ] Domains surfaced as named scalars (currently resolved to base type, through domains over domains)
+- [x] Domains surfaced as named scalars (`schema.domain_scalars`, on by default as in PostGraphile; described by the domain's comment and CHECK constraints; domains over domains, arrays of domains, composite attributes, function arguments and results) — see [Domains](domains.md)
 - [x] Function argument default values (omitted arguments take the `DEFAULT`; shown in the argument description) and `VARIADIC` arguments (a list)
 - [x] Functions with `OUT`/`INOUT`/`RETURNS TABLE` parameters (generated `<Function>Record` object types)
 - [ ] Functions returning an anonymous `record` without output parameters (skipped)

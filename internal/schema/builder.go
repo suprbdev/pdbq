@@ -38,11 +38,11 @@ func catalogHasSpatial(cat *introspect.Catalog) bool {
 		}
 	}
 	for _, fn := range cat.Functions {
-		if postgis.IsSpatial(fn.ReturnType) {
+		if postgis.IsSpatial(FuncReturnColumn(cat, fn).PGType) {
 			return true
 		}
 		for _, a := range fn.Args {
-			if postgis.IsSpatial(a.PGType) {
+			if postgis.IsSpatial(FuncArgColumn(cat, a).PGType) {
 				return true
 			}
 		}
@@ -65,7 +65,11 @@ type Options struct {
 	// JWT minted (rls.auth.jwt_type). Root functions returning it keep a
 	// String result instead of the composite's object type.
 	JWTType string
-	Logger  *slog.Logger
+	// DomainScalars declares a custom scalar per domain over a built-in
+	// scalar type (schema.domain_scalars), as PostGraphile does; otherwise
+	// domains take their base type's GraphQL type.
+	DomainScalars bool
+	Logger        *slog.Logger
 }
 
 // Builder is the mutable schema IR handed to SchemaHook plugins.
@@ -77,6 +81,9 @@ type Builder struct {
 	Inputs  map[string]*Input
 	Enums   map[string]*Enum
 	Scalars []string
+	// ScalarDescriptions holds the descriptions of the custom scalars in
+	// Scalars that have one, keyed by scalar name.
+	ScalarDescriptions map[string]string
 	// Query/Mutation are the root objects (also present in Objects).
 	Query    *Object
 	Mutation *Object
@@ -87,6 +94,10 @@ type Builder struct {
 	TypeForComposite map[string]string
 	// InputForComposite maps "schema.type" to the generated input type name.
 	InputForComposite map[string]string
+
+	// domainScalars maps a domain ref ("schema.name") to its custom scalar
+	// (see addDomains).
+	domainScalars map[string]string
 
 	// contribTypes records the contrib scalar, range object and input type
 	// names declared so far (see ensureContrib).
@@ -179,20 +190,22 @@ func New(cat *introspect.Catalog, inflector inflect.Next, opts Options) *Builder
 		cat, hidden = withoutPartitions(cat)
 	}
 	b := &Builder{
-		Catalog:           cat,
-		Inflect:           inflector,
-		Options:           opts,
-		Objects:           map[string]*Object{},
-		Inputs:            map[string]*Input{},
-		Enums:             map[string]*Enum{},
-		Scalars:           append([]string{}, customScalars...),
-		TypeForTable:      map[string]string{},
-		TypeForComposite:  map[string]string{},
-		InputForComposite: map[string]string{},
-		contribTypes:      map[string]bool{},
-		log:               opts.Logger,
-		hidden:            hidden,
-		recordTypes:       map[*introspect.Function]string{},
+		Catalog:            cat,
+		Inflect:            inflector,
+		Options:            opts,
+		Objects:            map[string]*Object{},
+		Inputs:             map[string]*Input{},
+		Enums:              map[string]*Enum{},
+		Scalars:            append([]string{}, customScalars...),
+		ScalarDescriptions: map[string]string{},
+		domainScalars:      map[string]string{},
+		TypeForTable:       map[string]string{},
+		TypeForComposite:   map[string]string{},
+		InputForComposite:  map[string]string{},
+		contribTypes:       map[string]bool{},
+		log:                opts.Logger,
+		hidden:             hidden,
+		recordTypes:        map[*introspect.Function]string{},
 	}
 	// The GeoJSON scalar is only declared when the database actually has a
 	// PostGIS column, so schemas without spatial data are byte-identical to
@@ -207,6 +220,7 @@ func New(cat *introspect.Catalog, inflector inflect.Next, opts Options) *Builder
 	b.addPageInfo()
 	b.addNode()
 	b.addEnums()
+	b.addDomains()
 	b.addComposites()
 	b.addTables()
 	b.addFunctions()
@@ -239,6 +253,7 @@ func withoutPartitions(cat *introspect.Catalog) (*introspect.Catalog, map[string
 		Functions:        cat.Functions,
 		Extensions:       cat.Extensions,
 		Ranges:           cat.Ranges,
+		Domains:          cat.Domains,
 	}
 	return cp, hidden
 }
@@ -343,8 +358,21 @@ func (b *Builder) addComposites() {
 }
 
 // gqlTypeForColumn resolves a column to an SDL type reference (without
-// nullability marker).
+// nullability marker): its domain's custom scalar when it has one (see
+// addDomains), otherwise baseTypeForColumn.
 func (b *Builder) gqlTypeForColumn(c *introspect.Column) string {
+	if name := b.DomainScalar(c); name != "" {
+		if c.IsArray {
+			return "[" + name + "!]"
+		}
+		return name
+	}
+	return b.baseTypeForColumn(c)
+}
+
+// baseTypeForColumn resolves a column to the SDL type reference of its
+// (base) pg type, ignoring domain scalars.
+func (b *Builder) baseTypeForColumn(c *introspect.Column) string {
 	base := ""
 	pg := strings.TrimPrefix(c.PGType, "_")
 	if e := b.Catalog.EnumByRef(c.EnumRef); e != nil {
@@ -749,7 +777,7 @@ func (b *Builder) FilterOpsInputFor(c *introspect.Column) string {
 	if ci := b.ContribColumn(c); ci.Owned() && ci.OpsInput != "" {
 		return b.contribOpInput(ci)
 	}
-	gqlType := b.gqlTypeForColumn(c)
+	gqlType := b.baseTypeForColumn(c)
 	elem := strings.TrimSuffix(strings.TrimPrefix(gqlType, "["), "!]")
 	return b.opInputFor(elem, c.PGType, c.IsArray)
 }
@@ -1256,7 +1284,7 @@ func (b *Builder) addFunctions() {
 		switch {
 		case f.ReturnsSet:
 			retType = "[" + retBase + "!]!"
-		case strings.HasPrefix(f.ReturnType, "_"):
+		case FuncReturnColumn(b.Catalog, f).IsArray:
 			// An array return type is a list of the element type.
 			retType = "[" + retBase + "!]"
 		}
@@ -1347,12 +1375,11 @@ func argDescription(a introspect.FuncArg) string {
 
 // functionReturnBase resolves the GraphQL type of one value f returns (list
 // wrappers left to the caller): a table's object type, the generated record
-// type for OUT/TABLE parameters, an enum, a composite's object type, or a
-// scalar. With mint set, the JWT composite (Options.JWTType) stays a String.
-// ok is false when the result has no GraphQL representation (RETURNS record
+// type for OUT/TABLE parameters, an enum, a composite's object type, a
+// domain's custom scalar, or a scalar. With mint set, the JWT composite
+// (Options.JWTType) stays a String. ok is false when the result has no GraphQL representation (RETURNS record
 // without output parameters).
 func (b *Builder) functionReturnBase(f *introspect.Function, mint bool) (string, bool) {
-	elem := strings.TrimPrefix(f.ReturnType, "_")
 	switch {
 	case f.ReturnType == "void":
 		return "Boolean", true
@@ -1362,17 +1389,21 @@ func (b *Builder) functionReturnBase(f *introspect.Function, mint bool) (string,
 		}
 		return b.functionRecordType(f), true
 	}
-	key := tableKey(f.ReturnTypeSchema, elem)
 	if tn, ok := b.TypeForTable[tableKey(f.ReturnTypeSchema, f.ReturnType)]; ok {
 		return tn, true
 	}
-	if e := b.Catalog.Enum(f.ReturnTypeSchema, elem); e != nil {
+	ret := FuncReturnColumn(b.Catalog, f)
+	elem := strings.TrimPrefix(ret.PGType, "_")
+	key := tableKey(ret.TypeSchema, elem)
+	if e := b.Catalog.Enum(ret.TypeSchema, elem); e != nil {
 		return b.Inflect(inflect.KindEnumTypeName, inflect.Input{Schema: e.Schema, Enum: e.Name}), true
 	}
 	if tn, ok := b.TypeForComposite[key]; ok && (!mint || key != b.Options.JWTType) {
 		return tn, true
 	}
-	ret := &introspect.Column{PGType: f.ReturnType, TypeSchema: f.ReturnTypeSchema, IsArray: strings.HasPrefix(f.ReturnType, "_")}
+	if name := b.DomainScalar(ret); name != "" {
+		return name, true
+	}
 	if ci := b.ContribColumn(ret); ci.Owned() {
 		if ci.Kind == contribtype.Multirange {
 			return "[" + ci.Scalar + "!]", true
@@ -1394,11 +1425,8 @@ func (b *Builder) functionRecordType(f *introspect.Function) string {
 	src := &introspect.Table{Schema: f.Schema, Name: f.Name, Kind: introspect.RelView}
 	obj := &Object{Name: name, Description: "The output parameters of " + f.Name + "."}
 	for i, a := range f.ReturnColumns {
-		c := &introspect.Column{
-			Name: a.Name, Position: i + 1,
-			PGType: a.PGType, TypeSchema: a.TypeSchema,
-			IsArray: strings.HasPrefix(a.PGType, "_"),
-		}
+		c := FuncArgColumn(b.Catalog, a)
+		c.Position = i + 1
 		src.Columns = append(src.Columns, c)
 		obj.AddField(&Field{
 			Name: b.Inflect(inflect.KindFieldName, inflect.Input{Schema: f.Schema, Table: f.Name, Column: a.Name}),
@@ -1433,12 +1461,16 @@ func (b *Builder) usesHiddenTable(f *introspect.Function) bool {
 // type (callers pass value names), composites their generated input type,
 // PostGIS types GeoJSON. Array types ("_uuid", and every VARIADIC
 // parameter) become lists; arrays of contrib types other than ltree[] are
-// lists of their text form, like array columns of those types.
+// lists of their text form, like array columns of those types. A domain
+// parameter takes its custom scalar or else its base type (FuncArgColumn).
 func (b *Builder) argGQLType(a introspect.FuncArg) string {
-	elem := &introspect.Column{Name: a.Name, PGType: strings.TrimPrefix(a.PGType, "_"), TypeSchema: a.TypeSchema}
+	arr := FuncArgColumn(b.Catalog, a)
+	elem := &introspect.Column{
+		Name: a.Name, PGType: strings.TrimPrefix(arr.PGType, "_"),
+		TypeSchema: arr.TypeSchema, BaseTypeSchema: arr.BaseTypeSchema, Domain: arr.Domain,
+	}
 	base := b.gqlInputTypeForColumn(elem)
-	if strings.HasPrefix(a.PGType, "_") {
-		arr := &introspect.Column{Name: a.Name, PGType: a.PGType, TypeSchema: a.TypeSchema, IsArray: true}
+	if arr.IsArray {
 		if b.ContribColumn(elem).Owned() && !b.ContribColumn(arr).Owned() {
 			base = "String"
 		}
@@ -1643,6 +1675,7 @@ func (b *Builder) Build() (*Built, error) {
 func (b *Builder) SDL() string {
 	var out strings.Builder
 	for _, s := range b.Scalars {
+		writeDesc(&out, b.ScalarDescriptions[s], "")
 		fmt.Fprintf(&out, "scalar %s\n", s)
 	}
 	out.WriteString("\n")
