@@ -21,4 +21,8 @@ mutation {
   createPost(input: {title: "Connected", author: {connectById: {id: 1}}, commentsByPostId: {create: [{body: "c"}]}}) {
     post { title author { email postsByAuthorId { totalCount } } commentsByPostId { nodes { body } } }
   }
+  withPayloadFields: createComment(input: {body: "Hi", post: {create: {title: "Fresh", author: {connectById: {id: 1}}}}}) {
+    post { title }
+    query { allPosts(filter: {title: {equalTo: "Fresh"}}) { totalCount } allComments { totalCount } }
+  }
 }

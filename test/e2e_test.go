@@ -1300,12 +1300,12 @@ func TestSerializationRetry(t *testing.T) {
 	// sequence advance survives the rollback, so a single retry always
 	// lands on an even value and succeeds.
 	hs := testServer(t, func(c *config.Config) { c.TX.MaxRetries = 1 })
-	res := post(t, hs.URL, `mutation { retryProbe(input: {}) { result } }`, nil)
+	res := post(t, hs.URL, `mutation { retryProbe(input: {}) { integer } }`, nil)
 	requireNoErrors(t, res)
 
 	// Without retries the next call (odd again) surfaces the failure.
 	hs2 := testServer(t, nil)
-	res = post(t, hs2.URL, `mutation { retryProbe(input: {}) { result } }`, nil)
+	res = post(t, hs2.URL, `mutation { retryProbe(input: {}) { integer } }`, nil)
 	if len(res.Errors) == 0 {
 		t.Fatal("expected serialization failure without retries")
 	}
@@ -1325,10 +1325,10 @@ func TestJWTMint(t *testing.T) {
 	})
 
 	// Anonymous request mints a token via the authenticate() function.
-	res := post(t, hs.URL, `mutation { authenticate(input: {userEmail: "ada@example.com"}) { result } }`, nil)
+	res := post(t, hs.URL, `mutation { authenticate(input: {userEmail: "ada@example.com"}) { jwt } }`, nil)
 	requireNoErrors(t, res)
 	var payload struct {
-		Result string `json:"result"`
+		Result string `json:"jwt"`
 	}
 	mustUnmarshal(t, res.Data["authenticate"], &payload)
 	if strings.Count(payload.Result, ".") != 2 {
@@ -1387,45 +1387,46 @@ func TestJWTMint(t *testing.T) {
 	}
 
 	// Unknown email: strictly-null composite stays null, no token minted.
-	res = post(t, hs.URL, `mutation { authenticate(input: {userEmail: "nobody@example.com"}) { result } }`, nil)
+	res = post(t, hs.URL, `mutation { authenticate(input: {userEmail: "nobody@example.com"}) { jwt } }`, nil)
 	requireNoErrors(t, res)
-	if got := normalize(t, res.Data["authenticate"]); got != `{"result":null}` {
-		t.Errorf("unknown email should yield null result, got %s", got)
+	if got := normalize(t, res.Data["authenticate"]); got != `{"jwt":null}` {
+		t.Errorf("unknown email should yield null jwt, got %s", got)
 	}
 }
 
-// TestFunctionMutations covers the Relay-classic shape volatile functions
-// get: fn(input: FnInput!): FnPayload! { result clientMutationId }.
+// TestFunctionMutations covers the PostGraphile shape volatile functions
+// get: fn(input: FnInput!): FnPayload! { <result> clientMutationId query }.
 func TestFunctionMutations(t *testing.T) {
 	hs := testServer(t, nil)
 
 	// Scalar result + clientMutationId passthrough + __typename.
 	res := post(t, hs.URL, `mutation {
 	  addNumbers(input: {a: 2, b: 40, clientMutationId: "cm-1"}) {
-	    __typename result clientMutationId
+	    __typename integer clientMutationId
 	  }
 	}`, nil)
 	requireNoErrors(t, res)
-	if got := normalize(t, res.Data["addNumbers"]); got != `{"__typename":"AddNumbersPayload","clientMutationId":"cm-1","result":42}` {
+	if got := normalize(t, res.Data["addNumbers"]); got != `{"__typename":"AddNumbersPayload","clientMutationId":"cm-1","integer":42}` {
 		t.Errorf("addNumbers: got %s", got)
 	}
 
 	// Explicit nulls arrive as SQL NULL; unsent clientMutationId is null.
-	res = post(t, hs.URL, `mutation { addNumbers(input: {a: 2, b: null}) { result clientMutationId } }`, nil)
+	res = post(t, hs.URL, `mutation { addNumbers(input: {a: 2, b: null}) { integer clientMutationId } }`, nil)
 	requireNoErrors(t, res)
-	if got := normalize(t, res.Data["addNumbers"]); got != `{"clientMutationId":null,"result":null}` {
+	if got := normalize(t, res.Data["addNumbers"]); got != `{"clientMutationId":null,"integer":null}` {
 		t.Errorf("addNumbers null arg: got %s", got)
 	}
 
-	res = post(t, hs.URL, `mutation { addNumbers(input: {a: 2}) { result } }`, nil)
+	res = post(t, hs.URL, `mutation { addNumbers(input: {a: 2}) { integer } }`, nil)
 	if len(res.Errors) != 1 || !strings.Contains(res.Errors[0].Message, "missing required argument(s): b") {
 		t.Errorf("addNumbers omitted arg: errors = %+v", res.Errors)
 	}
 
-	// Table-returning function: result supports a full selection with relations.
+	// Table-returning function: the row supports a full selection with
+	// relations.
 	res = post(t, hs.URL, `mutation {
 	  publishPost(input: {postId: 2}) {
-	    result { title published author { email } }
+	    post { title published author { email } }
 	  }
 	}`, nil)
 	requireNoErrors(t, res)
@@ -1435,21 +1436,21 @@ func TestFunctionMutations(t *testing.T) {
 	}
 
 	// Array-typed arguments arrive as GraphQL lists.
-	res = post(t, hs.URL, `mutation { wordLengths(input: {words: ["a", "bb", "ccc"]}) { result } }`, nil)
+	res = post(t, hs.URL, `mutation { wordLengths(input: {words: ["a", "bb", "ccc"]}) { integer } }`, nil)
 	requireNoErrors(t, res)
-	if got := normalize(t, res.Data["wordLengths"]); got != `{"result":3}` {
+	if got := normalize(t, res.Data["wordLengths"]); got != `{"integer":3}` {
 		t.Errorf("wordLengths: got %s", got)
 	}
 
 	// Enum-typed arguments and returns speak GraphQL enum value names in both
 	// directions; the compiler maps them to pg labels and back.
-	res = post(t, hs.URL, `mutation { bumpMood(input: {m: SAD}) { result } }`, nil)
+	res = post(t, hs.URL, `mutation { bumpMood(input: {m: SAD}) { mood } }`, nil)
 	requireNoErrors(t, res)
-	if got := normalize(t, res.Data["bumpMood"]); got != `{"result":"OK"}` {
+	if got := normalize(t, res.Data["bumpMood"]); got != `{"mood":"OK"}` {
 		t.Errorf("bumpMood: got %s", got)
 	}
 
-	// The call runs even when result is not selected.
+	// The call runs even when the result is not selected.
 	res = post(t, hs.URL, `mutation { unpublishPost(input: {postId: 2}) { clientMutationId } }`, nil)
 	requireNoErrors(t, res)
 	res = post(t, hs.URL, `{postById(id: 2) { published }}`, nil)

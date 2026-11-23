@@ -104,6 +104,7 @@ See [docs/quickstart.md](docs/quickstart.md) for the full tour.
 | [docs/cli.md](docs/cli.md) | All subcommands, scripting patterns |
 | [docs/rls.md](docs/rls.md) | Roles, JWT/header claims, policies |
 | [docs/filtering.md](docs/filtering.md) | Filter operators, indexed-only policy |
+| [docs/mutations.md](docs/mutations.md) | Table and custom mutations, payload fields (`query`, relations, edges), what a payload sees |
 | [docs/temporal.md](docs/temporal.md) | PostgreSQL 18 temporal keys, PERIOD and NOT ENFORCED foreign keys |
 | [docs/postgis.md](docs/postgis.md) | PostGIS: GeoJSON scalar, spatial filters, distance ordering, opt-in typed geometry |
 | [docs/aggregates.md](docs/aggregates.md) | Opt-in aggregates: `aggregates`, `groupedAggregates`/`having`, ordering and filtering by related aggregates, spatial aggregates |

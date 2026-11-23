@@ -236,19 +236,19 @@ func TestTxMutationRollback(t *testing.T) {
 	cases := []struct {
 		name, second, want string
 	}{
-		{"sql error", `b: addNumbers(input: {a: 2147483647, b: 1}) { result }`,
-			`{"data":{"a":{"result":1},"b":null},"errors":[{"message":"integer out of range","path":["b"],"extensions":{"code":"22003","constraint":"","detail":"","hint":"","table":""}}]}`},
+		{"sql error", `b: addNumbers(input: {a: 2147483647, b: 1}) { integer }`,
+			`{"data":{"a":{"integer":1},"b":null},"errors":[{"message":"integer out of range","path":["b"],"extensions":{"code":"22003","constraint":"","detail":"","hint":"","table":""}}]}`},
 		{"no row matched", `b: updateUserById(id: 999999, patch: {fullName: "x"}) { user { id } }`,
-			`{"data":{"a":{"result":2},"b":null},"errors":[{"message":"no row matched \"updateUserById\""}]}`},
+			`{"data":{"a":{"integer":2},"b":null},"errors":[{"message":"no row matched \"updateUserById\""}]}`},
 		{"compile error", `b: createUser(input: {email: "qtx@example.com"}) { user { postsByAuthorId(first: -1) { totalCount } } }`,
-			`{"data":{"a":{"result":3},"b":null},"errors":[{"message":"compile: first must be \u003e= 0","path":["b"]}]}`},
+			`{"data":{"a":{"integer":3},"b":null},"errors":[{"message":"compile: first must be \u003e= 0","path":["b"]}]}`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			got := postRaw(t, url, `mutation {
-				a: qtxBump(input: {note: "a"}) { result }
+				a: qtxBump(input: {note: "a"}) { integer }
 				`+tc.second+`
-				c: qtxBump(input: {note: "c"}) { result }
+				c: qtxBump(input: {note: "c"}) { integer }
 			}`, nil)
 			if got != tc.want {
 				t.Errorf("got  %s\nwant %s", got, tc.want)
@@ -260,19 +260,19 @@ func TestTxMutationRollback(t *testing.T) {
 	}
 
 	want := `{"data":{"b":null},"errors":[{"message":"integer out of range","path":["b"],"extensions":{"code":"22003","constraint":"","detail":"","hint":"","table":""}}]}`
-	if got := postRaw(t, url, `mutation { b: addNumbers(input: {a: 2147483647, b: 1}) { result } d: __typename }`, nil); got != want {
+	if got := postRaw(t, url, `mutation { b: addNumbers(input: {a: 2147483647, b: 1}) { integer } d: __typename }`, nil); got != want {
 		t.Errorf("single failing mutation:\ngot  %s\nwant %s", got, want)
 	}
 
-	want = `{"data":{"a":{"result":4},"d":"Mutation","c":{"result":5}}}`
-	if got := postRaw(t, url, `mutation { a: qtxBump(input: {note: "a"}) { result } d: __typename c: qtxBump(input: {note: "c"}) { result } }`, nil); got != want {
+	want = `{"data":{"a":{"integer":4},"d":"Mutation","c":{"integer":5}}}`
+	if got := postRaw(t, url, `mutation { a: qtxBump(input: {note: "a"}) { integer } d: __typename c: qtxBump(input: {note: "c"}) { integer } }`, nil); got != want {
 		t.Errorf("got  %s\nwant %s", got, want)
 	}
 	if notes := qtxLogNotes(t, conn); notes != "a,c" {
 		t.Errorf("qtx_log = %q, want %q", notes, "a,c")
 	}
-	want = `{"data":{"s":{"result":6}}}`
-	if got := postRaw(t, url, `mutation { s: qtxBump(input: {note: "s"}) { result } }`, nil); got != want {
+	want = `{"data":{"s":{"integer":6}}}`
+	if got := postRaw(t, url, `mutation { s: qtxBump(input: {note: "s"}) { integer } }`, nil); got != want {
 		t.Errorf("got  %s\nwant %s", got, want)
 	}
 	if notes := qtxLogNotes(t, conn); notes != "a,c,s" {
@@ -310,10 +310,10 @@ func TestTxRLSIdentity(t *testing.T) {
 				{`{ a: qtxWhoami b: qtxWhoami }`, user("7"),
 					`{"data":{"a":"app_user:7:` + tc.level + `","b":"app_user:7:` + tc.level + `"}}`},
 				{`{ a: qtxWhoami }`, nil, `{"data":{"a":"anonymous::` + tc.level + `"}}`},
-				{`mutation { a: qtxWhoamiWrite(input: {}) { result } }`, user("8"),
-					`{"data":{"a":{"result":"app_user:8:` + tc.level + `"}}}`},
-				{`mutation { a: qtxWhoamiWrite(input: {}) { result } }`, nil,
-					`{"data":{"a":{"result":"anonymous::` + tc.level + `"}}}`},
+				{`mutation { a: qtxWhoamiWrite(input: {}) { string } }`, user("8"),
+					`{"data":{"a":{"string":"app_user:8:` + tc.level + `"}}}`},
+				{`mutation { a: qtxWhoamiWrite(input: {}) { string } }`, nil,
+					`{"data":{"a":{"string":"anonymous::` + tc.level + `"}}}`},
 				{`{ __typename }`, map[string]string{"X-Pdbq-Claim-Role": "no_such_role"},
 					`{"errors":[{"message":"role \"no_such_role\" does not exist","extensions":{"code":"22023","constraint":"","detail":"","hint":"","table":""}}]}`},
 				{`{ a: qtxWhoami }`, nil, `{"data":{"a":"anonymous::` + tc.level + `"}}`},

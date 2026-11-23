@@ -6,11 +6,8 @@ WITH __mut AS (
   SET "full_name" = EXCLUDED."full_name"
   RETURNING "id", "email", "full_name"
 )
-SELECT json_build_object('user', __row.data, 'clientMutationId', $3::text) AS data
-FROM (
-  SELECT json_build_object('id', __t_1."id", 'email', __t_1."email", 'fullName', __t_1."full_name") AS data
-  FROM __mut AS __t_1
-) AS __row
+SELECT json_build_object('user', json_build_object('id', __t_1."id", 'email', __t_1."email", 'fullName', __t_1."full_name"), 'clientMutationId', $3::text) AS data
+FROM __mut AS __t_1
 -- args: ["a@b.c","Ada","cm-1"]
 
 -- field: upsertUserByEmail
@@ -21,10 +18,7 @@ WITH __mut AS (
   SET "email" = EXCLUDED."email"
   RETURNING "id"
 )
-SELECT json_build_object('user', __row.data) AS data
-FROM (
-  SELECT json_build_object('id', __t_1."id") AS data
-  FROM __mut AS __t_1
-) AS __row
+SELECT json_build_object('user', json_build_object('id', __t_1."id")) AS data
+FROM __mut AS __t_1
 -- args: ["a@b.c"]
 

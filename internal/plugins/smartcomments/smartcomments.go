@@ -23,6 +23,8 @@
 //   - @fieldName / @foreignFieldName <name> — on a foreign key: exact GraphQL
 //     name for the forward (child -> parent) / backward (parent -> children)
 //     relation field; also picked up by advanced-filters and nested-mutations.
+//   - @resultFieldName <name> — on a volatile function: exact name of its
+//     payload's result field.
 //   - @deprecated [reason] — on columns and functions: marks the generated
 //     output fields with @deprecated(reason:).
 //   - @notNull / @nullable — on columns: override introspected nullability
@@ -125,6 +127,10 @@ func (p *Plugin) Inflect(kind inflect.Kind, in inflect.Input, next inflect.Next)
 	case inflect.KindDomainTypeName:
 		if name := p.Index().Domain(in.Schema, in.Domain).First("name"); name != "" {
 			in.Domain = name
+		}
+	case inflect.KindFunctionResultField:
+		if name := p.Index().Function(in.Schema, in.Function).First("resultFieldName"); name != "" {
+			return name
 		}
 	case inflect.KindFunctionField, inflect.KindFunctionInput, inflect.KindFunctionPayload,
 		inflect.KindComputedField, inflect.KindFunctionRecord:

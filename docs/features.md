@@ -100,7 +100,8 @@ Checklist of PostgreSQL and GraphQL features pdbq supports. Checked = implemente
 - [x] `update<Type>ByPk(patch:)` per updatable table with PK
 - [x] `delete<Type>ByPk` per deletable table with PK
 - [x] Payload types with the mutated row selectable (relations included, compiled against the DML CTE)
-- [x] Payload relations back to the mutated table see it as it stands after the statement (created and updated rows included, deleted rows excluded) via a visibility CTE, emitted only when the payload reads the table that way
+- [x] PostGraphile payload fields: `query` on every payload, plus the row's forward relations and `<row>Edge(orderBy:)` (cursor = the row's nodeId) on single-row payloads, compiled into the mutation's statement — see [Mutations](mutations.md)
+- [x] Payload relations and `query` fields reading the mutated table see it as it stands after the statement (created and updated rows included, deleted rows excluded) via a visibility CTE, emitted only when the payload reads the table that way
 - [x] Generated/identity columns excluded from inputs; defaulted columns optional
 - [x] Privilege-gated generation (no INSERT grant → no create mutation)
 - [x] Not-found update/delete → GraphQL error, transaction rolled back
@@ -109,11 +110,12 @@ Checklist of PostgreSQL and GraphQL features pdbq supports. Checked = implemente
 - [x] Upsert (`ON CONFLICT`) — `upsert<Type>By<Unique>(input:)` per non-generated key target; provided non-key columns update from `EXCLUDED`
 - [x] Bulk mutations (`createUsers(input: [...])`, `updateUsers(filter:, patch:)`, `deleteUsers(filter:)`; payload = mutated rows + `affectedCount`)
 - [x] `clientMutationId` passthrough (Relay classic)
+- [ ] `deleted<Type>NodeId` on delete payloads (select the deleted row's `nodeId` instead)
 
 ## Functions as fields
 
 - [x] Stable/immutable functions → Query fields
-- [x] Volatile functions → Mutation fields
+- [x] Volatile functions → Mutation fields (`fn(input: FnInput!): FnPayload!`)
 - [x] Arguments mapped from GraphQL args (named args only; called in named notation, positional for variadic functions): scalars, enums, composites (`<Type>Input`), PostGIS values (GeoJSON/WKT), arrays
 - [x] Omitted arguments take the function's `DEFAULT`; an explicit `null` passes SQL `NULL`; omitting an argument without a default is a GraphQL error
 - [x] Scalar returns (via `to_jsonb`)
@@ -127,7 +129,7 @@ Checklist of PostgreSQL and GraphQL features pdbq supports. Checked = implemente
 - [x] Computed columns (stable/immutable functions whose first argument is a row type → fields on that type; extra scalar args become field args; set-returning/volatile deferred)
 - [x] Set-returning computed columns (`SETOF <scalar>`/`SETOF <table>` row-type functions → list fields with full selection support)
 - [ ] Functions with table-valued arguments or polymorphic types
-- [ ] Custom mutations returning payload types with relations
+- [x] Custom mutations with PostGraphile payloads: the result field named after its type (`post`, `posts`, `integer`, the `OUT` parameter's name, none for `void`; `@resultFieldName` overrides), `clientMutationId`, `query`, and for a returned table row its forward relations and `<row>Edge`; one statement, the payload reading the pre-statement snapshot — see [Mutations](mutations.md)
 
 ## RLS & auth
 
