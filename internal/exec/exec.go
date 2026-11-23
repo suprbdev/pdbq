@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -18,7 +19,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/vektah/gqlparser/v2/ast"
 	"github.com/vektah/gqlparser/v2/gqlerror"
-	"github.com/vektah/gqlparser/v2/parser"
 	"github.com/vektah/gqlparser/v2/validator"
 
 	"github.com/suprbdev/pdbcore/pgexec"
@@ -29,8 +29,11 @@ import (
 // Operation is one GraphQL operation in flight; RequestHook plugins can read
 // and mutate it (notably ForceTx).
 type Operation struct {
-	Name       string
-	Type       ast.Operation
+	Name string
+	Type ast.Operation
+	// Document is the parsed and validated document. It may be shared with
+	// concurrent requests through the executor's document cache and must not
+	// be modified.
 	Document   *ast.QueryDocument
 	Definition *ast.OperationDefinition
 	Vars       map[string]any
@@ -43,9 +46,68 @@ type Operation struct {
 }
 
 // Result is the GraphQL response for one operation.
+//
+// Data maps each response key to the raw JSON value PostgreSQL (or the
+// in-memory introspection resolver) produced for it. The response writes
+// root fields in selection order: keys stored with Set keep the order in
+// which they were first set, and keys added to Data directly follow them in
+// sorted order.
 type Result struct {
 	Data   map[string]json.RawMessage
 	Errors gqlerror.List
+	// Extensions, when non-empty, is written as the response's top-level
+	// "extensions" entry.
+	Extensions map[string]any
+
+	keys []string
+}
+
+// Set stores raw as the value of the response key, recording the key's
+// position in the response the first time it is set.
+func (r *Result) Set(key string, raw json.RawMessage) {
+	if r.Data == nil {
+		r.Data = map[string]json.RawMessage{}
+	}
+	if _, ok := r.Data[key]; !ok {
+		r.keys = append(r.keys, key)
+	}
+	r.Data[key] = raw
+}
+
+// Get returns the raw value of the response key and whether it is present.
+func (r *Result) Get(key string) (json.RawMessage, bool) {
+	raw, ok := r.Data[key]
+	return raw, ok
+}
+
+// Keys returns the keys of Data in response order.
+func (r *Result) Keys() []string {
+	out := make([]string, 0, len(r.Data))
+	seen := make(map[string]struct{}, len(r.Data))
+	for _, k := range r.keys {
+		if _, ok := r.Data[k]; !ok {
+			continue
+		}
+		if _, dup := seen[k]; dup {
+			continue
+		}
+		seen[k] = struct{}{}
+		out = append(out, k)
+	}
+	known := len(out)
+	for k := range r.Data {
+		if _, ok := seen[k]; !ok {
+			out = append(out, k)
+		}
+	}
+	slices.Sort(out[known:])
+	return out
+}
+
+func (r *Result) reset() {
+	r.Data = map[string]json.RawMessage{}
+	r.Errors = nil
+	r.keys = r.keys[:0]
 }
 
 // RequestHook mirrors plugin.RequestHook (redeclared here to avoid an import
@@ -90,8 +152,14 @@ type Options struct {
 	// executor swaps.
 	ReadOnly *atomic.Bool
 	// Mint signs function results of one composite type into JWTs.
-	Mint   MintOptions
-	Logger *slog.Logger
+	Mint MintOptions
+	// DocumentCacheSize is the number of parsed and validated query
+	// documents the executor keeps, keyed by query text (least recently used
+	// evicted first). 0 disables the cache. The cache belongs to the
+	// executor, so replacing the executor (watch mode) discards it with the
+	// schema it was validated against.
+	DocumentCacheSize int
+	Logger            *slog.Logger
 }
 
 // Executor executes GraphQL requests against a pool.
@@ -101,8 +169,12 @@ type Executor struct {
 	Compile compile.Func
 	Hooks   []RequestHook
 	Opts    Options
+
+	docs *docCache
 }
 
+// New builds an executor for built. Executors constructed without New run
+// without a document cache.
 func New(pool *pgxpool.Pool, built *schema.Built, compileFn compile.Func, hooks []RequestHook, opts Options) *Executor {
 	if opts.Logger == nil {
 		opts.Logger = slog.Default()
@@ -110,7 +182,18 @@ func New(pool *pgxpool.Pool, built *schema.Built, compileFn compile.Func, hooks 
 	if opts.Isolation == "" {
 		opts.Isolation = pgx.ReadCommitted
 	}
-	return &Executor{Pool: pool, Built: built, Compile: compileFn, Hooks: hooks, Opts: opts}
+	var sch *ast.Schema
+	if built != nil {
+		sch = built.Schema
+	}
+	return &Executor{
+		Pool:    pool,
+		Built:   built,
+		Compile: compileFn,
+		Hooks:   hooks,
+		Opts:    opts,
+		docs:    newDocCache(sch, opts.DocumentCacheSize, documentCacheBytes),
+	}
 }
 
 // Request is a raw GraphQL HTTP/CLI request.
@@ -140,12 +223,9 @@ func (e *Executor) Execute(ctx context.Context, req Request) *Result {
 // CompileRequest: parse, validate, operation selection, variable coercion,
 // limits, and BeforeOperation hooks.
 func (e *Executor) prepare(ctx context.Context, req Request) (context.Context, *Operation, error) {
-	doc, err := parser.ParseQuery(&ast.Source{Input: req.Query})
+	doc, err := e.document(req.Query)
 	if err != nil {
 		return ctx, nil, err
-	}
-	if listErr := validator.ValidateWithRules(e.Built.Schema, doc, nil); len(listErr) > 0 {
-		return ctx, nil, listErr
 	}
 	opDef := doc.Operations.ForName(req.OperationName)
 	if opDef == nil {
@@ -253,7 +333,7 @@ func (e *Executor) executeOperation(ctx context.Context, op *Operation, res *Res
 			raw, err := e.executeField(ctx, q, op, f)
 			if err != nil {
 				res.Errors = append(res.Errors, e.gqlError(err, f))
-				res.Data[f.Alias] = json.RawMessage("null")
+				res.Set(f.Alias, json.RawMessage("null"))
 				if first == nil {
 					first = err
 				}
@@ -265,7 +345,7 @@ func (e *Executor) executeOperation(ctx context.Context, op *Operation, res *Res
 				}
 				continue
 			}
-			res.Data[f.Alias] = raw
+			res.Set(f.Alias, raw)
 		}
 		return first, serialization
 	}
@@ -289,8 +369,7 @@ func (e *Executor) executeOperation(ctx context.Context, op *Operation, res *Res
 		Claims:       op.Claims,
 		ClaimsPrefix: e.Opts.ClaimsPrefix,
 	}, func(q pgexec.Querier) error {
-		res.Data = map[string]json.RawMessage{}
-		res.Errors = nil
+		res.reset()
 		first, serialization := run(q)
 		switch {
 		case serialization != nil:
@@ -309,8 +388,7 @@ func (e *Executor) executeOperation(ctx context.Context, op *Operation, res *Res
 	if lastFnErr != nil {
 		// A retry attempt failed in begin/identity before reaching fn: drop
 		// the previous attempt's results as fn would have.
-		res.Data = map[string]json.RawMessage{}
-		res.Errors = nil
+		res.reset()
 	}
 	res.Errors = append(res.Errors, e.gqlError(err, nil))
 }
@@ -610,14 +688,84 @@ func errResult(err error) *Result {
 	return &Result{Errors: list}
 }
 
-// MarshalJSON renders the result as a spec-shaped GraphQL response.
+// MarshalJSON renders the result as a spec-shaped GraphQL response; see
+// AppendJSON.
 func (r *Result) MarshalJSON() ([]byte, error) {
-	out := map[string]any{}
+	return r.AppendJSON(nil)
+}
+
+// AppendJSON appends the result as a spec-shaped GraphQL response to b:
+// "data" (omitted when it is empty and there are errors), then "errors"
+// and "extensions" when non-empty. Root field values are copied verbatim, in
+// the order given by Keys, without being re-encoded.
+func (r *Result) AppendJSON(b []byte) ([]byte, error) {
+	b = append(b, '{')
+	sep := false
 	if len(r.Data) > 0 || len(r.Errors) == 0 {
-		out["data"] = r.Data
+		b = append(b, `"data":`...)
+		if r.Data == nil {
+			b = append(b, "null"...)
+		} else {
+			b = append(b, '{')
+			for i, k := range r.Keys() {
+				if i > 0 {
+					b = append(b, ',')
+				}
+				var err error
+				if b, err = appendJSONString(b, k); err != nil {
+					return nil, err
+				}
+				b = append(b, ':')
+				if raw := r.Data[k]; len(raw) > 0 {
+					b = append(b, raw...)
+				} else {
+					b = append(b, "null"...)
+				}
+			}
+			b = append(b, '}')
+		}
+		sep = true
 	}
 	if len(r.Errors) > 0 {
-		out["errors"] = r.Errors
+		if sep {
+			b = append(b, ',')
+		}
+		errs, err := json.Marshal(r.Errors)
+		if err != nil {
+			return nil, err
+		}
+		b = append(b, `"errors":`...)
+		b = append(b, errs...)
+		sep = true
 	}
-	return json.Marshal(out)
+	if len(r.Extensions) > 0 {
+		if sep {
+			b = append(b, ',')
+		}
+		ext, err := json.Marshal(r.Extensions)
+		if err != nil {
+			return nil, err
+		}
+		b = append(b, `"extensions":`...)
+		b = append(b, ext...)
+	}
+	return append(b, '}'), nil
+}
+
+// appendJSONString appends s as a JSON string, taking a copy-only fast path
+// for the plain ASCII names GraphQL response keys normally are.
+func appendJSONString(b []byte, s string) ([]byte, error) {
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c < 0x20 || c >= 0x7f || c == '"' || c == '\\' || c == '<' || c == '>' || c == '&' {
+			q, err := json.Marshal(s)
+			if err != nil {
+				return nil, err
+			}
+			return append(b, q...), nil
+		}
+	}
+	b = append(b, '"')
+	b = append(b, s...)
+	return append(b, '"'), nil
 }

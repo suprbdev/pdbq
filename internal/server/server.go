@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"sync"
 	"sync/atomic"
 
 	"github.com/suprbdev/pdbcore/auth"
@@ -148,8 +149,33 @@ func (s *Server) handleGraphQL(w http.ResponseWriter, r *http.Request) {
 		Claims:        claims,
 		Role:          role,
 	})
+	s.writeResult(w, res)
+}
+
+// maxPooledResponse caps the response buffers kept for reuse, so one large
+// response does not pin its buffer for the life of the pool.
+const maxPooledResponse = 1 << 20
+
+var responseBuffers = sync.Pool{New: func() any { return new([]byte) }}
+
+// writeResult writes res as the JSON response body. Root field values are
+// copied through as PostgreSQL produced them, without re-encoding.
+func (s *Server) writeResult(w http.ResponseWriter, res *exec.Result) {
+	bp := responseBuffers.Get().(*[]byte)
+	defer func() {
+		if cap(*bp) <= maxPooledResponse {
+			responseBuffers.Put(bp)
+		}
+	}()
+	b, err := res.AppendJSON((*bp)[:0])
+	if err != nil {
+		s.log.Error("write response", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	*bp = append(b, '\n')
 	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(res); err != nil {
+	if _, err := w.Write(*bp); err != nil {
 		s.log.Error("write response", "err", err)
 	}
 }
