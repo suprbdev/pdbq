@@ -1,0 +1,26 @@
+# Typed geometry for function results and composite attributes: computed
+# columns, query functions (scalar and setof), a mutation payload result and
+# composite attributes. Function results have no typmod, so they dispatch on
+# __typename like an unconstrained column; the composite attribute spot is
+# geometry(Point,4326) and compiles to a concrete type.
+{
+  computed: allPlaces {
+    nodes {
+      centroid: centroid { __typename srid ... on GeometryPoint { x y } }
+      outline { __typename geojson }
+    }
+  }
+  scalar: makePoint(x: 1, y: 2) {
+    __typename
+    ... on GeometryPoint { x y }
+    ... on GeometryPointZ { x y z }
+  }
+  grid: gridPoints(n: 3) {
+    ... on GeographyPoint { longitude latitude }
+  }
+  site: makeSite(label: "hq") {
+    label
+    spot { x y srid }
+    extent { __typename srid }
+  }
+}

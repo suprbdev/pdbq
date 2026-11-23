@@ -308,6 +308,12 @@ func (s *stmt) compositeJSON(ref string, comp *introspect.Composite, isArray boo
 			if err != nil {
 				return "", err
 			}
+		} else if gt, ok := s.typedGeometry(typeName, f.Name); ok && postgis.IsSpatial(meta.Column.PGType) && !meta.Column.IsArray {
+			var err error
+			expr, err = s.typedGeometrySQL(attr, gt, f.SelectionSet, depth+1)
+			if err != nil {
+				return "", err
+			}
 		} else if cexpr, ok := s.contribJSON(attr, meta.Column, f.SelectionSet); ok {
 			expr = cexpr
 		} else if meta.Column.IsArray {
