@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"slices"
@@ -61,6 +62,9 @@ func (s *Server) startListen(ctx context.Context, ex *exec.Executor, op *exec.Op
 	if err != nil {
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
+		}
+		if errors.Is(err, subscribe.ErrBusy) {
+			return nil, gqlerror.Errorf("%s", err.Error())
 		}
 		s.log.Warn("subscriptions: listen failed", "channel", channel, "err", err)
 		return nil, errSubscriptionsUnavailable

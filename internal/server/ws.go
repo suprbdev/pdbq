@@ -85,6 +85,12 @@ func (w hijackWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 }
 
 func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
+	if !s.reserveConnection() {
+		w.Header().Set("Retry-After", "5")
+		writeError(w, http.StatusServiceUnavailable, "too many WebSocket connections")
+		return
+	}
+	defer s.releaseConnection()
 	opts := &websocket.AcceptOptions{
 		Subprotocols:   []string{subprotocolTransportWS, subprotocolLegacyWS},
 		OriginPatterns: s.cfg.CORSOrigins,
@@ -113,6 +119,8 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		cancel: cancel,
 		inited: make(chan struct{}),
 		ops:    map[string]*wsOp{},
+		slots:  make(chan struct{}, s.cfg.SubscriptionsMaxPerConnection),
+		tokens: float64(s.cfg.SubscriptionsMaxPerConnection),
 	}
 	if !s.trackSession(sess) {
 		cancel()
@@ -121,6 +129,24 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	}
 	defer s.untrackSession(sess)
 	sess.run()
+}
+
+// reserveConnection counts a WebSocket connection against
+// server.subscriptions_max_connections; false when none is left.
+func (s *Server) reserveConnection() bool {
+	s.wsMu.Lock()
+	defer s.wsMu.Unlock()
+	if s.wsConns >= s.cfg.SubscriptionsMaxConnections {
+		return false
+	}
+	s.wsConns++
+	return true
+}
+
+func (s *Server) releaseConnection() {
+	s.wsMu.Lock()
+	s.wsConns--
+	s.wsMu.Unlock()
 }
 
 // trackSession registers sess for CloseWebSockets; false once closing.
@@ -179,8 +205,19 @@ type wsSession struct {
 	claims   map[string]any
 	role     string
 	expires  time.Time
-	ops      map[string]*wsOp
-	wg       sync.WaitGroup
+	// ops holds the operations the client has not completed, by id.
+	ops map[string]*wsOp
+	wg  sync.WaitGroup
+
+	// slots holds one token per operation goroutine still running,
+	// completed or not: server.subscriptions_max_per_connection bounds
+	// those, not just the entries of ops.
+	slots chan struct{}
+
+	// tokens and last are the subscribe rate limiter's bucket, used only by
+	// the read loop.
+	tokens float64
+	last   time.Time
 }
 
 // wsOp is one running operation of a session.
@@ -461,23 +498,39 @@ func (c *wsSession) expired() bool {
 }
 
 // start launches operation id; false when id is already running.
+//
+// Every operation holds a slot of the connection until its goroutine has
+// returned, and one of the server's server.subscriptions_max_operations. A
+// client that completes operations faster than they stop therefore waits
+// for their slots (its next message is read later) instead of piling up
+// goroutines; one whose operations are all still running gets an error.
 func (c *wsSession) start(id string, req gqlHTTPRequest) bool {
 	if c.expired() {
 		c.close(closeForbidden, "Forbidden: token expired")
 		return true
 	}
+	c.throttle()
 	c.mu.Lock()
-	if _, dup := c.ops[id]; dup {
-		c.mu.Unlock()
+	_, dup := c.ops[id]
+	live := len(c.ops)
+	c.mu.Unlock()
+	if dup {
 		return false
 	}
-	if len(c.ops) >= c.s.cfg.SubscriptionsMaxPerConnection {
-		c.mu.Unlock()
-		c.sendErrors(c.ctx, id, gqlerror.List{gqlerror.Errorf("too many operations on this connection (limit %d)", c.s.cfg.SubscriptionsMaxPerConnection)})
+	if !c.acquireSlot(live) {
+		if c.ctx.Err() == nil {
+			c.sendErrors(c.ctx, id, gqlerror.List{gqlerror.Errorf("too many operations on this connection (limit %d)", c.s.cfg.SubscriptionsMaxPerConnection)})
+		}
+		return true
+	}
+	if !c.s.reserveOperation() {
+		<-c.slots
+		c.sendErrors(c.ctx, id, gqlerror.List{gqlerror.Errorf("too many operations on this server; try again later")})
 		return true
 	}
 	ctx, cancel := context.WithCancel(c.ctx)
 	op := &wsOp{cancel: cancel}
+	c.mu.Lock()
 	c.ops[id] = op
 	claims, role := c.claims, c.role
 	c.mu.Unlock()
@@ -489,11 +542,74 @@ func (c *wsSession) start(id string, req gqlHTTPRequest) bool {
 			}
 			c.mu.Unlock()
 			cancel()
+			c.s.releaseOperation()
+			<-c.slots
 		}()
 		c.execute(ctx, id, req, claims, role)
 	})
 	return true
 }
+
+// acquireSlot takes a slot for a new operation. When every slot is held it
+// waits for one only if some holder is an operation the client already
+// completed (live is the number it has not), which stops on its own.
+func (c *wsSession) acquireSlot(live int) bool {
+	select {
+	case c.slots <- struct{}{}:
+		return true
+	default:
+	}
+	if live >= cap(c.slots) {
+		return false
+	}
+	select {
+	case c.slots <- struct{}{}:
+		return true
+	case <-c.ctx.Done():
+		return false
+	}
+}
+
+// throttle delays the read loop so the connection starts at most
+// server.subscriptions_subscribe_rate operations per second, in bursts of up
+// to server.subscriptions_max_per_connection.
+func (c *wsSession) throttle() {
+	rate := float64(c.s.cfg.SubscriptionsSubscribeRate)
+	if rate <= 0 {
+		return
+	}
+	burst := float64(cap(c.slots))
+	now := time.Now()
+	if !c.last.IsZero() {
+		c.tokens = min(burst, c.tokens+now.Sub(c.last).Seconds()*rate)
+	}
+	c.last = now
+	if c.tokens >= 1 {
+		c.tokens--
+		return
+	}
+	wait := time.Duration((1 - c.tokens) / rate * float64(time.Second))
+	t := time.NewTimer(wait)
+	defer t.Stop()
+	select {
+	case <-t.C:
+	case <-c.ctx.Done():
+	}
+	c.last = time.Now()
+	c.tokens = 0
+}
+
+// reserveOperation counts an operation against
+// server.subscriptions_max_operations; false when none is left.
+func (s *Server) reserveOperation() bool {
+	if s.wsOps.Add(1) > int64(s.cfg.SubscriptionsMaxOperations) {
+		s.wsOps.Add(-1)
+		return false
+	}
+	return true
+}
+
+func (s *Server) releaseOperation() { s.wsOps.Add(-1) }
 
 // stop cancels operation id; the client already considers it complete, so
 // nothing more is sent for it.

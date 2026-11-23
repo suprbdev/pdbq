@@ -32,8 +32,20 @@ server:
   max_cost: 10000
   # Maximum rows per page; first/last above this are rejected and it is the default page size when neither is given.
   max_page_size: 100
-  # Number of parsed and validated GraphQL documents cached by query text (least recently used evicted first; at most 32 MiB of query text). 0 disables the cache.
+  # Maximum lexical tokens (names, punctuation, values, comments) in a GraphQL document; parsing stops at the first token beyond it. Bounds the parse and validation work of one request.
+  max_query_tokens: 15000
+  # Maximum nesting of input values (list and input object literals, and variable values of list and input object types), e.g. filter not/and/or chains.
+  max_input_depth: 32
+  # Maximum selections (fields, fragment spreads, inline fragments) in a GraphQL document with every fragment spread expanded; rejects fragment bombs before they are walked.
+  max_selections: 10000
+  # Maximum field pairs validation compares to check that fields sharing a response key at one position (fragments expanded) can be merged; that check is quadratic in such repeated fields.
+  max_field_comparisons: 100000
+  # Number of parsed and validated GraphQL documents cached by query text (least recently used evicted first, within document_cache_bytes). 0 disables the cache.
   document_cache_size: 1000
+  # Estimated memory the document cache may retain (query text plus parsed and validated AST); least recently used documents are evicted beyond it.
+  document_cache_bytes: 67108864
+  # Estimated size above which a parsed document is not cached (large documents gain little from caching).
+  document_cache_max_entry_bytes: 1048576
   # Allowed CORS origins for /graphql (exact match, or '*' for any). Empty disables CORS headers entirely.
   cors_origins: []
   # Gzip responses for clients that send Accept-Encoding: gzip (off by default).
@@ -50,8 +62,14 @@ server:
   disable_introspection: false
   # Serve PostGraphile-style simple subscriptions (Subscription.listen over LISTEN/NOTIFY) on /graphql over WebSocket, graphql-transport-ws or the legacy graphql-ws subprotocol. Off by default; while off the schema has no Subscription type.
   subscriptions: false
-  # Maximum operations running at once on one WebSocket connection; a subscribe beyond it gets an error.
+  # Maximum operations running at once on one WebSocket connection, counted until each has fully stopped; a subscribe beyond it gets an error (or waits while completed operations are still stopping).
   subscriptions_max_per_connection: 100
+  # Maximum WebSocket connections at once; further upgrade requests are answered 503.
+  subscriptions_max_connections: 1000
+  # Maximum operations running at once over all WebSocket connections; a subscribe beyond it gets an error.
+  subscriptions_max_operations: 10000
+  # Subscribe messages accepted per second on one WebSocket connection, with bursts up to subscriptions_max_per_connection; faster clients are slowed down (their messages are read later). 0 disables the limit.
+  subscriptions_subscribe_rate: 100
   # Prefix put before the listen topic to form the PostgreSQL channel, as in pg_notify('postgraphile:' || topic, payload). The channel must fit in 63 bytes.
   subscriptions_topic_prefix: "postgraphile:"
   # Topics clients may listen to, without the prefix; an entry ending in * allows every topic starting with the rest. Empty allows any topic of letters, digits and _ . : / - characters.

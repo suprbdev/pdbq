@@ -59,6 +59,10 @@ type Server struct {
 	wsMu          sync.Mutex
 	wsSessions    map[*wsSession]struct{}
 	wsClosed      bool
+	// wsConns counts WebSocket connections, accepted or being accepted
+	// (guarded by wsMu); wsOps counts their running operations.
+	wsConns int
+	wsOps   atomic.Int64
 }
 
 func New(cfg config.Server, authn *Authenticator, ex *exec.Executor, sdl string, log *slog.Logger) (*Server, error) {

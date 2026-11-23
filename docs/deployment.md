@@ -111,11 +111,18 @@ the browser and were never exposed. GraphiQL and the usual GraphQL clients
 
 ## Rate limiting
 
-pdbq has **no built-in rate limiter**. The per-request protections
-(`server.max_body_bytes`, `server.request_timeout`, `server.max_depth`,
-`server.max_cost`, `server.max_page_size`, `database.statement_timeout`)
-bound the cost of a single request, but nothing stops a client from sending
-many maximally-expensive requests in parallel.
+pdbq has **no built-in rate limiter** for HTTP requests. The per-request
+protections (`server.max_body_bytes`, `server.max_query_tokens`,
+`server.max_input_depth`, `server.max_selections`,
+`server.max_field_comparisons`, `server.request_timeout`,
+`server.max_depth`, `server.max_cost`, `server.max_page_size`,
+`database.statement_timeout`) bound the cost of a single request, but
+nothing stops a client from sending many maximally-expensive requests in
+parallel. WebSocket subscriptions are bounded per connection
+(`server.subscriptions_max_per_connection`,
+`server.subscriptions_subscribe_rate`) and per server
+(`server.subscriptions_max_connections`,
+`server.subscriptions_max_operations`), but not per client.
 
 Run a rate limiter in front of pdbq in production:
 

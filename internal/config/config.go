@@ -45,26 +45,35 @@ type (
 )
 
 type Server struct {
-	Addr                 string        `koanf:"addr" doc:"Listen address for the HTTP server."`
-	GraphiQL             bool          `koanf:"graphiql" doc:"Serve the GraphiQL playground at / (off by default; enable for development)."`
-	ExposeSchema         bool          `koanf:"expose_schema" doc:"Serve the generated SDL at /schema.graphql (off by default; it reveals every table, column and relation to unauthenticated callers)."`
-	RequestTimeout       time.Duration `koanf:"request_timeout" doc:"Overall HTTP request timeout."`
-	ReadyzTimeout        time.Duration `koanf:"readyz_timeout" doc:"Timeout of the database ping behind GET /readyz; an unreachable or slow database answers 503. /healthz stays a liveness check."`
-	MaxBodyBytes         int64         `koanf:"max_body_bytes" doc:"Maximum accepted request body size in bytes."`
-	MaxDepth             int           `koanf:"max_depth" doc:"Maximum GraphQL selection depth per operation."`
-	MaxCost              int           `koanf:"max_cost" doc:"Maximum estimated cost (selected fields x list multipliers) per operation."`
-	MaxPageSize          int           `koanf:"max_page_size" doc:"Maximum rows per page; first/last above this are rejected and it is the default page size when neither is given."`
-	DocumentCacheSize    int           `koanf:"document_cache_size" doc:"Number of parsed and validated GraphQL documents cached by query text (least recently used evicted first; at most 32 MiB of query text). 0 disables the cache."`
-	CORSOrigins          []string      `koanf:"cors_origins" doc:"Allowed CORS origins for /graphql (exact match, or '*' for any). Empty disables CORS headers entirely."`
-	Compression          bool          `koanf:"compression" doc:"Gzip responses for clients that send Accept-Encoding: gzip (off by default)."`
-	APQ                  bool          `koanf:"apq" doc:"Enable Apollo automatic persisted queries: clients send a sha256 hash in the persistedQuery extension and register the document once on a miss (in-memory cache)."`
-	PersistedQueriesPath string        `koanf:"persisted_queries_path" doc:"JSON file mapping sha256 hex hashes to GraphQL documents, preloaded as persisted queries (never evicted)."`
-	PersistedOnly        bool          `koanf:"persisted_only" doc:"Reject requests that do not reference a persisted query via the persistedQuery extension (requires apq or persisted_queries_path)."`
-	ReadOnly             bool          `koanf:"read_only" doc:"Reject every mutation operation (read-only mode) for maintenance, demos or defense in depth. Also toggleable at runtime when embedding pdbq as a library (App.SetReadOnly)."`
-	DisableIntrospection bool          `koanf:"disable_introspection" doc:"Reject __schema / __type introspection queries and leave the \"Did you mean\" suggestions out of validation errors (off by default). Enable in production to hide the schema shape; __typename keeps working."`
+	Addr                       string        `koanf:"addr" doc:"Listen address for the HTTP server."`
+	GraphiQL                   bool          `koanf:"graphiql" doc:"Serve the GraphiQL playground at / (off by default; enable for development)."`
+	ExposeSchema               bool          `koanf:"expose_schema" doc:"Serve the generated SDL at /schema.graphql (off by default; it reveals every table, column and relation to unauthenticated callers)."`
+	RequestTimeout             time.Duration `koanf:"request_timeout" doc:"Overall HTTP request timeout."`
+	ReadyzTimeout              time.Duration `koanf:"readyz_timeout" doc:"Timeout of the database ping behind GET /readyz; an unreachable or slow database answers 503. /healthz stays a liveness check."`
+	MaxBodyBytes               int64         `koanf:"max_body_bytes" doc:"Maximum accepted request body size in bytes."`
+	MaxDepth                   int           `koanf:"max_depth" doc:"Maximum GraphQL selection depth per operation."`
+	MaxCost                    int           `koanf:"max_cost" doc:"Maximum estimated cost (selected fields x list multipliers) per operation."`
+	MaxPageSize                int           `koanf:"max_page_size" doc:"Maximum rows per page; first/last above this are rejected and it is the default page size when neither is given."`
+	MaxQueryTokens             int           `koanf:"max_query_tokens" doc:"Maximum lexical tokens (names, punctuation, values, comments) in a GraphQL document; parsing stops at the first token beyond it. Bounds the parse and validation work of one request."`
+	MaxInputDepth              int           `koanf:"max_input_depth" doc:"Maximum nesting of input values (list and input object literals, and variable values of list and input object types), e.g. filter not/and/or chains."`
+	MaxSelections              int           `koanf:"max_selections" doc:"Maximum selections (fields, fragment spreads, inline fragments) in a GraphQL document with every fragment spread expanded; rejects fragment bombs before they are walked."`
+	MaxFieldComparisons        int           `koanf:"max_field_comparisons" doc:"Maximum field pairs validation compares to check that fields sharing a response key at one position (fragments expanded) can be merged; that check is quadratic in such repeated fields."`
+	DocumentCacheSize          int           `koanf:"document_cache_size" doc:"Number of parsed and validated GraphQL documents cached by query text (least recently used evicted first, within document_cache_bytes). 0 disables the cache."`
+	DocumentCacheBytes         int           `koanf:"document_cache_bytes" doc:"Estimated memory the document cache may retain (query text plus parsed and validated AST); least recently used documents are evicted beyond it."`
+	DocumentCacheMaxEntryBytes int           `koanf:"document_cache_max_entry_bytes" doc:"Estimated size above which a parsed document is not cached (large documents gain little from caching)."`
+	CORSOrigins                []string      `koanf:"cors_origins" doc:"Allowed CORS origins for /graphql (exact match, or '*' for any). Empty disables CORS headers entirely."`
+	Compression                bool          `koanf:"compression" doc:"Gzip responses for clients that send Accept-Encoding: gzip (off by default)."`
+	APQ                        bool          `koanf:"apq" doc:"Enable Apollo automatic persisted queries: clients send a sha256 hash in the persistedQuery extension and register the document once on a miss (in-memory cache)."`
+	PersistedQueriesPath       string        `koanf:"persisted_queries_path" doc:"JSON file mapping sha256 hex hashes to GraphQL documents, preloaded as persisted queries (never evicted)."`
+	PersistedOnly              bool          `koanf:"persisted_only" doc:"Reject requests that do not reference a persisted query via the persistedQuery extension (requires apq or persisted_queries_path)."`
+	ReadOnly                   bool          `koanf:"read_only" doc:"Reject every mutation operation (read-only mode) for maintenance, demos or defense in depth. Also toggleable at runtime when embedding pdbq as a library (App.SetReadOnly)."`
+	DisableIntrospection       bool          `koanf:"disable_introspection" doc:"Reject __schema / __type introspection queries and leave the \"Did you mean\" suggestions out of validation errors (off by default). Enable in production to hide the schema shape; __typename keeps working."`
 
 	Subscriptions                 bool          `koanf:"subscriptions" doc:"Serve PostGraphile-style simple subscriptions (Subscription.listen over LISTEN/NOTIFY) on /graphql over WebSocket, graphql-transport-ws or the legacy graphql-ws subprotocol. Off by default; while off the schema has no Subscription type."`
-	SubscriptionsMaxPerConnection int           `koanf:"subscriptions_max_per_connection" doc:"Maximum operations running at once on one WebSocket connection; a subscribe beyond it gets an error."`
+	SubscriptionsMaxPerConnection int           `koanf:"subscriptions_max_per_connection" doc:"Maximum operations running at once on one WebSocket connection, counted until each has fully stopped; a subscribe beyond it gets an error (or waits while completed operations are still stopping)."`
+	SubscriptionsMaxConnections   int           `koanf:"subscriptions_max_connections" doc:"Maximum WebSocket connections at once; further upgrade requests are answered 503."`
+	SubscriptionsMaxOperations    int           `koanf:"subscriptions_max_operations" doc:"Maximum operations running at once over all WebSocket connections; a subscribe beyond it gets an error."`
+	SubscriptionsSubscribeRate    int           `koanf:"subscriptions_subscribe_rate" doc:"Subscribe messages accepted per second on one WebSocket connection, with bursts up to subscriptions_max_per_connection; faster clients are slowed down (their messages are read later). 0 disables the limit."`
 	SubscriptionsTopicPrefix      string        `koanf:"subscriptions_topic_prefix" doc:"Prefix put before the listen topic to form the PostgreSQL channel, as in pg_notify('postgraphile:' || topic, payload). The channel must fit in 63 bytes."`
 	SubscriptionsTopics           []string      `koanf:"subscriptions_topics" doc:"Topics clients may listen to, without the prefix; an entry ending in * allows every topic starting with the rest. Empty allows any topic of letters, digits and _ . : / - characters."`
 	SubscriptionsKeepalive        time.Duration `koanf:"subscriptions_keepalive" doc:"Interval of the WebSocket ping (and legacy graphql-ws ka message) on subscription connections; a peer that does not answer within it is disconnected. 0 disables."`
@@ -103,16 +112,25 @@ func DefaultConfig() Config {
 			StatementTimeout: 30 * time.Second,
 		},
 		Server: Server{
-			Addr:              ":8080",
-			RequestTimeout:    30 * time.Second,
-			ReadyzTimeout:     2 * time.Second,
-			MaxBodyBytes:      1 << 20,
-			MaxDepth:          15,
-			MaxCost:           10000,
-			MaxPageSize:       100,
-			DocumentCacheSize: 1000,
+			Addr:                       ":8080",
+			RequestTimeout:             30 * time.Second,
+			ReadyzTimeout:              2 * time.Second,
+			MaxBodyBytes:               1 << 20,
+			MaxDepth:                   15,
+			MaxCost:                    10000,
+			MaxPageSize:                100,
+			MaxQueryTokens:             15000,
+			MaxInputDepth:              32,
+			MaxSelections:              10000,
+			MaxFieldComparisons:        100000,
+			DocumentCacheSize:          1000,
+			DocumentCacheBytes:         64 << 20,
+			DocumentCacheMaxEntryBytes: 1 << 20,
 
 			SubscriptionsMaxPerConnection: 100,
+			SubscriptionsMaxConnections:   1000,
+			SubscriptionsMaxOperations:    10000,
+			SubscriptionsSubscribeRate:    100,
 			SubscriptionsTopicPrefix:      "postgraphile:",
 			SubscriptionsKeepalive:        15 * time.Second,
 			SubscriptionsBuffer:           32,
@@ -181,6 +199,21 @@ func (c *Config) Validate() error {
 	if c.Server.DocumentCacheSize < 0 {
 		errs = append(errs, "server.document_cache_size must be >= 0")
 	}
+	for _, l := range []struct {
+		name string
+		v    int
+	}{
+		{"max_query_tokens", c.Server.MaxQueryTokens},
+		{"max_input_depth", c.Server.MaxInputDepth},
+		{"max_selections", c.Server.MaxSelections},
+		{"max_field_comparisons", c.Server.MaxFieldComparisons},
+		{"document_cache_bytes", c.Server.DocumentCacheBytes},
+		{"document_cache_max_entry_bytes", c.Server.DocumentCacheMaxEntryBytes},
+	} {
+		if l.v < 1 {
+			errs = append(errs, "server."+l.name+" must be >= 1")
+		}
+	}
 	if c.Server.Subscriptions {
 		errs = append(errs, validateSubscriptions(c.Server)...)
 	}
@@ -205,6 +238,15 @@ func validateSubscriptions(s Server) []string {
 	var errs []string
 	if s.SubscriptionsMaxPerConnection < 1 {
 		errs = append(errs, "server.subscriptions_max_per_connection must be >= 1")
+	}
+	if s.SubscriptionsMaxConnections < 1 {
+		errs = append(errs, "server.subscriptions_max_connections must be >= 1")
+	}
+	if s.SubscriptionsMaxOperations < 1 {
+		errs = append(errs, "server.subscriptions_max_operations must be >= 1")
+	}
+	if s.SubscriptionsSubscribeRate < 0 {
+		errs = append(errs, "server.subscriptions_subscribe_rate must be >= 0")
 	}
 	if s.SubscriptionsBuffer < 1 {
 		errs = append(errs, "server.subscriptions_buffer must be >= 1")

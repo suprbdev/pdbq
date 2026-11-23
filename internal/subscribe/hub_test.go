@@ -285,3 +285,85 @@ func TestHubConcurrent(t *testing.T) {
 	wg.Wait()
 	eventually(t, "all UNLISTENed", func() bool { return len(h.Listening()) == 0 })
 }
+
+// stalledDial never connects, so every Subscribe waits for its LISTEN until
+// its context ends.
+func stalledDial(ctx context.Context) (Conn, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+func TestHubCancelledSubscribeReleasesWaiter(t *testing.T) {
+	h := NewHub(stalledDial, nil)
+	defer h.Close()
+	var wg sync.WaitGroup
+	for i := range 1000 {
+		wg.Go(func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+			defer cancel()
+			if _, err := h.Subscribe(ctx, fmt.Sprintf("c%d", i), 1); !errors.Is(err, context.DeadlineExceeded) {
+				t.Errorf("Subscribe = %v, want deadline exceeded", err)
+			}
+		})
+	}
+	wg.Wait()
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if len(h.waiters) != 0 || len(h.subs) != 0 {
+		t.Fatalf("after cancelled subscribes: %d waiter channels, %d subscribed channels", len(h.waiters), len(h.subs))
+	}
+}
+
+func TestHubCancelledSubscribeKeepsOtherWaiters(t *testing.T) {
+	h := NewHub(stalledDial, nil)
+	defer h.Close()
+	long, cancelLong := context.WithCancel(context.Background())
+	defer cancelLong()
+	done := make(chan error, 1)
+	go func() {
+		_, err := h.Subscribe(long, "shared", 1)
+		done <- err
+	}()
+	eventually(t, "first waiter", func() bool { return h.Pending() == 1 })
+	short, cancelShort := context.WithCancel(context.Background())
+	go cancelShort()
+	if _, err := h.Subscribe(short, "shared", 1); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Subscribe = %v", err)
+	}
+	h.mu.Lock()
+	n := len(h.waiters["shared"])
+	h.mu.Unlock()
+	if n != 1 {
+		t.Fatalf("%d waiters on shared, want the first one", n)
+	}
+	cancelLong()
+	<-done
+	if p := h.Pending(); p != 0 {
+		t.Fatalf("pending = %d", p)
+	}
+}
+
+func TestHubMaxPending(t *testing.T) {
+	h := NewHub(stalledDial, nil)
+	defer h.Close()
+	h.SetMaxPending(2)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var wg sync.WaitGroup
+	for _, ch := range []string{"a", "b", "b"} {
+		wg.Go(func() { _, _ = h.Subscribe(ctx, ch, 1) })
+	}
+	eventually(t, "two pending channels", func() bool {
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		return len(h.waiters) == 2 && len(h.waiters["b"]) == 2
+	})
+	if _, err := h.Subscribe(ctx, "c", 1); !errors.Is(err, ErrBusy) {
+		t.Fatalf("third channel: %v, want ErrBusy", err)
+	}
+	cancel()
+	wg.Wait()
+	if p := h.Pending(); p != 0 {
+		t.Fatalf("pending = %d", p)
+	}
+}

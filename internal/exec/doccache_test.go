@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strings"
 	"sync"
 	"testing"
 
@@ -118,19 +117,19 @@ func TestDocumentCacheEvictsLeastRecentlyUsed(t *testing.T) {
 }
 
 func TestDocumentCacheByteBudget(t *testing.T) {
-	c := newDocCache(nil, 100, 64)
-	c.put(strings.Repeat("a", 30), nil, nil)
-	c.put(strings.Repeat("b", 30), nil, nil)
-	c.put(strings.Repeat("c", 30), nil, nil)
-	if c.len() != 2 || c.bytes != 60 {
-		t.Fatalf("len=%d bytes=%d, want 2 entries / 60 bytes", c.len(), c.bytes)
+	c := newDocCache(nil, 100, 64, 40)
+	c.put("a", nil, nil, 30)
+	c.put("b", nil, nil, 30)
+	c.put("c", nil, nil, 30)
+	if c.len() != 2 || c.size() != 60 {
+		t.Fatalf("len=%d bytes=%d, want 2 entries / 60 bytes", c.len(), c.size())
 	}
-	if _, ok := c.get(strings.Repeat("a", 30)); ok {
+	if _, ok := c.get("a"); ok {
 		t.Fatal("oldest entry survived the byte budget")
 	}
-	c.put(strings.Repeat("d", 65), nil, nil)
-	if c.len() != 2 {
-		t.Fatal("an entry larger than the whole budget was cached")
+	c.put("d", nil, nil, 41)
+	if _, ok := c.get("d"); ok || c.len() != 2 {
+		t.Fatal("an entry larger than the entry limit was cached")
 	}
 }
 

@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"sync"
 	"time"
 
@@ -28,6 +29,14 @@ var ErrOverflow = errors.New("subscription dropped: the subscriber fell too far 
 // ErrClosed ends subscriptions when the hub shuts down, and is returned by
 // Subscribe afterwards.
 var ErrClosed = errors.New("subscriptions are shutting down")
+
+// ErrBusy is returned by Subscribe when a new channel would exceed the
+// number of channels waiting for their LISTEN (see SetMaxPending).
+var ErrBusy = errors.New("too many subscriptions are waiting to start; try again later")
+
+// DefaultMaxPending is the default bound of the channels waiting for their
+// LISTEN.
+const DefaultMaxPending = 1024
 
 // Conn is the dedicated LISTEN connection. Exec runs one simple-protocol
 // statement; WaitForNotification blocks for the next notification and must
@@ -74,6 +83,7 @@ type Hub struct {
 	waiters     map[string][]chan error
 	dirty       bool
 	interrupt   context.CancelFunc
+	maxPending  int
 }
 
 // NewHub returns a hub that opens its LISTEN connection with dial.
@@ -92,7 +102,28 @@ func NewHub(dial DialFunc, log *slog.Logger) *Hub {
 		listening:   map[string]bool{},
 		unlistening: map[string]bool{},
 		waiters:     map[string][]chan error{},
+		maxPending:  DefaultMaxPending,
 	}
+}
+
+// SetMaxPending bounds the channels waiting for their LISTEN: the one LISTEN
+// connection works through them in turn, so a Subscribe for a new channel
+// beyond n fails with ErrBusy instead of queueing. n < 1 means
+// DefaultMaxPending.
+func (h *Hub) SetMaxPending(n int) {
+	if n < 1 {
+		n = DefaultMaxPending
+	}
+	h.mu.Lock()
+	h.maxPending = n
+	h.mu.Unlock()
+}
+
+// Pending returns the number of channels waiting for their LISTEN.
+func (h *Hub) Pending() int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return len(h.waiters)
 }
 
 // PoolDialer returns a DialFunc opening connections with pool's connection
@@ -170,6 +201,10 @@ func (h *Hub) Subscribe(ctx context.Context, channel string, buf int) (*Listener
 		h.mu.Unlock()
 		return nil, ErrClosed
 	}
+	if !h.listening[channel] && h.waiters[channel] == nil && len(h.waiters) >= h.maxPending {
+		h.mu.Unlock()
+		return nil, ErrBusy
+	}
 	l := &Listener{hub: h, channel: channel, ch: make(chan string, buf)}
 	set := h.subs[channel]
 	if set == nil {
@@ -198,8 +233,25 @@ func (h *Hub) Subscribe(ctx context.Context, channel string, buf int) (*Listener
 		}
 		return l, nil
 	case <-ctx.Done():
-		l.Close()
+		h.mu.Lock()
+		h.dropWaiterLocked(channel, wait)
+		h.removeLocked(l, nil)
+		h.mu.Unlock()
 		return nil, ctx.Err()
+	}
+}
+
+// dropWaiterLocked removes wait from the Subscribe calls waiting for
+// channel's LISTEN.
+func (h *Hub) dropWaiterLocked(channel string, wait chan error) {
+	ws := h.waiters[channel]
+	if i := slices.Index(ws, wait); i >= 0 {
+		ws = slices.Delete(ws, i, i+1)
+	}
+	if len(ws) == 0 {
+		delete(h.waiters, channel)
+	} else {
+		h.waiters[channel] = ws
 	}
 }
 
