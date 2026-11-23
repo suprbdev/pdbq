@@ -625,7 +625,11 @@ func (s *stmt) connectionJSON(t *introspect.Table, f *ast.Field, extraCond strin
 	agg := func(expr string) string {
 		return fmt.Sprintf("coalesce(json_agg(%s%s)%s, '[]'::json)", expr, aggOrder, aggFilter)
 	}
-	cursorExpr := encodeCursorSQL(sub+".__rn", plan.offset)
+	cursorOffset := 0
+	if len(dcols) > 0 {
+		cursorOffset = plan.offset
+	}
+	cursorExpr := encodeCursorSQL(sub+".__rn", cursorOffset)
 	if plan.emitKeyset {
 		cursorExpr = sub + ".__cursor"
 	}
