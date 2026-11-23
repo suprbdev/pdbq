@@ -133,3 +133,49 @@ func TestDevPassesThroughInternalCompileErrors(t *testing.T) {
 		t.Fatalf("error = %q, want full detail in dev mode", res.Errors[0].Message)
 	}
 }
+
+// TestPGErrorMessages covers the SQLSTATEs pdbcore classifies alongside the
+// familiar integrity errors: 23001 (RESTRICT on PostgreSQL 18) like 23503,
+// 23P01 (exclusion, temporal keys) like 23505, and malformed PostGIS and
+// full-text/ltree operands, which reach clients as input errors.
+func TestPGErrorMessages(t *testing.T) {
+	cases := []struct {
+		name         string
+		err          *pgconn.PgError
+		prod, strict string
+	}{
+		{"restrict 23001", &pgconn.PgError{Code: "23001", Message: `update or delete on table "users" violates RESTRICT setting of foreign key constraint "posts_author_id_fkey" on table "posts"`},
+			`violates RESTRICT setting`, "constraint violation"},
+		{"foreign key 23503", &pgconn.PgError{Code: "23503", Message: `insert or update on table "posts" violates foreign key constraint "posts_author_id_fkey"`},
+			"violates foreign key constraint", "constraint violation"},
+		{"exclusion 23P01", &pgconn.PgError{Code: "23P01", Message: `conflicting key value violates exclusion constraint "bookings_room_during_excl"`},
+			"violates exclusion constraint", "constraint violation"},
+		{"postgis XX000", &pgconn.PgError{Code: "XX000", Message: "lwgeom_intersection_prec: GEOS Error: TopologyException"},
+			"invalid geometry", "invalid input value"},
+		{"mixed srid XX000", &pgconn.PgError{Code: "XX000", Message: "ST_Intersects: Operation on mixed SRID geometries (Point, 4326) != (Point, 0)"},
+			"invalid geometry", "invalid input value"},
+		{"tsquery 42601", &pgconn.PgError{Code: "42601", Message: `syntax error in tsquery: "a &"`},
+			`syntax error in tsquery: "a &"`, "invalid input value"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fail := func(ctx context.Context, req *compile.Request) (*compile.Statement, error) { return nil, tc.err }
+			for _, mode := range []struct {
+				strict bool
+				want   string
+			}{{false, tc.prod}, {true, tc.strict}} {
+				e := newErrorExecutor(t, fail, exec.Options{StrictErrors: mode.strict})
+				res := e.Execute(context.Background(), exec.Request{Query: `{ allUsers { nodes { id } } }`})
+				if len(res.Errors) != 1 {
+					t.Fatalf("errors = %v, want exactly one", res.Errors)
+				}
+				if got := res.Errors[0].Message; !strings.Contains(got, mode.want) {
+					t.Errorf("strict=%v: error = %q, want %q", mode.strict, got, mode.want)
+				}
+				if got := res.Errors[0].Extensions["code"]; got != tc.err.Code {
+					t.Errorf("strict=%v: code = %v, want %s", mode.strict, got, tc.err.Code)
+				}
+			}
+		})
+	}
+}
