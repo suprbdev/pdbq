@@ -751,6 +751,9 @@ func (s *stmt) pageClause(f *ast.Field, extraOffset int) (string, error) {
 }
 
 func encodeCursorSQL(rnExpr string, offset int) string {
+	if offset == 0 {
+		return fmt.Sprintf("encode(convert_to('o:' || %s::text, 'UTF8'), 'base64')", rnExpr)
+	}
 	return fmt.Sprintf("encode(convert_to('o:' || (%s + %d)::text, 'UTF8'), 'base64')", rnExpr, offset)
 }
 
