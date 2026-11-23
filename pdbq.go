@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -39,6 +40,9 @@ type App struct {
 
 	pool  *pgxpool.Pool
 	built *schema.Built
+
+	watchMu sync.Mutex
+	stops   []func()
 
 	// readOnly lives on the App (not in exec.Options as a value) so a single
 	// flag is shared by every executor the App builds — flipping it at
@@ -145,8 +149,18 @@ func (a *App) Connect(ctx context.Context) error {
 // Pool exposes the connection pool (nil before Connect).
 func (a *App) Pool() *pgxpool.Pool { return a.pool }
 
-// Close releases resources.
+// Close stops any running schema watcher, waits for it to release its
+// connection, then closes the pool. It is idempotent, needs no prior Serve or
+// Handler call, and does not require the context given to them to be
+// cancelled first.
 func (a *App) Close() {
+	a.watchMu.Lock()
+	stops := a.stops
+	a.stops = nil
+	a.watchMu.Unlock()
+	for _, stop := range stops {
+		stop()
+	}
 	if a.pool != nil {
 		a.pool.Close()
 	}
