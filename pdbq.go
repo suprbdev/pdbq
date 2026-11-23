@@ -179,6 +179,7 @@ func (a *App) BuildSchema(ctx context.Context, cat *introspect.Catalog) (*schema
 		FilterIndexedOnly: a.Config.Filters.IndexedOnly,
 		AllowColumns:      a.Config.Filters.AllowColumns,
 		Functions:         a.Config.Schema.Functions,
+		JWTType:           a.Config.RLS.Auth.JWTType,
 		Logger:            a.Log,
 	})
 	if err := a.Registry.TransformSchema(ctx, disabled, b); err != nil {

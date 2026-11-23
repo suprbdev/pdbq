@@ -1,0 +1,10 @@
+# PostGIS function arguments go through the spatial value path (constructor
+# over one parameter), in queries and mutations alike.
+mutation {
+  near: recordVisit(input: {spot: {type: "Point", coordinates: [1, 2]}}) {
+    result { visitId spot }
+  }
+  wkt: recordVisit(input: {spot: "POINT(1 2)", note: {via: "app"}}) {
+    result { visitId }
+  }
+}

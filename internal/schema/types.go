@@ -78,9 +78,10 @@ type Field struct {
 }
 
 type Arg struct {
-	Name    string
-	Type    string
-	Default string // SDL literal, empty for none
+	Name        string
+	Type        string
+	Default     string // SDL literal, empty for none
+	Description string
 }
 
 // Object is an output object type (or interface when IsInterface is set).

@@ -1,0 +1,52 @@
+package compile_test
+
+import (
+	"errors"
+	"strings"
+	"testing"
+
+	"github.com/suprbdev/pdbq/internal/compile"
+)
+
+func TestFunctionMissingArgumentsAreUserErrors(t *testing.T) {
+	cases := map[string]struct {
+		query, want string
+	}{
+		"required omitted": {`{ greet(greeting: "Hi") }`, "greet: missing required argument(s): name"},
+		"variadic gap":     {`{ sumAll(nums: [1, 2]) }`, "sumAll: missing required argument(s): scale"},
+		"mutation input":   {`mutation { recordVisit(input: {}) { clientMutationId } }`, "recordVisit: missing required argument(s): spot"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			_, err := compileOne(t, tc.query, 100)
+			var uerr *compile.UserError
+			if !errors.As(err, &uerr) {
+				t.Fatalf("err = %v, want a *compile.UserError", err)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("err = %q, want it to mention %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestFunctionSchemaSurface(t *testing.T) {
+	sdl := build(t).SDL
+	for _, want := range []string{
+		`greet(name: String, """Optional; defaults to ` + "`'Hello'::text`" + ` when omitted.""" greeting: String): String`,
+		`"""Optional; defaults to ` + "`'{}'::integer[]`" + ` when omitted. Variadic: pass the values as a list.""" nums: [Int]`,
+		`postStats("""Optional; defaults to ` + "`0`" + ` when omitted.""" minId: Int): PostStatsRecord`,
+		"postTitles: [PostTitlesRecord!]!",
+		"type PostStatsRecord {\n  total: BigInt\n  maxTitle: String\n}",
+		"makeAddress(street: String, city: String): Address",
+		"formatAddress(a: AddressInput): String",
+		"placesNear(pt: GeoJSON,",
+		"result: RecordVisitRecord",
+		"home: Address",
+		"authenticate(input: AuthenticateInput!): AuthenticatePayload!",
+	} {
+		if !strings.Contains(sdl, want) {
+			t.Errorf("SDL missing %q", want)
+		}
+	}
+}

@@ -14,6 +14,7 @@ import (
 	"github.com/vektah/gqlparser/v2/parser"
 	"github.com/vektah/gqlparser/v2/validator"
 
+	"github.com/suprbdev/pdbcore/introspect"
 	"github.com/suprbdev/pdbcore/testutil"
 	"github.com/suprbdev/pdbq/internal/compile"
 	"github.com/suprbdev/pdbq/internal/inflect"
@@ -36,7 +37,9 @@ func build(t testing.TB) *schema.Built {
 // buildWith is build with the postgis plugin configured by settings.
 func buildWith(t testing.TB, settings map[string]any) *schema.Built {
 	t.Helper()
-	b := schema.New(testutil.FixtureCatalog(), inflect.Default, schema.Options{
+	cat := testutil.FixtureCatalog()
+	cat.Functions = append(cat.Functions, functionFixtures()...)
+	b := schema.New(cat, inflect.Default, schema.Options{
 		FilterIndexedOnly: true,
 		Functions:         true,
 	})
@@ -48,6 +51,79 @@ func buildWith(t testing.TB, settings map[string]any) *schema.Built {
 		t.Fatalf("build schema: %v", err)
 	}
 	return built
+}
+
+// functionFixtures are functions the shared pdbcore fixture lacks, added to
+// the golden catalog for the function-call surface: DEFAULT and VARIADIC
+// parameters, OUT/TABLE records, composite returns and arguments, and PostGIS
+// arguments. test/e2e_test.go creates the same functions in a real database.
+func functionFixtures() []*introspect.Function {
+	in := func(name, typ, typeSchema string) introspect.FuncArg {
+		return introspect.FuncArg{Name: name, PGType: typ, TypeSchema: typeSchema, Mode: introspect.ArgModeIn}
+	}
+	withDefault := func(a introspect.FuncArg, def string) introspect.FuncArg {
+		a.HasDefault, a.Default = true, def
+		return a
+	}
+	out := func(name, typ, typeSchema string, mode introspect.ArgMode) introspect.FuncArg {
+		return introspect.FuncArg{Name: name, PGType: typ, TypeSchema: typeSchema, Mode: mode}
+	}
+	stable := introspect.VolatilityStable
+	return []*introspect.Function{{
+		Schema: "public", Name: "greet",
+		Args: []introspect.FuncArg{
+			in("name", "text", "pg_catalog"),
+			withDefault(in("greeting", "text", "pg_catalog"), "'Hello'::text"),
+		},
+		ReturnType: "text", ReturnTypeSchema: "pg_catalog", Volatility: stable,
+	}, {
+		Schema: "public", Name: "sum_all",
+		Args: []introspect.FuncArg{
+			withDefault(in("scale", "int4", "pg_catalog"), "1"),
+			withDefault(introspect.FuncArg{Name: "nums", PGType: "_int4", TypeSchema: "pg_catalog", Mode: introspect.ArgModeVariadic}, "'{}'::integer[]"),
+		},
+		ReturnType: "int8", ReturnTypeSchema: "pg_catalog", Volatility: stable,
+	}, {
+		Schema: "public", Name: "post_stats",
+		Args:          []introspect.FuncArg{withDefault(in("min_id", "int4", "pg_catalog"), "0")},
+		ReturnColumns: []introspect.FuncArg{out("total", "int8", "pg_catalog", introspect.ArgModeOut), out("max_title", "text", "pg_catalog", introspect.ArgModeOut)},
+		ReturnType:    "record", ReturnTypeSchema: "pg_catalog", Volatility: stable,
+	}, {
+		Schema: "public", Name: "post_titles",
+		ReturnColumns: []introspect.FuncArg{out("id", "int4", "pg_catalog", introspect.ArgModeTable), out("title", "text", "pg_catalog", introspect.ArgModeTable)},
+		ReturnType:    "record", ReturnTypeSchema: "pg_catalog", ReturnsSet: true, Volatility: stable,
+	}, {
+		Schema: "public", Name: "make_address",
+		Args:       []introspect.FuncArg{in("street", "text", "pg_catalog"), in("city", "text", "pg_catalog")},
+		ReturnType: "address", ReturnTypeSchema: "public", Volatility: stable,
+	}, {
+		Schema: "public", Name: "format_address",
+		Args:       []introspect.FuncArg{in("a", "address", "public")},
+		ReturnType: "text", ReturnTypeSchema: "pg_catalog", Volatility: stable,
+	}, {
+		Schema: "public", Name: "places_near",
+		Args: []introspect.FuncArg{
+			in("pt", "geometry", "public"),
+			withDefault(in("max_dist", "float8", "pg_catalog"), "1000"),
+		},
+		ReturnType: "places", ReturnTypeSchema: "public", ReturnsSet: true, Volatility: stable,
+	}, {
+		Schema: "public", Name: "record_visit",
+		Args:          []introspect.FuncArg{out("spot", "geometry", "public", introspect.ArgModeInOut), withDefault(in("note", "jsonb", "pg_catalog"), "NULL::jsonb")},
+		ReturnColumns: []introspect.FuncArg{out("visit_id", "int4", "pg_catalog", introspect.ArgModeOut), out("spot", "geometry", "public", introspect.ArgModeInOut)},
+		ReturnType:    "record", ReturnTypeSchema: "pg_catalog", Volatility: introspect.VolatilityVolatile,
+	}, {
+		Schema: "public", Name: "users_greeting",
+		Args: []introspect.FuncArg{
+			in("u", "users", "public"),
+			withDefault(in("prefix", "text", "pg_catalog"), "'Hi'::text"),
+		},
+		ReturnType: "text", ReturnTypeSchema: "pg_catalog", Volatility: stable,
+	}, {
+		Schema: "public", Name: "users_home",
+		Args:       []introspect.FuncArg{in("u", "users", "public")},
+		ReturnType: "address", ReturnTypeSchema: "public", Volatility: stable,
+	}}
 }
 
 // TestGolden compiles each testdata/*.graphql document and compares the SQL

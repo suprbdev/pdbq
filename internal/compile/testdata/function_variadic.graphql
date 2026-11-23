@@ -1,0 +1,7 @@
+# A VARIADIC parameter takes a list and is passed with the VARIADIC keyword in
+# positional notation; trailing defaulted parameters may still be omitted.
+{
+  both: sumAll(scale: 2, nums: [1, 2, 3])
+  scaleOnly: sumAll(scale: 3)
+  none: sumAll
+}

@@ -6,7 +6,6 @@ import (
 
 	"github.com/vektah/gqlparser/v2/ast"
 
-	"github.com/suprbdev/pdbcore/inflect"
 	"github.com/suprbdev/pdbcore/introspect"
 	"github.com/suprbdev/pdbcore/postgis"
 	"github.com/suprbdev/pdbq/internal/schema"
@@ -19,10 +18,16 @@ const jsonbBuildObjectChunk = 40 // pairs (80 args)
 // rowJSON compiles a selection set over a table into a jsonb expression plus
 // the LEFT JOIN LATERAL clauses it needs against `alias`.
 func (s *stmt) rowJSON(t *introspect.Table, sel ast.SelectionSet, alias string, depth int) (string, []string, error) {
+	return s.rowJSONAs(s.c.Built.TypeForTable[t.Schema+"."+t.Name], sel, alias, depth)
+}
+
+// rowJSONAs is rowJSON for the row object type typeName, which may also be a
+// function's generated record type: its fields are bound to columns of the
+// row source like a table's.
+func (s *stmt) rowJSONAs(typeName string, sel ast.SelectionSet, alias string, depth int) (string, []string, error) {
 	if depth > s.maxDepth {
 		return "", nil, errUser("selection depth exceeds limit (%d)", s.maxDepth)
 	}
-	typeName := s.c.Built.TypeForTable[t.Schema+"."+t.Name]
 	fields := s.expandFor(sel, typeName)
 	if len(fields) == 0 {
 		// Validation guarantees a non-empty selection set, so this only
@@ -159,63 +164,6 @@ func (s *stmt) exprJSON(ref string, c *introspect.Column) string {
 	}
 }
 
-// computedJSON compiles a computed-column field: the row-type function called
-// with an explicit ROW(...)::table cast, which works over any row source —
-// a table scan, a function row source, or a mutation RETURNING CTE (whose
-// whole-row variable is an anonymous record the function would reject).
-// Set-returning functions aggregate into a scalar-transformed jsonb array
-// (SETOF <scalar>) or a fully-selected row array (SETOF <table>).
-func (s *stmt) computedJSON(meta *schema.FieldMeta, f *ast.Field, alias string, depth int) (string, error) {
-	fn := meta.Function
-	params := []string{rowParamSQL(meta.Table, alias)}
-	for _, a := range fn.Args[1:] {
-		argDef := f.Arguments.ForName(inflect.LowerCamel(a.Name))
-		if argDef == nil {
-			params = append(params, "NULL")
-			continue
-		}
-		v, err := argDef.Value.Value(s.req.Vars)
-		if err != nil {
-			return "", err
-		}
-		params = append(params, s.argParam(a, v)+"::"+quoteIdent(a.PGType))
-	}
-	call := quoteIdent(fn.Schema) + "." + quoteIdent(fn.Name) + "(" + strings.Join(params, ", ") + ")"
-	ret := &introspect.Column{
-		PGType:     fn.ReturnType,
-		TypeSchema: fn.ReturnTypeSchema,
-		IsArray:    strings.HasPrefix(fn.ReturnType, "_"),
-	}
-	if fn.ReturnsSet {
-		if rt := s.c.Built.Catalog.Table(fn.ReturnTypeSchema, fn.ReturnType); rt != nil && len(f.SelectionSet) > 0 {
-			rowAlias := s.alias("t")
-			jsonExpr, laterals, err := s.rowJSON(rt, f.SelectionSet, rowAlias, depth)
-			if err != nil {
-				return "", err
-			}
-			sub := s.alias("s")
-			return fmt.Sprintf("(SELECT coalesce(jsonb_agg(%s.data), '[]'::jsonb) FROM (\n%s\n) AS %s)",
-				sub,
-				indent(fmt.Sprintf("SELECT %s AS data\nFROM %s AS %s%s", jsonExpr, call, rowAlias, joinLaterals(laterals))),
-				sub), nil
-		}
-		elem := s.alias("v")
-		return fmt.Sprintf("(SELECT coalesce(jsonb_agg(%s), '[]'::jsonb) FROM %s AS %s(v))",
-			s.exprJSON(elem+".v", ret), call, elem), nil
-	}
-	if ret.IsArray {
-		// A function call is not a stable reference: enumArrayJSON would
-		// subscript it repeatedly, re-evaluating the call per element.
-		if _, ok := s.enumValuesFor(ret); ok {
-			sub := s.alias("a")
-			mapped, _ := s.enumArrayJSON(sub+".v", ret)
-			return fmt.Sprintf("(SELECT %s FROM (SELECT %s AS v) AS %s)", mapped, call, sub), nil
-		}
-		return "to_jsonb(" + call + ")", nil
-	}
-	return s.exprJSON(call, ret), nil
-}
-
 // rowParamSQL renders alias's row as an explicit ROW(...)::table value, which
 // works over any row source — a table scan, a function row source, or a
 // mutation RETURNING CTE (whose whole-row variable is an anonymous record).
@@ -348,43 +296,6 @@ func (s *stmt) enumArrayJSON(ref string, c *introspect.Column) (string, bool) {
 	mapped, _ := s.enumCase("("+ref+")["+elem+".o]", c)
 	return fmt.Sprintf("CASE WHEN %s IS NULL THEN NULL ELSE (SELECT coalesce(jsonb_agg(%s ORDER BY %s.o), '[]'::jsonb) FROM (SELECT generate_subscripts(%s, 1) AS o) AS %s) END",
 		ref, mapped, elem, ref, elem), true
-}
-
-// argParam renders a function argument value as a parameter, mapping GraphQL
-// enum value names back to their pg labels first: enum-typed arguments are
-// declared with the generated enum type, so the incoming value is a value name
-// ("HAPPY") that PostgreSQL would reject as a label.
-func (s *stmt) argParam(a introspect.FuncArg, v any) string {
-	col := &introspect.Column{
-		PGType:     a.PGType,
-		TypeSchema: a.TypeSchema,
-		IsArray:    strings.HasPrefix(a.PGType, "_"),
-	}
-	return s.param(s.coerce(col, v))
-}
-
-// fnReturnColumn describes a function's return type as a column, so the
-// scalar/array JSON renderers can apply the same representation fixes they
-// apply to real columns (enum value names, BigInt-as-string, bytea base64).
-func fnReturnColumn(fn *introspect.Function) *introspect.Column {
-	return &introspect.Column{
-		PGType:     fn.ReturnType,
-		TypeSchema: fn.ReturnTypeSchema,
-		IsArray:    strings.HasPrefix(fn.ReturnType, "_"),
-	}
-}
-
-// fnValueJSON renders a already-materialized function result value (a stable
-// reference such as "__fn.v", not a call expression) as response JSON.
-func (s *stmt) fnValueJSON(ref string, fn *introspect.Function) string {
-	ret := fnReturnColumn(fn)
-	if ret.IsArray {
-		if expr, ok := s.enumArrayJSON(ref, ret); ok {
-			return expr
-		}
-		return "to_jsonb(" + ref + ")"
-	}
-	return "to_jsonb(" + s.exprJSON(ref, ret) + ")"
 }
 
 func anyMap(m map[string]string) map[string]any {
