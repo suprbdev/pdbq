@@ -1,5 +1,7 @@
 # Incremental delivery (`@defer` and `@stream`)
 
+> **Experimental.** Incremental delivery (`@defer` and `@stream`) is outside the 1.0 compatibility promise and may change in a minor release. See [Compatibility and versioning](compatibility.md#experimental-features).
+
 pdbq implements GraphQL incremental delivery: `@defer` on fragments and
 `@stream` on list fields. The response shape follows the incremental delivery
 RFC as graphql-js 17 and GraphQL Yoga implement it (`pending`, `incremental`,

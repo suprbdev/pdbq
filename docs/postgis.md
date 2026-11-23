@@ -351,6 +351,8 @@ a column.
 
 ## Typed geometry
 
+> **Experimental.** Typed geometry is outside the 1.0 compatibility promise and may change in a minor release. See [Compatibility and versioning](compatibility.md#experimental-features).
+
 With `plugins.settings.postgis.typed_geometry: true`, spatial column fields
 return objects instead of the `GeoJSON` scalar, in the shape of PostGraphile's
 `@graphile/postgis` plugin. The default stays off, and with it off the schema
@@ -477,6 +479,8 @@ uses one of the generated names (say a `geometry_points` table, whose type
 is `GeometryPoint`), that flavour keeps the scalar and pdbq logs a warning.
 
 ## Rasters
+
+> **Experimental.** Raster support is outside the 1.0 compatibility promise and may change in a minor release. See [Compatibility and versioning](compatibility.md#experimental-features).
 
 `postgis_raster` columns get a read surface of their own. **The raster value
 itself is never returned**: a raster is a pixel grid, often megabytes, so

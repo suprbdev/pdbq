@@ -12,10 +12,16 @@ compiles every GraphQL operation into **one** parameterized SQL statement —
 no N+1, no dataloaders.
 
 ```console
-$ pdbq serve --database.url postgres://localhost/mydb --server.graphiql
+$ pdbq serve --database.url postgres://localhost/mydb \
+    --auth.mode none --roles.switch=false --server.graphiql
 time=... msg=introspected tables=12 enums=3 functions=2 took=38ms
 time=... msg=listening addr=:8080 graphiql=true
 ```
+
+That first run has no authentication and runs every request as the connection
+role. The defaults are the secure ones (JWT verification, one database role
+per request, row-level security applies): see
+[Secure setup](docs/quickstart.md#secure-setup).
 
 ## Highlights
 
@@ -40,7 +46,7 @@ time=... msg=listening addr=:8080 graphiql=true
 - **Watch mode** — a DDL event trigger (or poll fallback) re-introspects and
   atomically swaps the schema during development.
 - **Plugins** — five small hook interfaces (catalog, inflection, schema,
-  compile, request) with four built-ins proving the design:
+  compile, request) with built-ins proving the design:
   `smart_comments` (tune the schema with PostGraphile-style `@omit`/`@name`/
   `@primaryKey`/... tags in database `COMMENT`s, see
   [docs/smart-comments.md](docs/smart-comments.md)), `simple_names` (`users`
@@ -64,17 +70,19 @@ time=... msg=listening addr=:8080 graphiql=true
 - **Incremental delivery (opt-in)** — `@defer` and `@stream` over
   `multipart/mixed` and WebSocket, every payload read from one snapshot, see
   [docs/incremental.md](docs/incremental.md).
-- **Pipe-friendly CLI** — `echo '{users {email}}' | pdbq query -` prints
+- **Pipe-friendly CLI** — `echo '{users {nodes {email}}}' | pdbq query -` prints
   JSON and exits non-zero on GraphQL errors.
 
 ## Installation
 
 Prebuilt binaries for Linux, macOS and Windows (amd64/arm64) are on the
 [releases page](https://github.com/suprbdev/pdbq/releases/latest), with a
-`checksums.txt` for verification:
+`checksums.txt` (signed with cosign), a CycloneDX SBOM and build provenance
+attestations, see [SECURITY.md](SECURITY.md#verifying-releases):
 
 ```console
-$ curl -fsSL https://github.com/suprbdev/pdbq/releases/latest/download/pdbq_0.1.0_linux_amd64.tar.gz | tar xz
+$ VERSION=$(curl -fsSL https://api.github.com/repos/suprbdev/pdbq/releases/latest | sed -n 's/.*"tag_name": *"v\([^"]*\)".*/\1/p')
+$ curl -fsSL https://github.com/suprbdev/pdbq/releases/download/v$VERSION/pdbq_${VERSION}_linux_amd64.tar.gz | tar xz
 $ ./pdbq --version
 ```
 
@@ -100,11 +108,29 @@ $ open http://localhost:8080 # GraphiQL (port mapping via compose.override.yaml,
 Or against your own database:
 
 ```console
-$ pdbq config init          # writes a starter pdbq.yaml
+$ pdbq config init          # writes pdbq.yaml: no auth, connection role (dev only)
+$ $EDITOR pdbq.yaml         # set database.url
 $ pdbq serve
 ```
 
-See [docs/quickstart.md](docs/quickstart.md) for the full tour.
+`config init` writes a starter that runs without credentials; configure `auth`
+and `roles` before production. [docs/quickstart.md](docs/quickstart.md) has the
+full tour, including roles, a JWT and a row-level security policy.
+
+Coming from PostGraphile? See
+[docs/migrating-from-postgraphile.md](docs/migrating-from-postgraphile.md).
+
+## Stability
+
+pdbq follows semantic versioning. Configuration keys, the CLI, the HTTP and
+GraphQL surface, error codes and metrics are covered by the 1.0 compatibility
+promise; a few features (live queries, `@defer`/`@stream`, contracts, nested and
+partial mutations, rasters and others) and the Go embedding and plugin API are
+**experimental** and outside it. Details, the deprecation policy and the
+supported PostgreSQL versions (14 to 19) are in
+[docs/compatibility.md](docs/compatibility.md). Report vulnerabilities as
+described in [SECURITY.md](SECURITY.md). See [CONTRIBUTING.md](CONTRIBUTING.md)
+and [CHANGELOG.md](CHANGELOG.md).
 
 ## Documentation
 
@@ -115,6 +141,8 @@ See [docs/quickstart.md](docs/quickstart.md) for the full tour.
 | [docs/configuration.md](docs/configuration.md) | Config layering; full reference in [examples/pdbq.example.yaml](examples/pdbq.example.yaml) |
 | [docs/cli.md](docs/cli.md) | All subcommands, scripting patterns |
 | [docs/upgrading.md](docs/upgrading.md) | Breaking changes and config migration from 0.x to 1.0 |
+| [docs/compatibility.md](docs/compatibility.md) | Versioning, what 1.0 freezes, experimental features, deprecation, supported versions |
+| [docs/migrating-from-postgraphile.md](docs/migrating-from-postgraphile.md) | Moving from PostGraphile v4 or v5 |
 | [docs/rls.md](docs/rls.md) | Roles, JWT/header claims, policies |
 | [docs/filtering.md](docs/filtering.md) | Filter operators, indexed-only policy |
 | [docs/mutations.md](docs/mutations.md) | Table and custom mutations, payload fields (`query`, relations, edges), what a payload sees |

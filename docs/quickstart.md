@@ -43,8 +43,9 @@ Try:
 }
 ```
 
-(The dev stack has the `simple_names` plugin enabled — with it disabled the
-same query is `allUsers` / `postsByAuthorId`.)
+(The `simple_names` plugin is on by default; with `plugins.disabled:
+[simple_names]` the same query is `allUsers` / `postsByAuthorId`, as in
+PostGraphile.)
 
 Because watch mode is on, `ALTER TABLE`/`CREATE TABLE` in the database is
 picked up automatically: pdbq re-introspects and swaps the schema without a
@@ -68,6 +69,97 @@ requests without a token.
 Every option is also an env var (`PDBQ_DATABASE_URL=...`) or flag
 (`--database.url=...`); precedence is flags > env > file.
 
+Without a file, the same first run is one command:
+
+```console
+$ pdbq serve --database.url postgres://localhost/mydb \
+    --auth.mode none --roles.switch=false --server.graphiql
+```
+
+Plain `pdbq serve --database.url ...` fails validation on purpose: the
+defaults verify JWTs and need a secret, see the next section.
+
+## Secure setup
+
+The first run above uses the connection role for every request and ignores
+row-level security. This is the same app with real roles, a JWT and a policy.
+The SQL is identical for pdbr.
+
+1. Create the roles and an example table. The login role inherits the
+   request roles: pdbq introspects with the connection role's own privileges,
+   so a table that role cannot reach would not be generated (do not create it
+   `NOINHERIT` as for PostgREST). Each request then runs `SET LOCAL ROLE` to
+   the role in its token.
+
+   ```sql
+   CREATE ROLE authenticator LOGIN PASSWORD 'change-me';
+   CREATE ROLE anonymous NOLOGIN;
+   CREATE ROLE authenticated NOLOGIN;
+   GRANT anonymous, authenticated TO authenticator;
+
+   CREATE SCHEMA app;
+   CREATE TABLE app.todos (
+       id    serial PRIMARY KEY,
+       owner text NOT NULL DEFAULT current_setting('jwt.claims.sub', true),
+       title text NOT NULL,
+       done  boolean NOT NULL DEFAULT false
+   );
+   CREATE INDEX todos_owner_idx ON app.todos (owner);
+
+   GRANT USAGE ON SCHEMA app TO anonymous, authenticated;
+   GRANT SELECT, INSERT, UPDATE, DELETE ON app.todos TO authenticated;
+   GRANT USAGE ON SEQUENCE app.todos_id_seq TO authenticated;
+
+   ALTER TABLE app.todos ENABLE ROW LEVEL SECURITY;
+   ALTER TABLE app.todos FORCE ROW LEVEL SECURITY;
+   CREATE POLICY own_todos ON app.todos TO authenticated
+       USING (owner = current_setting('jwt.claims.sub', true))
+       WITH CHECK (owner = current_setting('jwt.claims.sub', true));
+   ```
+
+2. Start pdbq with a secret from the environment. `auth.mode: jwt` and
+   `roles.switch: true` are the defaults; `roles.allowed` pins which roles a
+   token may name. Requests without a token get `401` until you set
+   `roles.anonymous: anonymous`.
+
+   ```console
+   $ export PDBQ_DATABASE_URL=postgres://authenticator:change-me@localhost/mydb
+   $ export PDBQ_AUTH_JWT_SECRET=$(openssl rand -hex 32)
+   $ export PDBQ_ROLES_ALLOWED=authenticated
+   $ pdbq serve --schema.schemas app
+   ```
+
+3. Mint a token for `alice`. Tokens need an `exp` claim, and the `role` claim
+   picks the database role. (`auth.mint_type` can have the database mint
+   tokens from a login function instead, see [RLS](rls.md).)
+
+   ```console
+   $ b64() { openssl base64 -A | tr '+/' '-_' | tr -d '='; }
+   $ h=$(printf '{"alg":"HS256","typ":"JWT"}' | b64)
+   $ p=$(printf '{"role":"authenticated","sub":"alice","exp":%d}' $(( $(date +%s) + 3600 )) | b64)
+   $ s=$(printf '%s.%s' "$h" "$p" | openssl dgst -sha256 -hmac "$PDBQ_AUTH_JWT_SECRET" -binary | b64)
+   $ TOKEN=$h.$p.$s
+   ```
+
+4. Call the API. Each user sees only their own rows:
+
+   ```console
+   $ curl -s localhost:8080/graphql -H "Authorization: Bearer $TOKEN" \
+       -H 'Content-Type: application/json' \
+       -d '{"query":"mutation { createTodo(input: {title: \"buy milk\"}) { todo { id owner title } } }"}'
+   {"data":{"createTodo":{"todo":{"id":1,"owner":"alice","title":"buy milk"}}}}
+   $ curl -s localhost:8080/graphql -H "Authorization: Bearer $TOKEN" \
+       -H 'Content-Type: application/json' \
+       -d '{"query":"{ todos { nodes { id title owner } } }"}'
+   $ curl -si localhost:8080/graphql -H 'Content-Type: application/json' \
+       -d '{"query":"{ todos { nodes { id } } }"}' | head -1
+   HTTP/1.1 401 Unauthorized
+   ```
+
+For production also terminate TLS in front of pdbq, boot from a schema cache
+and set `server.introspection: false`; the checklist is in
+[deployment.md](deployment.md#production-checklist).
+
 ## What gets generated
 
 For each table/view the connection role can `SELECT`:
@@ -75,11 +167,11 @@ For each table/view the connection role can `SELECT`:
 | Postgres | GraphQL |
 |---|---|
 | table `users` | type `User implements Node` (global `nodeId`) |
-| rows | `allUsers(first, last, offset, before, after, orderBy, filter): UserConnection!` |
-| primary key | `userById(id)`, `node(nodeId)` |
+| rows | `users(first, last, offset, before, after, orderBy, filter): UserConnection!` |
+| primary key | `user(id)`, `node(nodeId)` |
 | unique constraints | `userByEmail(email)` |
-| foreign keys | `post.author`, `user.postsByAuthorId` (child connection) |
-| `INSERT`/`UPDATE`/`DELETE` privileges | `createUser`, `updateUserById`, `deleteUserById` |
+| foreign keys | `post.author`, `user.posts` (child connection) |
+| `INSERT`/`UPDATE`/`DELETE` privileges | `createUser`, `updateUser`, `deleteUser` |
 | enums | GraphQL enums (`HAPPY`, `SAD`, ...) |
 | composite types | object types with per-field selection (`address { street city }`), plus `AddressInput` on mutations; arrays too |
 | rows inside other values (`posts[]`, composite attributes, `RETURNS TABLE` columns) | `PostRow` object types holding the columns `Post` exposes |
@@ -88,8 +180,8 @@ For each table/view the connection role can `SELECT`:
 One-off queries from the shell:
 
 ```console
-$ echo '{allUsers {nodes {email}}}' | pdbq query -
-$ pdbq query '{userById(id: 1) {email}}' --var id=1
+$ echo '{users {nodes {email}}}' | pdbq query -
+$ pdbq query '{user(id: 1) {email}}'
 ```
 
-Next: [configuration.md](configuration.md), [rls.md](rls.md).
+Next: [configuration.md](configuration.md), [rls.md](rls.md), [migrating-from-postgraphile.md](migrating-from-postgraphile.md).

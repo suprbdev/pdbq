@@ -1,5 +1,7 @@
 # Plugin author guide
 
+> **Experimental.** The Go embedding and plugin API (the `pdbq` package, the hook interfaces and the pdbcore packages they expose) is outside the 1.0 compatibility promise and may change in a minor release. See [Compatibility and versioning](compatibility.md#experimental-features).
+
 pdbq v1 plugins are **compile-time**: a plugin is any Go type implementing
 one or more hook interfaces, registered in an ordered registry. Third
 parties embed pdbq as a library:

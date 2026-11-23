@@ -2,6 +2,22 @@
 
 Checklist of PostgreSQL and GraphQL features pdbq supports. Checked = implemented and tested today; unchecked = planned or explicitly deferred. Use this as the reference when adding features: tick the box in the same PR that ships it.
 
+## Experimental features
+
+These shipped features are outside the 1.0 compatibility promise: they may change in a minor release. Each is also marked in its own documentation. The reasons and the full policy are in [Compatibility and versioning](compatibility.md#experimental-features). Everything else in this checklist is stable. This is a stability label, not a version tier.
+
+- Live queries (`live.enabled`): Tables are found by `EXPLAIN`, so PL/pgSQL, matview refreshes, logical replication and single-partition `TRUNCATE` are blind spots; triggers need table ownership.
+- Incremental delivery (`@defer`, `@stream`): The underlying RFC is still moving; two wire shapes exist; `@stream` works on forward primary-key connections only.
+- Nested mutations, update/delete/disconnect especially (`nested_mutations`): The payload does not reflect referential actions, parent `EXISTS` SELECT policies can fail, and the shapes diverge from the upstream plugin.
+- Partial success (`transactions.partial.*`): A savepoint per element; the report shape is new.
+- Schema contracts (`contracts`): Need smart comments; integrity-message rewriting is heuristic.
+- Typed geometry (`plugins.settings.postgis.typed_geometry`): Opt-in and recent.
+- Rasters, cube and earthdistance, bit-vector distances, `ts_headline`: Raster filters are neither reprojected nor costed; cube and earth nearest-neighbour tie-breaking needs PostgreSQL 17.
+- Index-aware contrib ordering: Operator classes are not introspected: any GIN index is assumed to be trigram and an HNSW index is assumed to serve every metric, so an ordering can end up as a sequential scan.
+- `@anyelement` and `@anycompatible` polymorphic function resolution: Recent.
+- Watch mode (`watch.enabled`): A development convenience, not a production feature.
+- The Go embedding and plugin API: see [Plugin author guide](plugins.md).
+
 ## Introspection (pg_catalog)
 
 - [x] Tables (including partitioned tables; partitions are left out unless `schema.expose_partitions` is set)

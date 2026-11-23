@@ -1,5 +1,7 @@
 # Full-text search, trigrams, unaccent, fuzzystrmatch, hstore, ltree, intarray, ranges, network types, vectors, cubes and earthdistance
 
+> **Experimental.** Bit-vector distances, cube, earthdistance, `ts_headline` and index-aware ordering are outside the 1.0 compatibility promise and may change in a minor release. See [Compatibility and versioning](compatibility.md#experimental-features).
+
 pdbq maps PostgreSQL's non-scalar built-in types and the common contrib
 extensions onto GraphQL types, reads and writes them in the same single
 statement as everything else, and exposes their operator vocabularies as

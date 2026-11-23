@@ -1,5 +1,7 @@
 # Live queries
 
+> **Experimental.** Live queries are outside the 1.0 compatibility promise and may change in a minor release. See [Compatibility and versioning](compatibility.md#experimental-features).
+
 A live query is a query whose result the server sends again whenever the data
 it read changes. pdbq serves them as PostGraphile v4 does (`--live`): change
 `query` to `subscription` and the operation becomes live. Every `Query` root
