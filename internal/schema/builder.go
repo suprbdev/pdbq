@@ -110,6 +110,10 @@ type Builder struct {
 	TypeForComposite map[string]string
 	// InputForComposite maps "schema.type" to the generated input type name.
 	InputForComposite map[string]string
+	// RowInputForTable maps "schema.table" to the input type of function
+	// arguments typed as the table's row type, generated on first use (see
+	// rowInput).
+	RowInputForTable map[string]string
 	// Ext holds plugin-owned data about this schema, keyed by plugin name,
 	// and is carried to [Built.Ext]. A plugin that needs state at request
 	// time keeps it here rather than on itself, so the executors of
@@ -158,6 +162,9 @@ type Built struct {
 	CompositeTypeForPG map[string]string
 	// CompositeInputForPG maps "typeschema.typename" -> GraphQL input type name.
 	CompositeInputForPG map[string]string
+	// RowInputForPG maps "schema.table" -> the input type of function
+	// arguments typed as that table's row type.
+	RowInputForPG map[string]string
 	// InputColumns maps input type name -> field name -> column name.
 	InputColumns map[string]map[string]string
 	// FilterRelations maps filter input type name -> field name -> relation
@@ -226,6 +233,7 @@ func New(cat *introspect.Catalog, inflector inflect.Next, opts Options) *Builder
 		TypeForTable:       map[string]string{},
 		TypeForComposite:   map[string]string{},
 		InputForComposite:  map[string]string{},
+		RowInputForTable:   map[string]string{},
 		Ext:                map[string]any{},
 		contribTypes:       map[string]bool{},
 		log:                opts.Logger,
@@ -1438,6 +1446,11 @@ func (b *Builder) addFunctions() {
 		return
 	}
 	for _, f := range b.Catalog.Functions {
+		if len(f.PolymorphicFamilies()) > 0 {
+			b.log.Info("skipping function: polymorphic signature (name the concrete type with an @anyelement or @anycompatible smart comment)",
+				"function", f.Schema+"."+f.Name)
+			continue
+		}
 		if ref, partition := b.unexposedType(f); partition {
 			b.log.Debug("skipping function: uses the row type of a table left out of the schema",
 				"function", f.Schema+"."+f.Name, "table", ref)
@@ -1447,16 +1460,16 @@ func (b *Builder) addFunctions() {
 				"function", f.Schema+"."+f.Name, "type", ref)
 			continue
 		}
-		// A function whose first argument is a table's row type is a computed
-		// column on that table's type, not a root field.
-		if len(f.Args) > 0 {
+		// A stable function whose first argument is a table's row type is a
+		// computed column on that table's type, not a root field.
+		if len(f.Args) > 0 && f.Volatility != introspect.VolatilityVolatile {
 			if t := b.Catalog.Table(f.Args[0].TypeSchema, f.Args[0].PGType); t != nil {
 				b.addComputedField(t, f)
 				continue
 			}
 		}
-		if arg := rowTypeArg(b.Catalog, f); arg != "" {
-			b.log.Debug("skipping function: row-type argument not in first position",
+		if arg := b.unexposedRowArg(f); arg != "" {
+			b.log.Info("skipping function: row-type argument of a table without a GraphQL type",
 				"function", f.Schema+"."+f.Name, "arg", arg)
 			continue
 		}
@@ -1730,6 +1743,11 @@ func (b *Builder) argGQLType(a introspect.FuncArg) string {
 		TypeSchema: arr.TypeSchema, BaseTypeSchema: arr.BaseTypeSchema, Domain: arr.Domain,
 	}
 	base := b.gqlInputTypeForColumn(elem)
+	if t := b.Catalog.Table(elem.TypeSchema, elem.PGType); t != nil && elem.Domain == "" {
+		if _, ok := b.TypeForTable[tableKey(t.Schema, t.Name)]; ok {
+			base = b.rowInput(t)
+		}
+	}
 	if arr.IsArray {
 		if b.ContribColumn(elem).Owned() && !b.ContribColumn(arr).Owned() {
 			base = "String"
@@ -1750,15 +1768,45 @@ func hasUnnamedArg(f *introspect.Function) bool {
 	return false
 }
 
-// rowTypeArg returns the name of the first argument whose type is a catalog
-// table's row type, or "" when there is none.
-func rowTypeArg(cat *introspect.Catalog, f *introspect.Function) string {
+// unexposedRowArg returns the name of the first argument typed as the row
+// type (or an array of it) of a catalog table that has no object type, or
+// "" when there is none.
+func (b *Builder) unexposedRowArg(f *introspect.Function) string {
 	for _, a := range f.Args {
-		if cat.Table(a.TypeSchema, a.PGType) != nil {
-			return a.Name
+		if t := b.Catalog.Table(a.TypeSchema, strings.TrimPrefix(a.PGType, "_")); t != nil {
+			if _, ok := b.TypeForTable[tableKey(t.Schema, t.Name)]; !ok {
+				return a.Name
+			}
 		}
 	}
 	return ""
+}
+
+// rowInput returns the input type of function arguments typed as t's row
+// type, generating it on first use: <Type>Input with one nullable field per
+// column, bound like a composite input (the argument is populated from it
+// with jsonb_populate_record, absent fields NULL). Generated and identity
+// columns are included: the argument is a value handed to the function,
+// not a write to t. The smart-comments plugin removes columns hidden from
+// reads.
+func (b *Builder) rowInput(t *introspect.Table) string {
+	key := tableKey(t.Schema, t.Name)
+	if name, ok := b.RowInputForTable[key]; ok {
+		return name
+	}
+	name := b.uniqueTypeName(b.TypeForTable[key] + "Input")
+	in := &Input{Name: name, Description: "The " + b.TypeForTable[key] + " row passed to a function."}
+	for _, c := range t.Columns {
+		in.AddField(&InputField{
+			Name:        b.Inflect(inflect.KindFieldName, inflect.Input{Schema: t.Schema, Table: t.Name, Column: c.Name}),
+			Type:        b.gqlInputTypeForColumn(c),
+			Description: c.Comment,
+			Column:      c.Name,
+		})
+	}
+	b.Inputs[name] = in
+	b.RowInputForTable[key] = name
+	return name
 }
 
 // addComputedField exposes a stable/immutable function whose first argument
@@ -1902,6 +1950,7 @@ func (b *Builder) Build() (*Built, error) {
 		EnumTypeForPG:       map[string]string{},
 		CompositeTypeForPG:  b.TypeForComposite,
 		CompositeInputForPG: b.InputForComposite,
+		RowInputForPG:       b.RowInputForTable,
 		InputColumns:        map[string]map[string]string{},
 		FilterRelations:     map[string]map[string]*FilterRelation{},
 		FilterComputed:      map[string]map[string]*introspect.Function{},

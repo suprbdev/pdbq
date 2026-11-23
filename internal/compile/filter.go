@@ -625,7 +625,7 @@ func (s *stmt) compositeParam(comp *introspect.Composite, col *introspect.Column
 			out[i] = s.compositeValue(comp, item)
 		}
 		elem := s.alias("e")
-		return fmt.Sprintf("coalesce((SELECT array_agg(jsonb_populate_record(NULL::%s, %s.v) ORDER BY %s.o) FROM jsonb_array_elements(%s::jsonb) WITH ORDINALITY AS %s(v, o)), ARRAY[]::%s[])",
+		return fmt.Sprintf("coalesce((SELECT array_agg(jsonb_populate_record(NULL::%s, NULLIF(%s.v, 'null')) ORDER BY %s.o) FROM jsonb_array_elements(%s::jsonb) WITH ORDINALITY AS %s(v, o)), ARRAY[]::%s[])",
 			typeRef, elem, elem, s.param(toJSONParam(out)), elem, typeRef)
 	}
 	return fmt.Sprintf("jsonb_populate_record(NULL::%s, %s::jsonb)", typeRef, s.param(toJSONParam(s.compositeValue(comp, v))))
@@ -638,7 +638,10 @@ func (s *stmt) compositeValue(comp *introspect.Composite, v any) any {
 	if !ok {
 		return v
 	}
-	inputName := s.c.Built.CompositeInputForPG[comp.Schema+"."+comp.Name]
+	inputName, ok := s.c.Built.CompositeInputForPG[comp.Schema+"."+comp.Name]
+	if !ok {
+		inputName = s.c.Built.RowInputForPG[comp.Schema+"."+comp.Name]
+	}
 	binding := s.c.Built.InputColumns[inputName]
 	out := map[string]any{}
 	for name, val := range m {

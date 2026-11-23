@@ -383,3 +383,26 @@ func TestNestedMutationsHonorOmittedForeignKeyColumns(t *testing.T) {
 	wantSDL(t, bwd, "create:", "updateById:")
 	wantSDL(t, sdlBlock(t, sdl, "input PostCreateInput {"), "author: PostAuthorNestedInput")
 }
+
+func TestOmitReadColumnLeavesRowInput(t *testing.T) {
+	built := build(t, func(c *introspect.Catalog) {
+		u := c.Table("public", "users")
+		u.Column("settings").Comment = "@omit read"
+		u.Column("email").Comment = "@omit create,update"
+	})
+	in := sdlBlock(t, built.SDL, "input UserInput {")
+	if strings.Contains(in, "settings") || !strings.Contains(in, "email: String") || !strings.Contains(in, "id: Int") {
+		t.Errorf("UserInput:\n%s", in)
+	}
+	wantSDL(t, built.SDL, "pickFirst(a: String, b: String): String", "userGreeting(greeting: String, u: UserInput): String")
+
+	built = build(t, func(c *introspect.Catalog) {
+		for _, col := range c.Table("public", "users").Columns {
+			col.Comment = "@omit read"
+		}
+	})
+	if strings.Contains(built.SDL, "input UserInput") {
+		t.Error("UserInput without fields must be removed")
+	}
+	wantSDL(t, built.SDL, "userGreeting(greeting: String): String")
+}

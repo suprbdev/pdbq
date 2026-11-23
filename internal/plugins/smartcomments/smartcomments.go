@@ -222,12 +222,16 @@ func (p *Plugin) applyColumnTags(b *schema.Builder, t *introspect.Table) {
 	updateIn := b.Inputs[b.Inflect(inflect.KindUpdateInput, in)]
 	filterIn := b.Inputs[b.Inflect(inflect.KindFilterTypeName, in)]
 	conditionIn := b.Inputs[b.Inflect(inflect.KindConditionTypeName, in)]
+	rowIn := b.Inputs[b.RowInputForTable[tableKey(t.Schema, t.Name)]]
 	orderEnum := b.Enums[b.Inflect(inflect.KindOrderByTypeName, in)]
 	distinctEnum := b.Enums[b.Inflect(inflect.KindDistinctOnTypeName, in)]
 
 	for _, c := range t.Columns {
 		if omit.Column(c, omit.Read) && obj != nil {
 			p.removeColumnField(obj, c)
+		}
+		if omit.Column(c, omit.Read) && rowIn != nil {
+			removeInputColumn(rowIn, c.Name)
 		}
 		if omit.Column(c, omit.Create) && createIn != nil {
 			removeInputColumn(createIn, c.Name)
@@ -270,6 +274,9 @@ func (p *Plugin) applyColumnTags(b *schema.Builder, t *introspect.Table) {
 	// and likewise enums left without values.
 	if conditionIn != nil && len(conditionIn.Fields) == 0 {
 		removeInputType(b, conditionIn.Name)
+	}
+	if rowIn != nil && len(rowIn.Fields) == 0 {
+		removeInputType(b, rowIn.Name)
 	}
 	for _, en := range []*schema.Enum{orderEnum, distinctEnum} {
 		if en != nil && len(en.Values) == 0 {

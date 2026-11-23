@@ -1,0 +1,5 @@
+mutation {
+  renameUser(input: {u: {id: 2, email: "grace@example.com"}, newName: "Grace B. Hopper"}) {
+    user { id fullName postsByAuthorId { totalCount } }
+  }
+}

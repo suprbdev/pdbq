@@ -111,6 +111,11 @@ those on a real constraint.
 | `@deprecated [reason]` | Deprecate the generated field(s). |
 | `@omit filter` / `@omit order` on a computed column | Keep the computed field, drop its `advanced-filters` filter field / orderBy values. |
 | `@filterable` (alias `@sortable`) | Opt the computed column in when `advanced-filters` runs in opt-in mode. |
+| `@anyelement <type>` | Resolve a polymorphic function's `anyelement` family to `<type>` (`integer`, `text[]`, `public.mood`, …): `anyelement`/`anynonarray`/`anyenum` become `<type>`, `anyarray` `<type>[]`, `anyrange`/`anymultirange` the range (multirange) over `<type>`. Untagged polymorphic functions are skipped. See [Function arguments](mutations.md#function-arguments). |
+| `@anycompatible <type>` | The same for the `anycompatible*` family. |
+
+`@omit read` on a column also removes it from the `<Type>Input` that
+function arguments typed as the table's row take.
 
 A function returning or taking rows of a table tagged `@omit`, or of a type
 from a schema outside `schema.schemas` that pdbq cannot resolve (typically
