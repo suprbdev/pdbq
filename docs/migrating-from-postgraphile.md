@@ -233,7 +233,8 @@ has no resolvers. Prefer these, in order:
 pdbq is one static Go binary or a distroless container image; `GET /healthz` and
 `GET /readyz` are the probes. There is no Grafast plan introspection; use
 `pdbq query --print-sql` to see the one statement each root field compiles to
-(`pdbq query` runs a document without a server). Configuration is strict:
+(`pdbq query` runs a document without a server, as the connection role or,
+with `--role` and `--claims`, under a request's identity). Configuration is strict:
 unknown YAML keys and misspelt `PDBQ_*` variables are errors that suggest the
 closest key.
 

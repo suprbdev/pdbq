@@ -260,4 +260,5 @@ logs a warning at startup; add `auth.mode: none` to accept requests without
 credentials. Fine for local dev (the dev compose stack and `pdbq config
 init` do this), never for production. The CLI commands that run without an
 HTTP request (`pdbq query`, `schema`, `plugins list`) always run this way;
-see [CLI](cli.md).
+`pdbq query --role <name> --claims '<json>'` runs one operation under a
+request's role and claims instead. See [CLI](cli.md#--role-and---claims).
