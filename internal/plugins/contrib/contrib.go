@@ -25,6 +25,12 @@
 //     the column's filter takes StringTrgmFilterOps, StringFilterOps plus
 //     similarTo, wordSimilarTo and strictWordSimilarTo;
 //
+//   - unaccent operators on text columns when the extension is installed
+//     and the filter policy admits unindexable operators on the column:
+//     StringUnaccentFilterOps (or StringTrgmUnaccentFilterOps on top of the
+//     trigram input) adds unaccentEqualTo, unaccentLike, unaccentIncludes
+//     and unaccentStartsWith;
+//
 //   - full-text rank: a <field>Rank: Float sibling of every filterable
 //     tsvector column and <COLUMN>_RANK_ASC/_DESC orderBy values, both
 //     computed (ts_rank) against the first matches* operator on that column
@@ -34,13 +40,23 @@
 //     _STRICT_WORD_SIMILARITY_) orderBy values plus a similarTo:
 //     <Type>SimilarToInput argument naming the reference text per column,
 //     compiled to the index-assisted pg_trgm distance operators (<->, <->>,
-//     <->>>).
+//     <->>>);
+//
+//   - pgvector ordering: <COLUMN>_L2_DISTANCE_ASC/_DESC (and
+//     _NEGATIVE_INNER_PRODUCT_, _COSINE_DISTANCE_, _L1_DISTANCE_) orderBy
+//     values on vector, halfvec and sparsevec columns plus a nearVector:
+//     <Type>NearVectorInput argument holding the reference vector per
+//     column, compiled to pgvector's distance operators (<->, <#>, <=>, <+>),
+//     which an HNSW or IVFFlat index answers nearest-first.
 //
 // Under filters.indexed_only, operators no index can serve (hstore
-// containedBy, the ltree *Any forms) are left out, the trigram operators
-// are offered only on columns with a GIN or GiST index, and trigram
-// ordering only on columns with a GiST index (columns listed in
-// filters.allow_columns get everything). Operator classes are not
+// containedBy, the ltree *Any forms, the unaccent operators) are left out,
+// the trigram operators are offered only on columns with a GIN or GiST
+// index, trigram ordering only on columns with a GiST index, and each
+// vector distance ordering only on columns leading an index of a method
+// that serves it (HNSW, or IVFFlat except for L1 and sparsevec); columns
+// listed in filters.allow_columns get everything except the hstore and ltree
+// operators, which live on shared inputs. Operator classes are not
 // introspected; a matching access method is taken to carry the right one.
 //
 // Like postgis, the plugin only adds schema surface plus bindings; the
@@ -48,8 +64,9 @@
 // the plugin (plugins.disabled: [contrib]) removes the surface while plain
 // reads, writes and comparisons keep working. "@omit filter" / "@omit order"
 // on a column skips its filter / ordering surface; "@omit read" also skips
-// its rank field and its rank and similarity orderings, which read the
-// value back against a client-chosen reference (package omit).
+// its rank field and its rank, similarity and vector distance orderings,
+// which read the value back against a client-chosen reference (package
+// omit).
 package contrib
 
 import (
@@ -68,10 +85,11 @@ import (
 
 // Plugin implements the SchemaHook adding the contrib surface.
 type Plugin struct {
-	// filters adds the vocabulary operators, pg_trgm operators and rank
-	// fields.
+	// filters adds the vocabulary operators, pg_trgm and unaccent
+	// operators and rank fields.
 	filters bool
-	// ordering adds the rank and similarity orderBy values and similarTo:.
+	// ordering adds the rank, similarity and vector distance orderBy values,
+	// similarTo: and nearVector:.
 	ordering bool
 }
 
@@ -182,7 +200,55 @@ func (st *build) addFilters(t *introspect.Table, cols []column) {
 				f.Type = contribtype.StringTrgmOps
 			}
 		}
+		if ua, ok := cc.ci.Unaccent(); ok && len(ua.Ops) > 0 && st.served(t, cc.col, ua.Ops[0].Index) {
+			if name := st.ensureUnaccentOps(f.Type, ua); name != "" {
+				f.Type = name
+			}
+		}
 	}
+}
+
+// unaccentInputs maps the operator inputs of text columns to the inputs
+// adding the unaccent operators to them, with their descriptions.
+var unaccentInputs = map[string]struct{ name, desc string }{
+	"StringFilterOps": {contribtype.StringUnaccentOps,
+		"String operators plus unaccent comparisons, which ignore accents and case; no index can serve them."},
+	contribtype.StringTrgmOps: {contribtype.StringTrgmUnaccentOps,
+		"String operators plus pg_trgm similarity and unaccent comparisons. The similarity predicates compare " +
+			"against the pg_trgm.*similarity_threshold settings and can use a GIN or GiST trigram index; the " +
+			"unaccent comparisons ignore accents and case, and no index can serve them."},
+}
+
+// ensureUnaccentOps declares the input adding the unaccent operators to the
+// text operator input base, returning its name, or "" when base takes none
+// or the name is taken.
+func (st *build) ensureUnaccentOps(base string, ua pgcontrib.Vocabulary) string {
+	target, ok := unaccentInputs[base]
+	if !ok {
+		return ""
+	}
+	if st.extended[target.name] {
+		return target.name
+	}
+	src := st.b.Inputs[base]
+	if src == nil {
+		return ""
+	}
+	if _, taken := st.b.Inputs[target.name]; taken {
+		st.b.Options.Logger.Warn("contrib: type name already taken, unaccent operators disabled", "type", target.name)
+		return ""
+	}
+	st.extended[target.name] = true
+	in := &schema.Input{Name: target.name, Description: target.desc}
+	for _, f := range src.Fields {
+		cp := *f
+		in.Fields = append(in.Fields, &cp)
+	}
+	for _, o := range ua.Ops {
+		in.AddField(&schema.InputField{Name: contribtype.OpName(ua, o), Type: "String", Description: o.Description})
+	}
+	st.b.Inputs[target.name] = in
+	return target.name
 }
 
 // operandType is the GraphQL type of a vocabulary operator's operand on a
@@ -294,8 +360,25 @@ func (st *build) addOrdering(t *introspect.Table, cols []column) {
 		return
 	}
 	var similar []*introspect.Column
+	var vectors []column
+	var filterable map[string]bool
 	for _, cc := range cols {
-		if omit.Column(cc.col, omit.Order) || omit.Column(cc.col, omit.Read) || !orderable(en, cc.col.Name) {
+		if omit.Column(cc.col, omit.Order) || omit.Column(cc.col, omit.Read) {
+			continue
+		}
+		if cc.ci.Kind == contribtype.Vector {
+			if filterable == nil {
+				filterable = map[string]bool{}
+				for _, c := range b.FilterableColumns(t) {
+					filterable[c.Name] = true
+				}
+			}
+			if filterable[cc.col.Name] {
+				vectors = append(vectors, cc)
+			}
+			continue
+		}
+		if !orderable(en, cc.col.Name) {
 			continue
 		}
 		if cc.ci.Kind == contribtype.FullText {
@@ -340,6 +423,73 @@ func (st *build) addOrdering(t *introspect.Table, cols []column) {
 	}
 	if len(similar) > 0 {
 		st.addSimilarToArg(t, enumName, similar)
+	}
+	if len(vectors) > 0 {
+		st.addVectorOrdering(t, enumName, en, vectors)
+	}
+}
+
+// addVectorOrdering adds the pgvector distance orderBy values of the vector
+// columns the indexed-only policy admits them for, declares
+// <Type>NearVectorInput (one reference vector per such column) and adds
+// nearVector: to every field taking the table's orderBy enum. Nothing is
+// added when the input's name is taken.
+func (st *build) addVectorOrdering(t *introspect.Table, enumName string, en *schema.Enum, cols []column) {
+	b := st.b
+	typeName := b.TypeForTable[t.Schema+"."+t.Name]
+	inputName := typeName + "NearVectorInput"
+	_, obj := b.Objects[inputName]
+	_, in := b.Inputs[inputName]
+	_, ene := b.Enums[inputName]
+	if obj || in || ene {
+		b.Options.Logger.Warn("contrib: type name already taken, vector distance ordering skipped", "type", inputName)
+		return
+	}
+	input := &schema.Input{
+		Name:        inputName,
+		Description: "Reference vectors for the pgvector distance orderBy values of " + typeName + ", per column.",
+	}
+	for _, cc := range cols {
+		added := false
+		for _, vo := range contribtype.VectorOrders {
+			e, ok := cc.ci.Own.Expr(vo.Expr)
+			if !ok || !st.served(t, cc.col, e.Index) {
+				continue
+			}
+			base := coreinflect.EnumValue(cc.col.Name) + vo.Infix
+			desc := "Order by pgvector " + vo.Label + " from the nearVector: reference vector for this column"
+			addValue(en, base+"_ASC", schema.EnumValue{
+				Column: cc.col.Name, Vector: vo.Expr,
+				Description: desc + " (nearest first; index-assisted with an HNSW or IVFFlat index built with the matching operator class). Requires nearVector:.",
+			})
+			addValue(en, base+"_DESC", schema.EnumValue{
+				Column: cc.col.Name, Vector: vo.Expr, Desc: true,
+				Description: desc + " (farthest first). Requires nearVector:.",
+			})
+			added = true
+		}
+		if !added {
+			continue
+		}
+		typ := "String"
+		if cc.ci.List() {
+			typ = "[" + cc.ci.Scalar + "!]"
+		}
+		input.AddField(&schema.InputField{
+			Name:        b.Inflect(inflect.KindFieldName, inflect.Input{Schema: t.Schema, Table: t.Name, Column: cc.col.Name}),
+			Type:        typ,
+			Description: "Reference vector for the " + cc.col.Name + " distance orderBy values; it must have the column's dimensions.",
+			Column:      cc.col.Name,
+		})
+	}
+	if len(input.Fields) == 0 {
+		return
+	}
+	b.Inputs[inputName] = input
+	for _, f := range st.orderBy[enumName] {
+		if !hasArg(f, "nearVector") {
+			f.Args = append(f.Args, schema.Arg{Name: "nearVector", Type: inputName})
+		}
 	}
 }
 
@@ -390,15 +540,15 @@ func (st *build) addSimilarToArg(t *introspect.Table, enumName string, cols []*i
 	}
 	b.Inputs[inputName] = input
 	for _, f := range st.orderBy[enumName] {
-		if !hasArg(f) {
+		if !hasArg(f, "similarTo") {
 			f.Args = append(f.Args, schema.Arg{Name: "similarTo", Type: inputName})
 		}
 	}
 }
 
-func hasArg(f *schema.Field) bool {
+func hasArg(f *schema.Field, name string) bool {
 	for _, a := range f.Args {
-		if a.Name == "similarTo" {
+		if a.Name == name {
 			return true
 		}
 	}

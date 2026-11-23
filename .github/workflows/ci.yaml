@@ -53,6 +53,10 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: "1.26"
+      - name: Install pgvector (best effort; its tests skip without it)
+        run: |
+          docker exec ${{ job.services.postgres.id }} sh -c 'apt-get update -qq && apt-get install -y -qq postgresql-$PG_MAJOR-pgvector' \
+            || echo "::warning::pgvector unavailable; its tests will skip"
       - name: Load fixture schema
         run: |
           command -v psql >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends postgresql-client; }

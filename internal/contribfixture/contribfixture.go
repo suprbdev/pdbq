@@ -1,9 +1,10 @@
 // Package contribfixture extends pdbcore's shared test fixture with a table
 // covering every contrib column type (tsvector, citext, hstore, ltree,
 // ltree[], the range and multirange types, inet, cidr and pg_trgm-indexed
-// text) for golden and schema tests. The extensions are recorded as
-// installed in the "ext" schema, so compiled SQL shows the schema-qualified
-// spelling that works when that schema is not on the search_path.
+// text) and a table of pgvector columns for golden and schema tests. The
+// extensions (with unaccent) are recorded as installed in the "ext" schema,
+// so compiled SQL shows the schema-qualified spelling that works when that
+// schema is not on the search_path.
 //
 // It is a test helper: pdbcore's fixture (testutil.FixtureCatalog) carries
 // no contrib columns, and the e2e suite creates the matching table itself.
@@ -24,6 +25,8 @@ func Extensions() []*introspect.Extension {
 		{Name: "hstore", Version: "1.8", Schema: ExtSchema},
 		{Name: "ltree", Version: "1.3", Schema: ExtSchema},
 		{Name: "pg_trgm", Version: "1.6", Schema: ExtSchema},
+		{Name: "unaccent", Version: "1.1", Schema: ExtSchema},
+		{Name: "vector", Version: "0.8.0", Schema: ExtSchema},
 	}
 }
 
@@ -82,15 +85,43 @@ func Documents() *introspect.Table {
 	}
 }
 
-// Catalog returns testutil.FixtureCatalog plus the documents table, its
-// extensions, the composite type stay (nights int4range, extras hstore), a
-// computed column (documents_window(documents) returns tstzrange) and
-// functions taking and returning contrib types (widen(r int4range, by
-// int4) returns int4range, with_flag(h hstore) returns hstore,
-// total_nights(VARIADIC rs int4range[]) returns int4).
+// Embeddings is the pgvector table: public.embeddings with a vector column
+// led by an HNSW index, a halfvec column led by an IVFFlat index and an
+// unindexed sparsevec column.
+func Embeddings() *introspect.Table {
+	col := func(pos int, name, typ, schema string) *introspect.Column {
+		return &introspect.Column{Name: name, Position: pos, PGType: typ, TypeSchema: schema}
+	}
+	id := col(1, "id", "int4", "pg_catalog")
+	id.NotNull, id.Generated, id.GeneratedKind = true, true, introspect.GeneratedIdentity
+	return &introspect.Table{
+		Schema: "public", Name: "embeddings", Kind: introspect.RelTable,
+		Privileges: introspect.Privileges{Select: true, Insert: true, Update: true, Delete: true},
+		Columns: []*introspect.Column{
+			id,
+			col(2, "embedding", "vector", ExtSchema),
+			col(3, "half", "halfvec", ExtSchema),
+			col(4, "sparse", "sparsevec", ExtSchema),
+		},
+		PrimaryKey: &introspect.Constraint{Name: "embeddings_pkey", Columns: []string{"id"}},
+		Indexes: []*introspect.Index{
+			{Name: "embeddings_embedding_idx", Columns: []string{"embedding"}, Method: "hnsw"},
+			{Name: "embeddings_half_idx", Columns: []string{"half"}, Method: "ivfflat"},
+			{Name: "embeddings_pkey", Columns: []string{"id"}, Unique: true, Method: "btree"},
+		},
+	}
+}
+
+// Catalog returns testutil.FixtureCatalog plus the documents and embeddings
+// tables, their extensions, the composite type stay (nights int4range,
+// extras hstore), a computed column (documents_window(documents) returns
+// tstzrange) and functions taking and returning contrib types (widen(r
+// int4range, by int4) returns int4range, with_flag(h hstore) returns hstore,
+// total_nights(VARIADIC rs int4range[]) returns int4, scale_vector(v vector,
+// by float8) returns vector).
 func Catalog() *introspect.Catalog {
 	cat := testutil.FixtureCatalog()
-	cat.Tables = append(cat.Tables, Documents())
+	cat.Tables = append(cat.Tables, Documents(), Embeddings())
 	cat.Extensions = append(cat.Extensions, Extensions()...)
 	cat.Composites = append(cat.Composites, &introspect.Composite{
 		Schema: "public", Name: "stay",
@@ -121,6 +152,14 @@ func Catalog() *introspect.Catalog {
 		Schema: "public", Name: "total_nights",
 		Args:       []introspect.FuncArg{{Name: "rs", PGType: "_int4range", TypeSchema: "pg_catalog", Mode: introspect.ArgModeVariadic}},
 		ReturnType: "int4", ReturnTypeSchema: "pg_catalog",
+		Volatility: introspect.VolatilityImmutable,
+	}, &introspect.Function{
+		Schema: "public", Name: "scale_vector",
+		Args: []introspect.FuncArg{
+			{Name: "v", PGType: "vector", TypeSchema: ExtSchema, Mode: introspect.ArgModeIn},
+			{Name: "by", PGType: "float8", TypeSchema: "pg_catalog", Mode: introspect.ArgModeIn},
+		},
+		ReturnType: "vector", ReturnTypeSchema: ExtSchema,
 		Volatility: introspect.VolatilityImmutable,
 	})
 	return cat

@@ -18,7 +18,7 @@ import (
 // String in the schema and compiles as a plain column.
 func contribFor(built *schema.Built, c *introspect.Column) contribtype.Column {
 	ci := contribtype.For(built.Catalog, c)
-	if ci.Owned() && ci.Scalar != "String" && !built.ContribTypes[ci.Scalar] {
+	if ci.Declares() && !built.ContribTypes[ci.Scalar] {
 		return contribtype.Column{Vocabs: ci.Vocabs}
 	}
 	return ci
@@ -290,13 +290,19 @@ func (s *stmt) resolveRanks(sql string) (string, error) {
 
 // contribJSON renders a contrib-owned value whose JSON form differs from its
 // text form: hstore as a JSON object, ranges as their selected
-// {start {value inclusive} end {...}} objects, multiranges as lists of them.
+// {start {value inclusive} end {...}} objects, multiranges as lists of them,
+// vector and halfvec values as arrays of numbers.
 func (s *stmt) contribJSON(ref string, c *introspect.Column, sel ast.SelectionSet) (string, bool) {
 	ci := s.contrib(c)
 	switch ci.Kind {
 	case contribtype.Interval:
 		return s.intervalJSON(ci, ref, sel), true
 	case contribtype.Hstore:
+		return ci.Own.Codec.OutputJSONSQL(ref), true
+	case contribtype.Vector:
+		if !ci.List() {
+			return "", false
+		}
 		return ci.Own.Codec.OutputJSONSQL(ref), true
 	case contribtype.Range:
 		v := s.alias("rg")
@@ -355,38 +361,46 @@ func (s *stmt) rangeBound(ci contribtype.Column, ref string, f *ast.Field) strin
 	return fmt.Sprintf("CASE WHEN %s IS NULL THEN NULL ELSE %s END", val, buildJSONObject(pairs))
 }
 
-// similarityTerm resolves a pg_trgm similarity orderBy value against the
-// field's similarTo: argument, allocating the reference text's parameter.
-func (s *stmt) similarityTerm(t *introspect.Table, f *ast.Field, value string, spec schema.OrderSpec) (orderTerm, error) {
+// exprTerm resolves an orderBy value sorting by a contrib expression of a
+// column against a per-column reference: pg_trgm similarity (spec.Similarity,
+// referenced by similarTo:) or pgvector distance (spec.Vector, referenced by
+// nearVector:). The reference's parameters are allocated here.
+func (s *stmt) exprTerm(t *introspect.Table, f *ast.Field, value string, spec schema.OrderSpec) (orderTerm, error) {
 	col := t.Column(spec.Column)
 	if col == nil {
-		return orderTerm{}, fmt.Errorf("compile: similarity order column %q not found", spec.Column)
+		return orderTerm{}, fmt.Errorf("compile: order column %q not found", spec.Column)
 	}
-	trgm, ok := s.contrib(col).Trgm()
-	if !ok {
-		return orderTerm{}, fmt.Errorf("compile: column %q has no pg_trgm vocabulary", spec.Column)
+	ci := s.contrib(col)
+	vocab, ok := ci.Trgm()
+	name, arg := spec.Similarity, "similarTo"
+	if spec.Vector != "" {
+		vocab, ok = ci.Own, ci.Kind == contribtype.Vector
+		name, arg = spec.Vector, "nearVector"
 	}
-	expr, ok := trgm.Expr(spec.Similarity)
 	if !ok {
-		return orderTerm{}, fmt.Errorf("compile: unknown pg_trgm expression %q", spec.Similarity)
+		return orderTerm{}, fmt.Errorf("compile: column %q has no vocabulary for %s", spec.Column, value)
+	}
+	expr, ok := vocab.Expr(name)
+	if !ok {
+		return orderTerm{}, fmt.Errorf("compile: unknown %s expression %q", vocab.Name, name)
 	}
 	var ref any
-	if v, ok := s.argValue(f, "similarTo"); ok {
+	if v, ok := s.argValue(f, arg); ok {
 		m, _ := v.(map[string]any)
-		for field, colName := range s.c.Built.InputColumns[argTypeName(f, "similarTo")] {
+		for field, colName := range s.c.Built.InputColumns[argTypeName(f, arg)] {
 			if colName == spec.Column {
 				ref = m[field]
 			}
 		}
 	}
 	if ref == nil {
-		return orderTerm{}, errUser("orderBy %s requires a similarTo: reference for the same column", value)
+		return orderTerm{}, errUser("orderBy %s requires a %s: reference for the same column", value, arg)
 	}
 	params, err := expr.Params(ref)
 	if err != nil {
-		return orderTerm{}, errUser("similarTo: %s", err.Error())
+		return orderTerm{}, errUser("%s: %s", arg, err.Error())
 	}
-	return orderTerm{col: spec.Column, trgm: &expr, trgmArgs: s.params(params), desc: spec.Desc}, nil
+	return orderTerm{col: spec.Column, expr: &expr, exprArgs: s.params(params), desc: spec.Desc}, nil
 }
 
 // contribLiteral renders an input value of a contrib-owned type as the text
@@ -399,6 +413,12 @@ func contribLiteral(ci contribtype.Column, v any) (any, error) {
 	switch ci.Kind {
 	case contribtype.Interval:
 		return intervalLiteral(ci, v)
+	case contribtype.Vector:
+		params, err := ci.Own.Codec.Params(v)
+		if err != nil {
+			return nil, errUser("%s", err.Error())
+		}
+		return params[0], nil
 	case contribtype.Hstore:
 		pairs, err := pgcontrib.HstoreParam(v)
 		if err != nil {

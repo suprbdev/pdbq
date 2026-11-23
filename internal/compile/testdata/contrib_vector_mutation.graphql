@@ -1,0 +1,14 @@
+# Vector inputs bind through pgvector's codec: one text parameter in the
+# type's text form, cast to the column's type in the extension's schema.
+# vector and halfvec take lists of numbers, sparsevec its text form.
+mutation {
+  createEmbedding(input: {embedding: [1, 2.5, -3], half: [0.5, 1, 2], sparse: "{1:1,3:2}/3"}) {
+    embedding { id embedding half sparse }
+  }
+  updateEmbeddingById(id: 1, patch: {embedding: [0, 0, 1], sparse: null}) {
+    embedding { embedding }
+  }
+  createEmbeddings(input: [{embedding: [1, 1, 1]}, {half: [2, 2, 2]}]) {
+    affectedCount
+  }
+}

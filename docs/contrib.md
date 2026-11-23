@@ -1,4 +1,4 @@
-# Full-text search, trigrams, hstore, ltree, ranges and network types
+# Full-text search, trigrams, unaccent, hstore, ltree, ranges, network types and vectors
 
 pdbq maps PostgreSQL's non-scalar built-in types and the common contrib
 extensions onto GraphQL types, reads and writes them in the same single
@@ -24,6 +24,9 @@ connection-filter operator names) wherever PostGraphile has one.
 | custom range types over a `pg_catalog` subtype (`CREATE TYPE ... AS RANGE`) | `<X>Range` of the subtype's scalar (`FloatRange` for `float8`) | `<X>RangeInput` | `<X>RangeFilterOps` |
 | `inet` / `cidr` | `InternetAddress` / `CidrAddress` | same | `InternetAddressFilterOps` / `CidrAddressFilterOps` |
 | `text`, `varchar`, `char(n)`, `citext` with `pg_trgm` installed | `String` | `String` | `StringTrgmFilterOps` (see [Trigram](#trigram-similarity-pg_trgm)) |
+| the same with `unaccent` installed | `String` | `String` | `StringUnaccentFilterOps` / `StringTrgmUnaccentFilterOps` (see [Unaccent](#unaccent)) |
+| `vector`, `halfvec` (pgvector) | `[Float!]` | `[Float!]` | `VectorFilterOps` (`isNull` only; see [pgvector](#pgvector)) |
+| `sparsevec` (pgvector) | `String` (`"{1:1.5,3:2}/5"`) | `String` | `VectorFilterOps` |
 
 Ranges have PostGraphile's shape:
 
@@ -46,7 +49,7 @@ The mapping applies to table columns, composite attributes, computed columns
 and function arguments and results. Arrays of these types (other than
 `ltree[]`) map to lists of their text form (`[String!]`, `["[1,3)", "[5,9)"]`
 for `int4range[]`), as columns and as function arguments, VARIADIC ones
-included. `citext`, `hstore` and `ltree` map only
+included. `citext`, `hstore`, `ltree` and the pgvector types map only
 when the catalog records the extension; a database that uses none of these
 types gets exactly the schema it got before. A custom range type (`CREATE
 TYPE floatrange AS RANGE (subtype = float8)`, in any schema) maps like the
@@ -91,6 +94,7 @@ the vocabulary:
 |---|---|
 | `FullTextFilterOps` | `matches` (`to_tsquery`: `& \| ! <->`, `:*` prefixes), `matchesPlain` (`plainto_tsquery`), `matchesPhrase` (`phraseto_tsquery`), `matchesWebsearch` (`websearch_to_tsquery`: `"quoted phrase"`, `or`, `-negation`; never raises), and `config` |
 | `StringTrgmFilterOps` | every `StringFilterOps` operator, `similarTo` (`%`), `wordSimilarTo` (`<%`), `strictWordSimilarTo` (`<<%`) |
+| `StringUnaccentFilterOps`, `StringTrgmUnaccentFilterOps` | every `StringFilterOps` / `StringTrgmFilterOps` operator, `unaccentEqualTo`, `unaccentLike`, `unaccentIncludes`, `unaccentStartsWith` (see [Unaccent](#unaccent)) |
 | `KeyValueHashFilterOps` | `containsKey` (`?`), `containsAllKeys` (`?&`), `containsAnyKeys` (`?\|`), `contains` (`@>`), `containedBy` (`<@`) |
 | `LtreeFilterOps` | `ancestorOf` (`@>`), `descendantOf` (`<@`), `ancestorOfAny`, `descendantOfAny`, `matchesLquery` (`~`), `matchesAnyLquery` (`?`), `matchesLtxtquery` (`@`) |
 | `LtreeListFilterOps` | the same, holding when some element matches (no `*Any` forms) |
@@ -133,15 +137,23 @@ On top of that, with `indexed_only` on (the default):
 - operators no index can serve are left out of the shared inputs:
   `KeyValueHashFilterOps.containedBy`, `LtreeFilterOps.ancestorOfAny` /
   `descendantOfAny`, `LtreeListFilterOps.ancestorOf`;
+- the unaccent operators, which no index can serve, are offered only on
+  columns listed in `filters.allow_columns`;
 - a text column takes `StringTrgmFilterOps` only when an index led by it is a
   GIN or GiST index (build it with `gin_trgm_ops` / `gist_trgm_ops`), so the
   common btree-indexed text column keeps `StringFilterOps`;
 - trigram ordering needs a GiST index (only GiST serves the KNN distance
-  operators).
+  operators);
+- each vector distance ordering needs an index led by the column whose
+  access method can serve that metric: HNSW for all of them, IVFFlat for
+  all but L1 and `sparsevec`.
 
-Columns listed in `filters.allow_columns` get everything. Operator classes are
-not introspected: a GIN index on a text column is taken to be a trigram
-index.
+Columns listed in `filters.allow_columns` get everything on their own inputs
+(trigram, unaccent and vector surface; the hstore and ltree operators above
+live on shared inputs and stay out). Operator classes are not introspected:
+a GIN index on a text column is taken to be a trigram index, and an HNSW
+index on a vector column is taken to serve every metric, although pgvector
+uses one only for the distance of its operator class.
 
 Full-text search over plain text columns (`to_tsvector(col) @@ ...`) is not
 exposed: it cannot use an index unless an expression index matches the exact
@@ -199,29 +211,113 @@ answers directly (nearest-first, like spatial `near:`). Ordering by
 similarity without a reference text for that column is an error. Combine
 with a `similarTo` filter to drop weak matches.
 
+## Unaccent
+
+With the `unaccent` extension installed, text columns (`text`, `varchar`,
+`char(n)`, `citext`) can take four comparisons that ignore both accents and
+case:
+
+| Operator | SQL |
+|---|---|
+| `unaccentEqualTo` | `lower(unaccent(col)) = lower(unaccent($1))` |
+| `unaccentLike` | `unaccent(col) ILIKE unaccent($1)`: the operand is a LIKE pattern (`%`, `_`) |
+| `unaccentIncludes` | the same with `%value%`, the operand's wildcards escaped |
+| `unaccentStartsWith` | the same with `value%`, the operand's wildcards escaped |
+
+```graphql
+{
+  allDishes(filter: {name: {unaccentIncludes: "creme brulee"}}) {
+    nodes { name }   # "Crème Brûlée"
+  }
+}
+```
+
+`unaccent` is `STABLE`, so no index can serve these operators (an expression
+index over an `IMMUTABLE` wrapper does not match what pdbq emits). With
+`filters.indexed_only` on (the default) they are therefore offered only on
+columns listed in `filters.allow_columns`; with it off, on every text column.
+The column then takes `StringUnaccentFilterOps`, or
+`StringTrgmUnaccentFilterOps` when it also takes the trigram operators; other
+text columns keep their input, so a database without unaccent, or without an
+admitted column, gets the schema it got before. pdbq calls the two-argument
+`unaccent('"ext"."unaccent"'::regdictionary, ...)`, so the dictionary
+resolves when the extension's schema is off the search_path.
+
+## pgvector
+
+pgvector columns map without configuration when the `vector` extension is
+installed: `vector` and `halfvec` read and write as lists of numbers
+(`[Float!]`, output straight from the value's text form), `sparsevec` as its
+text form (`"{1:1.5,3:2}/5"`, a `String`). Function arguments and results of
+these types map the same way. Inputs are bound as one text parameter cast to
+the column's type (`$1::"ext".vector`), so a value of the wrong dimension is
+reported by Postgres as a client error. Without pgvector installed nothing
+changes, and pdbq does not need it to run.
+
+Vectors have no meaningful scalar comparison, so like spatial columns they
+get no `equalTo`/`lessThan`/`in` operators, no `condition:` field, no
+`distinctOn:` value and no `<COLUMN>_ASC` ordering; their filter input,
+`VectorFilterOps`, holds `isNull` only. What they get is nearest-neighbour
+ordering:
+
+| orderBy value | pgvector operator |
+|---|---|
+| `<COLUMN>_L2_DISTANCE_ASC/_DESC` | `<->` (Euclidean) |
+| `<COLUMN>_NEGATIVE_INNER_PRODUCT_ASC/_DESC` | `<#>` (negative inner product; smallest is most similar) |
+| `<COLUMN>_COSINE_DISTANCE_ASC/_DESC` | `<=>` (1 - cosine similarity) |
+| `<COLUMN>_L1_DISTANCE_ASC/_DESC` | `<+>` (taxicab; pgvector 0.7 and later) |
+
+Fields taking the table's orderBy gain `nearVector: <Type>NearVectorInput`,
+one reference vector per column with distance ordering (`[Float!]`, or a
+`String` for `sparsevec`):
+
+```graphql
+{
+  allItems(nearVector: {embedding: [0.12, -0.4, 0.9]}, orderBy: [EMBEDDING_COSINE_DISTANCE_ASC], first: 10) {
+    nodes { id embedding }
+  }
+}
+```
+
+`_ASC` is nearest first. It compiles to `ORDER BY (embedding) OPERATOR("ext".<=>)
+$1::"ext".vector LIMIT n`, which an HNSW or IVFFlat index built with the
+matching operator class (`vector_cosine_ops` here) answers as an approximate
+nearest-neighbour scan. Ordering by a distance without a reference for that
+column is an error, and the reference must have the column's dimensions.
+Keyset cursors work as with similarity ordering. Rows whose vector is `NULL`
+have no distance: a sequential scan sorts them last, an index scan skips
+them, so filter them out (`{embedding: {isNull: false}}`) when that
+difference matters. Under `filters.indexed_only` each metric is offered only
+when an index led by the column has a method that serves it (see
+[above](#filtersindexed_only)). The `dims` and `norm` accessors of pdbcore's
+vocabulary are not exposed, like the other contrib accessors.
+
 ## Mutations
 
 Inputs go through each type's constructor or cast: `hstore($1::text[])` from
 the JSON object (`null` values allowed), `int4range($1::int4, $2::int4,
 $3::text)` from the bound objects, `int4multirange(...)` from a list of them,
-`$1::"ext".citext`, `$1::"ext".ltree`, `$1::inet`, `$1::tsvector`. Nested
-mutations use the same path. Composite attributes of these types are sent
+`$1::"ext".citext`, `$1::"ext".ltree`, `$1::inet`, `$1::tsvector`,
+`$1::"ext".vector` from the list of numbers. Nested mutations use the same
+path. Composite attributes of these types are sent
 in their text form inside the composite's jsonb parameter (`"k"=>"v"` for
 hstore, `["1","3")` for ranges).
 
 ## Settings
 
 The `contrib` plugin (priority 170) adds the vocabulary operators, the rank
-fields and the rank and similarity ordering; the type mapping, reads, writes
-and generic comparisons are core. `plugins.disabled: [contrib]` removes the
+fields and the rank, similarity and vector distance ordering; the type
+mapping, reads, writes and generic comparisons are core. `plugins.disabled: [contrib]` removes the
 plugin's surface.
 
 | Key | Default | Effect |
 |---|---|---|
-| `plugins.settings.contrib.filters` | `true` | vocabulary operators, `StringTrgmFilterOps`, `<field>Rank` fields (and so rank ordering) |
-| `plugins.settings.contrib.ordering` | `true` | `_RANK_` and `_SIMILARITY_` orderBy values and the `similarTo:` argument |
+| `plugins.settings.contrib.filters` | `true` | vocabulary operators, `StringTrgmFilterOps`, the unaccent inputs, `<field>Rank` fields (and so rank ordering) |
+| `plugins.settings.contrib.ordering` | `true` | `_RANK_`, `_SIMILARITY_` and vector `_DISTANCE_`/`_INNER_PRODUCT_` orderBy values and the `similarTo:` and `nearVector:` arguments |
 
 `@omit filter` / `@omit order` on a column removes its filter / ordering
-surface; `@omit read` also removes its rank field and its rank and
-similarity orderings, which sort against a reference of the client's
-choosing.
+surface; `@omit read` also removes its rank field and its rank, similarity
+and vector distance orderings, which sort against a reference of the
+client's choosing. If a table's `<Type>NearVectorInput` name is already
+taken, its vector ordering is skipped and the builder logs a warning; the
+same goes for the unaccent inputs.

@@ -1,0 +1,8 @@
+# Geography measures use the native overloads: ST_Perimeter in metres, and a
+# spheroidal ST_Centroid except for a GeometryCollection, which only the
+# geometry overload accepts.
+{
+  allPlaces {
+    nodes { areaArea areaLength areaPerimeter areaCentroid }
+  }
+}

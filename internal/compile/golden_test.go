@@ -50,13 +50,18 @@ func buildWith(t testing.TB, settings map[string]any) *schema.Built {
 }
 
 // buildContrib compiles the contrib fixture catalog (the shared fixture plus
-// a table of contrib-typed columns and the extensions) with the postgis and
-// contrib plugins applied.
+// tables of contrib-typed and pgvector columns and the extensions) with the
+// postgis and contrib plugins applied. documents.notes and embeddings.sparse
+// are allowlisted, so the unaccent operators and sparsevec ordering, which
+// no index serves, are generated.
 func buildContrib(t testing.TB) *schema.Built {
 	t.Helper()
 	cat := contribfixture.Catalog()
 	cat.Functions = append(cat.Functions, functionFixtures()...)
-	return buildCatalog(t, cat, nil, contribplugin.New(nil))
+	return buildCatalogAllowing(t, cat, map[string][]string{
+		"public.documents":  {"notes"},
+		"public.embeddings": {"sparse"},
+	}, nil, contribplugin.New(nil))
 }
 
 // buildCatalog builds cat with default naming after the catalog half of
@@ -64,11 +69,18 @@ func buildContrib(t testing.TB) *schema.Built {
 // postgis plugin configured by settings and the extra schema hooks.
 func buildCatalog(t testing.TB, cat *introspect.Catalog, settings map[string]any, hooks ...*contribplugin.Plugin) *schema.Built {
 	t.Helper()
+	return buildCatalogAllowing(t, cat, nil, settings, hooks...)
+}
+
+// buildCatalogAllowing is buildCatalog with filters.allow_columns.
+func buildCatalogAllowing(t testing.TB, cat *introspect.Catalog, allow map[string][]string, settings map[string]any, hooks ...*contribplugin.Plugin) *schema.Built {
+	t.Helper()
 	if err := corecatalog.New().TransformCatalog(context.Background(), cat); err != nil {
 		t.Fatalf("smart-comments catalog hook: %v", err)
 	}
 	b := schema.New(cat, inflect.Default, schema.Options{
 		FilterIndexedOnly: true,
+		AllowColumns:      allow,
 		Functions:         true,
 	})
 	if err := postgisplugin.New(settings).TransformSchema(context.Background(), b); err != nil {
