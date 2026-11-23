@@ -162,25 +162,53 @@ func (s *stmt) anchorVals(t *introspect.Table, terms []orderTerm, keys []any) ([
 	return vals, nil
 }
 
-// keysetPredicate renders the expanded lexicographic "strictly after the
-// anchor row" comparison against the anchor value expressions from
-// anchorVals (parallel to terms). Mixed ASC/DESC directions forbid a tuple
-// compare, so terms nest as s1 OR (e1 AND (s2 OR (e2 AND ...))). NULL
-// ordering matches renderOrder: NULLs sort last in both directions (ASC is
-// the PostgreSQL default, DESC is emitted with NULLS LAST); flip selects the
-// "strictly before" form.
+// keysetPredicate renders the lexicographic "strictly after the anchor row"
+// comparison against the anchor value expressions from anchorVals (parallel
+// to terms); flip selects the "strictly before" form. NULL ordering matches
+// renderOrder: NULLs sort last in both directions (ASC is the PostgreSQL
+// default, DESC is emitted with NULLS LAST).
+//
+// A uniform direction over non-nullable plain columns compiled with the
+// built-in comparison operators becomes a row comparison (c1, c2) > (k1, k2),
+// which the planner turns into an index range scan. Otherwise terms nest as
+// s1 OR (e1 AND (s2 OR (e2 AND ...))); a top-level OR cannot bound an index
+// scan, so when the leading term is a non-nullable plain column the
+// expansion is prefixed with the implied bound c1 >= k1 (<= for descending),
+// using the column type's own operator. Row comparisons resolve their
+// operators through the search_path, so extension types (citext, ltree,
+// hstore) always take the expanded form.
 func (s *stmt) keysetPredicate(alias string, vals []string, terms []orderTerm, t *introspect.Table, flip bool) string {
+	cols := make([]string, len(terms))
+	cis := make([]contribtype.Column, len(terms))
+	uniform := len(terms) > 0
+	for i, term := range terms {
+		cols[i] = s.orderExprSQL(t, term, alias)
+		if term.plain() {
+			cis[i] = s.contrib(t.Column(term.col))
+		}
+		if !term.plain() || orderTermNullable(t, term) || term.desc != terms[0].desc ||
+			cis[i].Compare("<") != "<" || cis[i].Compare(">") != ">" {
+			uniform = false
+		}
+	}
+	if uniform {
+		op := ">"
+		if terms[0].desc != flip {
+			op = "<"
+		}
+		if len(terms) == 1 {
+			return cols[0] + " " + op + " " + vals[0]
+		}
+		return fmt.Sprintf("(%s) %s (%s)", strings.Join(cols, ", "), op, strings.Join(vals, ", "))
+	}
 	pred := ""
 	for i := len(terms) - 1; i >= 0; i-- {
 		term := terms[i]
 		desc := term.desc != flip
-		col := s.orderExprSQL(t, term, alias)
+		col := cols[i]
 		k := vals[i]
 		notNull := !orderTermNullable(t, term)
-		var ci contribtype.Column
-		if term.plain() {
-			ci = s.contrib(t.Column(term.col))
-		}
+		ci := cis[i]
 		op := ci.Compare(">")
 		if desc {
 			op = ci.Compare("<")
@@ -207,6 +235,13 @@ func (s *stmt) keysetPredicate(alias string, vals []string, terms []orderTerm, t
 			eq = fmt.Sprintf("coalesce(%s %s %s, %s IS NULL AND %s IS NULL)", col, ci.Compare("="), k, col, k)
 		}
 		pred = fmt.Sprintf("(%s OR (%s AND %s))", strict, eq, pred)
+	}
+	if len(terms) > 1 && terms[0].plain() && !orderTermNullable(t, terms[0]) {
+		op := cis[0].Compare(">=")
+		if terms[0].desc != flip {
+			op = cis[0].Compare("<=")
+		}
+		pred = fmt.Sprintf("%s %s %s AND %s", cols[0], op, vals[0], pred)
 	}
 	return pred
 }
