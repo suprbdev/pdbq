@@ -44,6 +44,10 @@ type Operation struct {
 	Role string
 	// ForceTx forces a transaction even when the global policy would skip it.
 	ForceTx bool
+	// Partial runs each root field of a mutation in its own savepoint, so a
+	// failed field is reported without rolling back the others (see
+	// Request.PartialMutations).
+	Partial bool
 	// Built is the schema the operation was validated against.
 	Built *schema.Built
 
@@ -134,6 +138,10 @@ type Options struct {
 	MaxPageSize int
 	// TxMutations wraps every mutation in a transaction.
 	TxMutations bool
+	// PartialMutations lets a request run each mutation root field in its own
+	// savepoint (transactions.partial_mutations); without it such a request
+	// is rejected.
+	PartialMutations bool
 	// TxPerRequest wraps the entire request (queries included) in one
 	// transaction, so every root field reads a single snapshot.
 	TxPerRequest bool
@@ -218,7 +226,8 @@ type Executor struct {
 	docs *docCache
 	// queryTx replaces pgexec.QueryTx in tests.
 	queryTx func(ctx context.Context, db pgexec.ConnAcquirer, opts pgexec.TxOptions, id pgexec.Identity, stmts ...pgexec.Stmt) error
-	// runTx replaces pgexec.RunTx for incremental delivery in tests.
+	// runTx replaces pgexec.RunTx for incremental delivery and partial
+	// mutations in tests.
 	runTx func(ctx context.Context, db pgexec.TxBeginner, opts pgexec.TxOptions, id pgexec.Identity, fn func(q pgexec.Querier) error) error
 }
 
@@ -254,6 +263,10 @@ type Request struct {
 	Variables     map[string]any
 	Claims        map[string]any
 	Role          string
+	// PartialMutations asks to run each root field of a mutation operation in
+	// its own savepoint. It is rejected while Options.PartialMutations is off
+	// and ignored for queries.
+	PartialMutations bool
 }
 
 // Execute runs one GraphQL request end to end. Subscription operations are
@@ -349,6 +362,9 @@ func (e *Executor) prepare(ctx context.Context, req Request) (context.Context, *
 	if opDef.Operation == ast.Mutation && e.Opts.ReadOnly != nil && e.Opts.ReadOnly.Load() {
 		return ctx, nil, gqlerror.Errorf("server is in read-only mode: mutations are disabled")
 	}
+	if req.PartialMutations && opDef.Operation == ast.Mutation && !e.Opts.PartialMutations {
+		return ctx, nil, gqlerror.Errorf("partial mutations are disabled: set transactions.partial_mutations")
+	}
 	if e.Opts.DisableIntrospection {
 		// __typename stays allowed: it reveals only the root type name, and
 		// clients routinely send it as a liveness probe.
@@ -376,6 +392,7 @@ func (e *Executor) prepare(ctx context.Context, req Request) (context.Context, *
 		Vars:       vars,
 		Claims:     req.Claims,
 		Role:       req.Role,
+		Partial:    req.PartialMutations && opDef.Operation == ast.Mutation,
 		Built:      e.Built,
 		inc:        inc,
 	}
@@ -491,7 +508,7 @@ func (e *Executor) CompileRequest(ctx context.Context, req Request) ([]CompiledF
 
 func (e *Executor) executeOperation(ctx context.Context, op *Operation, res *Result) {
 	rootFields := collectRootFields(op.Definition.SelectionSet, op.Document.Fragments, op.Vars)
-	needTx := op.ForceTx ||
+	needTx := op.ForceTx || op.Partial ||
 		e.Opts.TxPerRequest ||
 		(op.Type == ast.Mutation && e.Opts.TxMutations) ||
 		(e.Opts.RLS && (op.Role != "" || len(op.Claims) > 0))
@@ -538,7 +555,8 @@ type txField struct {
 
 // executeTx runs a transactional operation. Every root field is compiled
 // (or, for introspection, resolved) before anything is sent; a compile error
-// is that field's error, and a mutation stops at it.
+// is that field's error, and a mutation stops at it, unless it runs with
+// partial success (see partialTx).
 //
 // Queries, and mutations with at most one statement and no compile error,
 // run as one pgexec.QueryTx batch (see batchTx). A mutation with more
@@ -550,6 +568,7 @@ type txField struct {
 // statement takes the first one's result.
 func (e *Executor) executeTx(ctx context.Context, op *Operation, rootFields []*ast.Field, res *Result) {
 	mutation := op.Type == ast.Mutation
+	partial := mutation && op.Partial
 	fields := make([]txField, 0, len(rootFields))
 	stmts, then := 0, false
 	for _, f := range rootFields {
@@ -564,10 +583,14 @@ func (e *Executor) executeTx(ctx context.Context, op *Operation, rootFields []*a
 			}
 		}
 		fields = append(fields, tf)
-		if mutation && tf.err != nil {
+		if mutation && !partial && tf.err != nil {
 			e.interactiveTx(ctx, op, fields, res)
 			return
 		}
+	}
+	if partial {
+		e.partialTx(ctx, op, fields, res)
+		return
 	}
 	if (mutation && stmts > 1) || then {
 		e.interactiveTx(ctx, op, fields, res)
@@ -727,6 +750,54 @@ func (e *Executor) interactiveTx(ctx context.Context, op *Operation, fields []tx
 		res.reset()
 	}
 	res.Errors = append(res.Errors, e.gqlError(err, nil))
+}
+
+// partialTx runs a mutation's fields one statement at a time in a
+// pgexec.RunTx transaction, each field (with its Then statement) in its own
+// savepoint. A field that fails, in the database or in Go, is rolled back to
+// its savepoint and reported with a null value while the other fields run
+// and commit.
+//
+// A serialization failure or deadlock is not a field error: it aborts the
+// transaction, which RunTx re-runs up to transactions.max_retries times, and
+// when the retries run out nothing is committed and the response holds that
+// one error. The same goes for a failure to commit.
+func (e *Executor) partialTx(ctx context.Context, op *Operation, fields []txField, res *Result) {
+	opts, id := e.txOptions(op)
+	runTx := e.runTx
+	if runTx == nil {
+		runTx = pgexec.RunTx
+	}
+	err := runTx(ctx, e.Pool, opts, id, func(q pgexec.Querier) error {
+		res.reset()
+		for _, tf := range fields {
+			raw, err := tf.raw, tf.err
+			if err == nil && tf.stmt != nil {
+				err = pgexec.Savepoint(ctx, q, func() (err error) {
+					raw, err = e.queryStatement(ctx, q, op, tf.field, tf.stmt)
+					return err
+				})
+				var rolledBack *pgexec.RolledBackError
+				switch {
+				case errors.As(err, &rolledBack):
+					err = rolledBack.Err
+				case err != nil:
+					return err
+				}
+			}
+			if err != nil {
+				res.Errors = append(res.Errors, e.gqlError(err, tf.field))
+				res.Set(tf.field.Alias, json.RawMessage("null"))
+				continue
+			}
+			res.Set(tf.field.Alias, raw)
+		}
+		return nil
+	})
+	if err != nil {
+		res.reset()
+		res.Errors = append(res.Errors, e.gqlError(err, nil))
+	}
 }
 
 // batchIsolation is the pgexec.QueryTx isolation for transactions.isolation:

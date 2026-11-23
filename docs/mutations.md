@@ -166,6 +166,77 @@ before the modification.
     under a `-- then:` line. It reads the first statement's result as
     `$1`, so its own parameters start at `$2`.
 
+## Partial success
+
+A mutation operation is all-or-nothing by default: its root fields run in
+one transaction, and the first failing field rolls the whole operation back
+and leaves the fields after it out of the response.
+
+A request can opt in to **partial success**: every root field runs in its
+own `SAVEPOINT`, a failing field is rolled back on its own and reported, and
+the other fields commit. An operator enables it first:
+
+```yaml
+transactions:
+  partial_mutations: true   # default false
+```
+
+and a request asks for it with a request extension:
+
+```json
+{
+  "query": "mutation { a: createUser(input: {email: \"a@x.io\"}) { user { id } } b: createUser(input: {email: \"a@x.io\"}) { user { id } } c: createUser(input: {email: \"c@x.io\"}) { user { id } } }",
+  "extensions": { "partialMutations": true }
+}
+```
+
+```json
+{
+  "data": { "a": { "user": { "id": 7 } }, "b": null, "c": { "user": { "id": 8 } } },
+  "errors": [{ "message": "...", "path": ["b"], "extensions": { "code": "23505" } }]
+}
+```
+
+The extension is a request property rather than a schema directive, so the
+schema, the SDL and the document cache are the same with the feature on or
+off, and it works with persisted queries (it is not part of the document).
+It is read from the HTTP body (or the `extensions` query parameter of a
+GET, which cannot run a mutation anyway) and from WebSocket `subscribe`
+messages; only the JSON value `true` turns it on, and it has no effect on a
+query. While `transactions.partial_mutations` is off, a mutation asking for
+it is rejected with `partial mutations are disabled` before anything runs,
+so a client never believes it got partial semantics that it did not.
+
+What a failure covers:
+
+- A field's error is its database error, a `no row matched` error, a
+  compile error or a JWT mint failure. The field is `null`, its error
+  carries `path: [<alias>]`, and everything the field wrote (a nested
+  mutation's whole CTE chain, a custom mutation's two statements) is rolled
+  back to the savepoint. Fields before and after it are unaffected and
+  commit with the transaction.
+- Fields still run in selection order, one statement at a time, so a later
+  field sees the writes of the earlier ones that succeeded. Partial mode
+  therefore does not use the pipelined single round trip of a plain mutation
+  (it is an opt-in exception to that rule): it costs `SAVEPOINT`, the
+  statement and `RELEASE` per field, plus `ROLLBACK TO` for a failed one.
+- Response `data` lists every root field in the request, `null` for a failed
+  one, unlike the all-or-nothing response which stops at the first error.
+  Declared non-null payload types are not enforced in the response, as
+  before.
+
+Interactions:
+
+| | |
+|---|---|
+| Retries (`transactions.max_retries`) | A serialization failure or deadlock is never a field error: it aborts the transaction and the **whole operation** re-runs, savepoints included. When the retries run out, nothing is committed and the response has one error without a `path` and no `data`. The same holds for any failure at `COMMIT`. |
+| RLS identity | `SET LOCAL ROLE` and the claims are applied once, when the transaction begins, and every field runs under them; a savepoint rollback does not undo them. A row-level security violation (`42501`) in one field is that field's error and the others commit as the same role. |
+| Nested mutations | A root field is the unit: the nested creates, updates, connects and deletes of one field commit or fail together. |
+| `transactions.mutations: false` | A partial request still runs in a transaction. |
+| `transactions.isolation` | Applies to the one transaction, so every field shares its snapshot rules. |
+| Defer and stream | Ignored in mutations, as always; a mutation is delivered in one response. |
+| `Prefer: tx=rollback` | pdbq has no such preference; see pdbr for the equivalent. |
+
 ## Differences from PostGraphile
 
 - Payload relations use pdbq's relation names (`author`, not

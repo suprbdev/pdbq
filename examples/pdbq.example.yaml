@@ -149,6 +149,8 @@ transactions:
   isolation: "read_committed"
   # Automatic retries of a transactional operation after a serialization failure or deadlock (SQLSTATE 40001/40P01). 0 disables; the whole operation re-runs, which is safe because the failed attempt rolled back.
   max_retries: 0
+  # Let a request opt in (extensions.partialMutations) to running each mutation root field in its own savepoint, so a failing field is reported without rolling back the others. Requests asking for it while this is off are rejected.
+  partial_mutations: false
 
 watch:
   # Re-introspect and hot-swap the schema on DDL changes (dev only; refuses to combine with schema.cache_path).

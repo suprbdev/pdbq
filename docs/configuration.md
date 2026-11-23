@@ -79,6 +79,7 @@ $ pdbq config example   # print the full annotated reference
 | `transactions.per_request` | `false` | one tx for the whole request instead of one per operation |
 | `transactions.isolation` | `read_committed` | or `repeatable_read`, `serializable`; `read_committed` uses the server's `default_transaction_isolation` (read committed unless changed): queries run in the pipeline's implicit transaction, mutations in a plain `BEGIN` |
 | `transactions.max_retries` | 0 | automatic retries on serialization failure/deadlock (40001/40P01) |
+| `transactions.partial_mutations` | `false` | let a request opt in (`extensions.partialMutations`) to running each mutation root field in its own savepoint, so a failing field does not roll back the others; see [Mutations](mutations.md#partial-success) |
 | `watch.enabled` | `false` | dev only; refuses to combine with cache |
 | `watch.poll_interval` | `5s` | fallback polling when event triggers can't be installed |
 | `watch.channel` | `pdbq_ddl` | NOTIFY channel used by the DDL event trigger |
