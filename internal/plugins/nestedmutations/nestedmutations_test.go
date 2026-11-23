@@ -9,6 +9,7 @@ import (
 	"github.com/vektah/gqlparser/v2/parser"
 	"github.com/vektah/gqlparser/v2/validator"
 
+	"github.com/suprbdev/pdbcore/introspect"
 	"github.com/suprbdev/pdbcore/testutil"
 	"github.com/suprbdev/pdbq/internal/compile"
 	"github.com/suprbdev/pdbq/internal/inflect"
@@ -94,6 +95,53 @@ func TestNestedConnectAndChildren(t *testing.T) {
 	}`)
 	if !strings.Contains(stmt.SQL, `SELECT * FROM "public"."users" WHERE "id" = $2`) {
 		t.Errorf("connect lookup missing:\n%s", stmt.SQL)
+	}
+}
+
+func TestConnectInputPerReferencedKey(t *testing.T) {
+	cat := testutil.FixtureCatalog()
+	cat.Tables = append(cat.Tables, &introspect.Table{
+		Schema: "public", Name: "memos", Kind: introspect.RelTable,
+		Privileges: introspect.Privileges{Select: true, Insert: true},
+		Columns: []*introspect.Column{
+			{Name: "id", Position: 1, PGType: "int4", TypeSchema: "pg_catalog", NotNull: true},
+			{Name: "owner_id", Position: 2, PGType: "text", TypeSchema: "pg_catalog", NotNull: true},
+		},
+		PrimaryKey: &introspect.Constraint{Name: "memos_pkey", Columns: []string{"id"}},
+		ForeignKeys: []*introspect.ForeignKey{{
+			Name: "memos_owner_id_fkey", Columns: []string{"owner_id"},
+			RefSchema: "public", RefTable: "users", RefColumns: []string{"email"},
+		}},
+	})
+	reg := plugin.NewRegistry(nestedmutations.New(nil))
+	b := schema.New(cat, inflect.Default, schema.Options{FilterIndexedOnly: true})
+	if err := reg.TransformSchema(context.Background(), nil, b); err != nil {
+		t.Fatal(err)
+	}
+	built, err := b.Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"input UserConnectInput {\n  id: Int!\n}",
+		"input UserConnectByEmailInput {\n  email: String!\n}",
+	} {
+		if !strings.Contains(built.SDL, want) {
+			t.Errorf("SDL missing %q", want)
+		}
+	}
+
+	stmt := compileRoot(t, reg, built, `mutation {
+		createMemo(input: {id: 1, owner: {connect: {email: "a@b.c"}}}) { memo { id } }
+	}`)
+	if !strings.Contains(stmt.SQL, `WHERE "email" = $`) {
+		t.Errorf("connect must match on email:\n%s", stmt.SQL)
+	}
+	stmt = compileRoot(t, reg, built, `mutation {
+		createPost(input: {title: "Hi", author: {connect: {id: 7}}}) { post { id } }
+	}`)
+	if !strings.Contains(stmt.SQL, `WHERE "id" = $`) {
+		t.Errorf("connect must match on id:\n%s", stmt.SQL)
 	}
 }
 
