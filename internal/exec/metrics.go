@@ -45,7 +45,6 @@ func NewMetrics(m *metrics.Metrics) (*Metrics, error) {
 	if err != nil {
 		return nil, err
 	}
-	cost.Init()
 	fieldErrs, err := m.NewCounter("field_errors_total", "Errors raised while executing root fields, by class (user_input, permission, conflict, resource, timeout, internal).", "class")
 	if err != nil {
 		return nil, err

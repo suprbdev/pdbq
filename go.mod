@@ -40,4 +40,4 @@ require (
 	google.golang.org/protobuf v1.36.12 // indirect
 )
 
-require github.com/suprbdev/pdbcore v0.5.1-0.20261123040248-eb1d6ef4312f
+require github.com/suprbdev/pdbcore v0.5.1-0.20261123041043-3b71301698ba
