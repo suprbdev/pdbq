@@ -23,6 +23,9 @@
 //	                           when the subtype is not a pg_catalog type
 //	inet / cidr             -> InternetAddress / CidrAddress scalars,
 //	                           InternetAddressFilterOps / CidrAddressFilterOps
+//	interval                -> Interval { seconds minutes hours days months years },
+//	                           input IntervalInput, IntervalFilterOps
+//	interval[]              -> [Interval!], input [IntervalInput!], IntervalListFilterOps
 //
 // Range types are named after their element's scalar: Int (int4), BigInt
 // (int8), BigFloat (numeric), Date (date) and Datetime (timestamp and
@@ -30,6 +33,10 @@
 // share these (a range over int4 is an IntRange) and add the scalars of
 // their other pg_catalog subtypes: Float (float4, float8), Time, Boolean,
 // UUID, and String for text-like subtypes (text, inet, interval, ...).
+//
+// Interval is a pdbq-owned mapping with no pdbcore vocabulary behind it:
+// [For] resolves it for every interval column, and the schema builder keeps
+// the String fallback unless schema.interval_type is "object".
 //
 // Extension types (citext, hstore, ltree) map only when the catalog records
 // the extension; a catalog without it keeps the String fallback, so schemas
@@ -66,6 +73,8 @@ const (
 	Multirange
 	// Inet is an inet or cidr column.
 	Inet
+	// Interval is an interval column or an array of them (Interval).
+	Interval
 )
 
 // Scalar names declared when a column needs them.
@@ -75,6 +84,16 @@ const (
 	ScalarInternetAddress = "InternetAddress"
 	ScalarCidrAddress     = "CidrAddress"
 )
+
+// Names of the interval object and input types.
+const (
+	IntervalType  = "Interval"
+	IntervalInput = "IntervalInput"
+)
+
+// IntervalFields lists the fields of Interval and IntervalInput in schema
+// order, as PostGraphile declares them.
+var IntervalFields = []string{"seconds", "minutes", "hours", "days", "months", "years"}
 
 // StringTrgmOps is the operator input of text columns that also take the
 // pg_trgm operators: every StringFilterOps operator plus similarTo,
@@ -106,11 +125,16 @@ type Column struct {
 	Elem string
 	// ElemScalar is a range's element GraphQL scalar ("Int", "Datetime").
 	ElemScalar string
+	// Array marks an Interval column that is an array.
+	Array bool
 }
 
 // For resolves a column. Its Kind is None (and Vocabs possibly non-empty)
 // for types that keep their default mapping.
 func For(cat *introspect.Catalog, col *introspect.Column) Column {
+	if isInterval(col) {
+		return intervalColumn(col)
+	}
 	vs := contrib.ForColumn(cat, col)
 	out := Column{Vocabs: vs}
 	for _, v := range vs {
@@ -159,6 +183,30 @@ func For(cat *introspect.Catalog, col *introspect.Column) Column {
 		break
 	}
 	return out
+}
+
+// isInterval reports whether col is the built-in interval type or an array
+// of it.
+func isInterval(col *introspect.Column) bool {
+	if col == nil || col.Spatial != nil || col.EnumRef != "" || strings.TrimPrefix(col.PGType, "_") != "interval" {
+		return false
+	}
+	schema := col.BaseTypeSchema
+	if schema == "" {
+		schema = col.TypeSchema
+	}
+	return schema == "" || schema == "pg_catalog"
+}
+
+func intervalColumn(col *introspect.Column) Column {
+	opsInput := IntervalType + "FilterOps"
+	if col.IsArray {
+		opsInput = IntervalType + "ListFilterOps"
+	}
+	return Column{
+		Kind: Interval, Scalar: IntervalType, Input: IntervalInput,
+		OpsInput: opsInput, Array: col.IsArray,
+	}
 }
 
 // catalogRange returns the entry of [introspect.Catalog.Ranges] that the

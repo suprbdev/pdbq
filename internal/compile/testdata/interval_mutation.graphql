@@ -1,0 +1,8 @@
+mutation {
+  createDuration(input: {label: "x", span: {hours: 1, minutes: 90, seconds: 0.25}, spans: [{days: 2}, {months: 1}], timing: {label: "t", span: {days: 3}, spans: [{hours: 4}]}}) {
+    duration { id span { hours minutes seconds } spans { days months } timing { span { days } } }
+  }
+  updateDurationById(id: 1, patch: {span: {years: 1}}) {
+    duration { span { years } }
+  }
+}

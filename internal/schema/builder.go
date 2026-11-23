@@ -415,6 +415,9 @@ func (b *Builder) ensureContrib(ci contribtype.Column) bool {
 		return true
 	}
 	names := []string{ci.Scalar}
+	if ci.Kind == contribtype.Interval {
+		names = append(names, ci.Input)
+	}
 	if ci.Kind == contribtype.Range || ci.Kind == contribtype.Multirange {
 		names = append(names, contribtype.RangeBound(ci.Scalar), ci.Input, contribtype.RangeBoundInput(ci.Scalar))
 	}
@@ -429,6 +432,10 @@ func (b *Builder) ensureContrib(ci contribtype.Column) bool {
 	}
 	for _, n := range names {
 		b.contribTypes[n] = true
+	}
+	if ci.Kind == contribtype.Interval {
+		b.addIntervalTypes()
+		return true
 	}
 	if ci.Kind != contribtype.Range && ci.Kind != contribtype.Multirange {
 		b.Scalars = append(b.Scalars, ci.Scalar)
@@ -460,6 +467,33 @@ func (b *Builder) ensureContrib(ci contribtype.Column) bool {
 	return true
 }
 
+// addIntervalTypes declares the Interval object and IntervalInput input
+// types, as PostGraphile does: every field is optional, seconds is the only
+// non-integer one and the others carry no overflow into larger units.
+func (b *Builder) addIntervalTypes() {
+	const desc = "An interval of time that has passed where the smallest distinct unit is a second."
+	fieldDesc := map[string]string{
+		"seconds": "A quantity of seconds. This is the only non-integer field, as all the other fields will dump their overflow into a smaller unit of time. Intervals don’t have a smaller unit than seconds.",
+		"minutes": "A quantity of minutes.",
+		"hours":   "A quantity of hours.",
+		"days":    "A quantity of days.",
+		"months":  "A quantity of months.",
+		"years":   "A quantity of years.",
+	}
+	obj := &Object{Name: contribtype.IntervalType, Description: desc}
+	in := &Input{Name: contribtype.IntervalInput, Description: desc}
+	for _, name := range contribtype.IntervalFields {
+		typ := "Int"
+		if name == "seconds" {
+			typ = "Float"
+		}
+		obj.Fields = append(obj.Fields, &Field{Name: name, Type: typ, Description: fieldDesc[name], Meta: &FieldMeta{Kind: KindSynthetic}})
+		in.Fields = append(in.Fields, &InputField{Name: name, Type: typ, Description: fieldDesc[name]})
+	}
+	b.Objects[obj.Name] = obj
+	b.Inputs[in.Name] = in
+}
+
 // gqlInputTypeForColumn is gqlTypeForColumn for input positions: composite
 // columns resolve to their generated input type (object types are not valid
 // in argument or input-field position).
@@ -471,9 +505,9 @@ func (b *Builder) gqlInputTypeForColumn(c *introspect.Column) string {
 		}
 		return in
 	}
-	if ci := b.ContribColumn(c); ci.Kind == contribtype.Range {
+	if ci := b.ContribColumn(c); ci.Kind == contribtype.Range || (ci.Kind == contribtype.Interval && !ci.Array) {
 		return ci.Input
-	} else if ci.Kind == contribtype.Multirange {
+	} else if ci.Kind == contribtype.Multirange || ci.Kind == contribtype.Interval {
 		return "[" + ci.Input + "!]"
 	}
 	return b.gqlTypeForColumn(c)

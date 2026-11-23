@@ -151,7 +151,12 @@ func (s *stmt) aggregatesJSON(f *ast.Field, alias, keys string) (string, error) 
 				if vm == nil || vm.Kind != schema.KindAggregateValue || vm.Aggregate == nil {
 					return "", fmt.Errorf("compile: no metadata for %s.%s", groupType, vf.Name)
 				}
-				inner = append(inner, vkey, s.exprJSON(aggregateExpr(vm.Aggregate, alias), vm.Aggregate.ResultColumn()))
+				expr := aggregateExpr(vm.Aggregate, alias)
+				value, ok := s.contribJSON(expr, vm.Aggregate.ResultColumn(), vf.SelectionSet)
+				if !ok {
+					value = s.exprJSON(expr, vm.Aggregate.ResultColumn())
+				}
+				inner = append(inner, vkey, value)
 			}
 			pairs = append(pairs, key, buildJSONObject(inner))
 		default:

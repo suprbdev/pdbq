@@ -41,8 +41,8 @@ Checklist of PostgreSQL and GraphQL features pdbq supports. Checked = implemente
 - [x] `bytea` → `String` (base64 output)
 - [x] Arrays of any mapped type → GraphQL lists
 - [x] Enums → GraphQL enum types (labels mapped to spec-valid names, round-tripped on input and output)
-- [x] `macaddr`, `interval`, custom range types → `String` fallback
-- [ ] `interval` as structured scalar
+- [x] `macaddr`, custom range types → `String` fallback
+- [x] `interval` → `Interval { seconds minutes hours days months years }` with an `IntervalInput` (PostGraphile shape), in columns, arrays, composites, function arguments and results, filters and aggregates — see [Intervals](interval.md)
 - [x] Range and multirange types with structured bounds: `IntRange { start { value inclusive } end { … } }` (PostGraphile shape; `BigIntRange`, `BigFloatRange`, `DateRange`, `DatetimeRange`), multiranges as lists — see [Contrib types](contrib.md)
 - [x] `hstore` → `KeyValueHash` JSON object, with `containsKey containsAllKeys containsAnyKeys contains containedBy`
 - [x] `ltree` / `ltree[]` with `ancestorOf descendantOf matchesLquery matchesAnyLquery matchesLtxtquery` (+ `*Any` forms)

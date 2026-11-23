@@ -103,6 +103,9 @@ func codecOperand(ci contribtype.Column, v any) any {
 // typed codec expression (hstore($1::text[]), int4range($1::int4, ...),
 // $1::"ext".citext, ...).
 func (s *stmt) contribValue(ci contribtype.Column, v any) (string, error) {
+	if ci.Kind == contribtype.Interval {
+		return s.intervalValue(ci, v)
+	}
 	params, err := ci.Own.Codec.Params(codecOperand(ci, v))
 	if err != nil {
 		return "", errUser("%s", err.Error())
@@ -129,6 +132,9 @@ var comparisonOps = map[string]string{
 // the generic comparisons, rendered with the type's schema-qualified
 // operator and a codec-typed operand, then the vocabulary operators.
 func (s *stmt) contribOp(ci contribtype.Column, ref, op string, val any) (string, error) {
+	if ci.Kind == contribtype.Interval {
+		return s.intervalOp(ci, ref, op, val)
+	}
 	if sym, ok := comparisonOps[op]; ok {
 		v, err := s.contribValue(ci, val)
 		if err != nil {
@@ -288,6 +294,8 @@ func (s *stmt) resolveRanks(sql string) (string, error) {
 func (s *stmt) contribJSON(ref string, c *introspect.Column, sel ast.SelectionSet) (string, bool) {
 	ci := s.contrib(c)
 	switch ci.Kind {
+	case contribtype.Interval:
+		return s.intervalJSON(ci, ref, sel), true
 	case contribtype.Hstore:
 		return ci.Own.Codec.OutputJSONSQL(ref), true
 	case contribtype.Range:
@@ -389,6 +397,8 @@ func (s *stmt) similarityTerm(t *introspect.Table, f *ast.Field, value string, s
 // their text form.
 func contribLiteral(ci contribtype.Column, v any) (any, error) {
 	switch ci.Kind {
+	case contribtype.Interval:
+		return intervalLiteral(ci, v)
 	case contribtype.Hstore:
 		pairs, err := pgcontrib.HstoreParam(v)
 		if err != nil {

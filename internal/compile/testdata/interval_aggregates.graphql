@@ -1,0 +1,9 @@
+{
+  allDurations {
+    aggregates {
+      min { span { hours } }
+      max { span { hours days } }
+      sum { span { hours } }
+    }
+  }
+}

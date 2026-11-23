@@ -188,6 +188,7 @@ func TestGolden(t *testing.T) {
 	typed := buildWith(t, map[string]any{"typed_geometry": true})
 	temporal, temporalReg := buildTemporal(t)
 	contribBuilt := buildContrib(t)
+	intervalBuilt := buildInterval(t)
 
 	files, err := filepath.Glob(filepath.Join("testdata", "*.graphql"))
 	if err != nil || len(files) == 0 {
@@ -201,6 +202,9 @@ func TestGolden(t *testing.T) {
 		}
 		if strings.HasPrefix(name, "contrib_") {
 			built = contribBuilt
+		}
+		if strings.HasPrefix(name, "interval_") {
+			built = intervalBuilt
 		}
 		if strings.HasPrefix(name, "aggregates") {
 			built = aggBuilt

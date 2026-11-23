@@ -1,0 +1,7 @@
+# variables: {"cmp": {"hours": 2, "minutes": 30}, "list": [{"days": 1}, {"seconds": 1.5}]}
+query ($cmp: IntervalInput, $list: [IntervalInput!]) {
+  a: allDurations(filter: {span: {greaterThan: $cmp}}) { nodes { id } }
+  b: allDurations(filter: {span: {in: $list, isNull: false}}) { nodes { id } }
+  c: allDurations(filter: {spans: {contains: $list}}) { nodes { id } }
+  d: allDurations(condition: {span: {years: 1}}, orderBy: SPAN_DESC) { nodes { id } }
+}
