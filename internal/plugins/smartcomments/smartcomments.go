@@ -207,7 +207,7 @@ func (p *Plugin) applyColumnTags(b *schema.Builder, t *introspect.Table) {
 		omitted := func(action string) bool { return everything || omits[action] }
 
 		if omitted("read") && obj != nil {
-			p.removeColumnField(b, obj, c)
+			p.removeColumnField(obj, c)
 		}
 		if omitted("create") && createIn != nil {
 			removeInputColumn(createIn, c.Name)
@@ -274,7 +274,7 @@ func (p *Plugin) applyFunctionTags(b *schema.Builder) {
 
 // removeColumnField drops the output field bound to c, refusing to empty the
 // type (a fieldless object is invalid SDL).
-func (p *Plugin) removeColumnField(b *schema.Builder, obj *schema.Object, c *introspect.Column) {
+func (p *Plugin) removeColumnField(obj *schema.Object, c *introspect.Column) {
 	f := columnField(obj, c)
 	if f == nil {
 		return

@@ -32,8 +32,8 @@ bench: ## Run compile benchmarks
 fuzz: ## Fuzz the filter compiler for 30s
 	$(GO) test -fuzz=FuzzFilter -fuzztime=30s ./internal/compile/
 
-lint: ## Run golangci-lint (falls back to go vet)
-	golangci-lint run ./... || $(GO) vet ./...
+lint: ## Run golangci-lint
+	golangci-lint run ./...
 
 example-config: build ## Regenerate the committed reference YAML from the structs
 	./bin/pdbq config example > examples/pdbq.example.yaml

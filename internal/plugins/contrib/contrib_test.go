@@ -227,10 +227,10 @@ func TestOrderingSurface(t *testing.T) {
 		t.Errorf("DocumentSimilarToInput.label = %q", got)
 	}
 	f := b.Query.Field("allDocuments")
-	if !hasArg(f, "similarTo") {
+	if !hasArg(f) {
 		t.Error("allDocuments lacks similarTo:")
 	}
-	if hasArg(b.Query.Field("allUsers"), "similarTo") {
+	if hasArg(b.Query.Field("allUsers")) {
 		t.Error("similarTo: added to an unrelated table")
 	}
 }
@@ -272,7 +272,7 @@ func TestSettingsToggleEachHalf(t *testing.T) {
 	if hasEnumValue(noOrder, "DocumentsOrderBy", "SEARCH_RANK_DESC") || hasEnumValue(noOrder, "DocumentsOrderBy", "LABEL_SIMILARITY_DESC") {
 		t.Error("ordering: false kept contrib orderBy values")
 	}
-	if hasArg(noOrder.Query.Field("allDocuments"), "similarTo") {
+	if hasArg(noOrder.Query.Field("allDocuments")) {
 		t.Error("ordering: false kept similarTo:")
 	}
 	if noOrder.Objects["Document"].Field("searchRank") == nil {

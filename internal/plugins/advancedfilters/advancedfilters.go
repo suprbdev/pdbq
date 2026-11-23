@@ -151,7 +151,7 @@ func (p *Plugin) addRelationFilters(b *schema.Builder) {
 			relName := b.ForwardRelationName(t, fk)
 			if !fk.ReferencesOne() {
 				parentType := b.TypeForTable[parent.Schema+"."+parent.Name]
-				addToManyFilter(b, in, relName, parent, fk, parentFilter.Name, ensureToMany(b, parentType, parentFilter.Name), true)
+				addToManyFilter(in, relName, parent, fk, parentFilter.Name, ensureToMany(b, parentType, parentFilter.Name), true)
 				continue
 			}
 			if in.Field(relName) == nil {
@@ -189,7 +189,7 @@ func (p *Plugin) addRelationFilters(b *schema.Builder) {
 					Constraint: fk.Name,
 				})
 				childType := b.TypeForTable[child.Schema+"."+child.Name]
-				addToManyFilter(b, in, relName, child, fk, childFilter.Name, ensureToMany(b, childType, childFilter.Name), false)
+				addToManyFilter(in, relName, child, fk, childFilter.Name, ensureToMany(b, childType, childFilter.Name), false)
 			}
 		}
 	}
@@ -198,7 +198,7 @@ func (p *Plugin) addRelationFilters(b *schema.Builder) {
 // addToManyFilter adds the quantified filter field and its <rel>Exist
 // variant for a to-many relation: a reverse FK, or a forward PERIOD FK
 // (forward set) whose child row may reference several rows.
-func addToManyFilter(b *schema.Builder, in *schema.Input, relName string, related *introspect.Table, fk *introspect.ForeignKey, filterType, wrapper string, forward bool) {
+func addToManyFilter(in *schema.Input, relName string, related *introspect.Table, fk *introspect.ForeignKey, filterType, wrapper string, forward bool) {
 	side := "referencing"
 	if forward {
 		side = "referenced"

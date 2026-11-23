@@ -226,4 +226,4 @@ Checklist of PostgreSQL and GraphQL features pdbq supports. Checked = implemente
 - [x] Benchmarks: schema build, compile per query shape
 - [ ] Load benchmarks (k6/vegeta) for RPS/latency against the compose stack, tracked over time
 - [x] Published container image / release automation (tag-driven release workflow: binaries, checksums, multi-arch images)
-- [ ] golangci-lint config committed (Makefile falls back to `go vet`)
+- [x] golangci-lint config committed (`.golangci.yaml`; CI runs it)

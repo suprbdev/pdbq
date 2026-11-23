@@ -1,6 +1,8 @@
 package schema
 
 import (
+	"slices"
+
 	"github.com/suprbdev/pdbcore/postgis"
 	"github.com/suprbdev/pdbq/internal/contribtype"
 )
@@ -125,7 +127,7 @@ func contribFilterOps(ci contribtype.Column) []filterOp {
 	case contribtype.FullText:
 		return isNull
 	case contribtype.Hstore:
-		out = append(eq, isNull...)
+		out = append(slices.Clone(eq), isNull...)
 	case contribtype.Ltree, contribtype.Inet:
 		out = append(append(append(eq, in...), isNull...), cmp...)
 	case contribtype.LtreeArray, contribtype.Multirange:
