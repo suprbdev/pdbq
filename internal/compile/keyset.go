@@ -21,8 +21,9 @@ type pagePlan struct {
 	// reversed: `last` pagination — scan flipped, re-reversed in the outer
 	// aggregates.
 	reversed   bool
-	limit      int // <= maxPageSize (larger is rejected); maxPageSize is the default when neither first nor last given
-	offset     int // offset arg plus any legacy cursor offset
+	limit      int  // <= maxPageSize (larger is rejected); maxPageSize is the default when neither first nor last given
+	offset     int  // offset arg plus any legacy cursor offset
+	hasOffset  bool // an offset arg, legacy cursor or stream window is present: offset is bound, whatever its value
 	hasAfter   bool
 	hasBefore  bool
 	afterKeys  []any
@@ -70,6 +71,7 @@ func (s *stmt) planPage(t *introspect.Table, f *ast.Field, typeName string) (pag
 				return p, errUser("offset must be >= 0")
 			}
 			p.offset = int(n)
+			p.hasOffset = true
 		}
 	}
 	decode := func(arg string) (*cursorVal, error) {
@@ -103,6 +105,7 @@ func (s *stmt) planPage(t *introspect.Table, f *ast.Field, typeName string) (pag
 		} else {
 			// Legacy offset cursor: fold into OFFSET, keep offset-mode math.
 			p.offset += after.offset
+			p.hasOffset = true
 			p.predKeyset = false
 		}
 	}

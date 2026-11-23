@@ -612,9 +612,10 @@ func (s *stmt) connectionJSON(t *introspect.Table, f *ast.Field, extraCond strin
 			limit = "\nLIMIT " + strconv.Itoa(plan.limit)
 		}
 	}
-	pageOffset := ""
-	if plan.offset > 0 {
-		pageOffset = "\nOFFSET " + s.param(plan.offset)
+	pageOffset, offsetExpr := "", "0"
+	if plan.hasOffset {
+		offsetExpr = s.param(plan.offset) + "::bigint"
+		pageOffset = "\nOFFSET " + offsetExpr
 	}
 	distinct := ""
 	if len(dcols) > 0 {
@@ -673,9 +674,9 @@ func (s *stmt) connectionJSON(t *introspect.Table, f *ast.Field, extraCond strin
 	agg := func(expr string) string {
 		return fmt.Sprintf("coalesce(json_agg(%s%s)%s, '[]'::json)", expr, aggOrder, aggFilter)
 	}
-	cursorOffset := 0
-	if len(dcols) > 0 {
-		cursorOffset = plan.offset
+	cursorOffset := ""
+	if len(dcols) > 0 && plan.hasOffset {
+		cursorOffset = offsetExpr
 	}
 	cursorExpr := encodeCursorSQL(sub+".__rn", cursorOffset)
 	if plan.emitKeyset {
@@ -722,8 +723,8 @@ func (s *stmt) connectionJSON(t *introspect.Table, f *ast.Field, extraCond strin
 			// the shared trim placeholder holds offset+limit — add the offset
 			// to the count so the comparison stays `fetched > limit`.
 			countExpr := "count(*)"
-			if plan.offset > 0 {
-				countExpr = fmt.Sprintf("(count(*) + %d)", plan.offset)
+			if plan.hasOffset {
+				countExpr = fmt.Sprintf("(count(*) + %s)", offsetExpr)
 			}
 			switch {
 			case plan.reversed:
@@ -731,14 +732,14 @@ func (s *stmt) connectionJSON(t *introspect.Table, f *ast.Field, extraCond strin
 				hasPrev = fmt.Sprintf("(%s > %s)", countExpr, trimOrParam(&trimParam, s, plan.offset+plan.limit))
 			case plan.limit >= 0:
 				hasNext = fmt.Sprintf("(%s > %s)", countExpr, trimOrParam(&trimParam, s, plan.offset+plan.limit))
-				hasPrev = boolLit(plan.hasAfter || plan.offset > 0)
+				hasPrev = offsetPrev(plan, offsetExpr)
 			default:
 				hasNext = boolLit(plan.hasBefore)
-				hasPrev = boolLit(plan.hasAfter || plan.offset > 0)
+				hasPrev = offsetPrev(plan, offsetExpr)
 			}
 		} else {
-			hasNext = fmt.Sprintf("(%s > %d + count(%s.__rn))", countSQL, plan.offset, sub)
-			hasPrev = fmt.Sprintf("(%d > 0)", plan.offset)
+			hasNext = fmt.Sprintf("(%s > %s + count(%s.__rn))", countSQL, offsetExpr, sub)
+			hasPrev = offsetPrev(plan, offsetExpr)
 		}
 	}
 
@@ -820,6 +821,19 @@ func (s *stmt) pageColumns(t *introspect.Table, alias, sql string) []string {
 
 // trimOrParam reuses the trim placeholder when aggFilter already created one,
 // otherwise allocates a parameter for the limit comparison.
+// offsetPrev renders hasPreviousPage for a forward page: true after a
+// cursor, otherwise whether the bound offset (offsetExpr) skipped any rows.
+func offsetPrev(plan pagePlan, offsetExpr string) string {
+	switch {
+	case plan.hasAfter:
+		return "true"
+	case plan.hasOffset:
+		return "(" + offsetExpr + " > 0)"
+	default:
+		return "false"
+	}
+}
+
 func trimOrParam(trim *string, s *stmt, limit int) string {
 	if *trim == "" {
 		*trim = s.param(limit)

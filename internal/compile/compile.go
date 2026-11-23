@@ -756,26 +756,29 @@ func (s *stmt) pageClause(f *ast.Field, extraOffset int) (string, error) {
 		}
 	}
 	out := "\nLIMIT " + strconv.Itoa(limit)
-	off := extraOffset
+	off, hasOff := extraOffset, extraOffset > 0
 	if v, ok := s.argValue(f, "offset"); ok {
 		if n, ok := toInt(v); ok {
 			if n < 0 {
 				return "", errUser("offset must be >= 0")
 			}
 			off += int(n)
+			hasOff = true
 		}
 	}
-	if off > 0 {
+	if hasOff {
 		out += "\nOFFSET " + s.param(off)
 	}
 	return out, nil
 }
 
-func encodeCursorSQL(rnExpr string, offset int) string {
-	if offset == 0 {
+// encodeCursorSQL renders the offset cursor of the row numbered rnExpr;
+// offsetExpr, when not empty, is the SQL of the bound page offset added to it.
+func encodeCursorSQL(rnExpr, offsetExpr string) string {
+	if offsetExpr == "" {
 		return fmt.Sprintf("encode(convert_to('o:' || %s::text, 'UTF8'), 'base64')", rnExpr)
 	}
-	return fmt.Sprintf("encode(convert_to('o:' || (%s + %d)::text, 'UTF8'), 'base64')", rnExpr, offset)
+	return fmt.Sprintf("encode(convert_to('o:' || (%s + %s)::text, 'UTF8'), 'base64')", rnExpr, offsetExpr)
 }
 
 func decodeCursor(cur string) (int, error) {

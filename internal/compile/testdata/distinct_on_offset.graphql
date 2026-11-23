@@ -1,0 +1,9 @@
+# The page offset reaches the offset cursors and pageInfo as the bound OFFSET
+# parameter, never as SQL text.
+{
+  allUsers(distinctOn: [MOOD], orderBy: [MOOD_DESC], first: 2, offset: 777) {
+    totalCount
+    edges { cursor node { id } }
+    pageInfo { hasNextPage hasPreviousPage endCursor }
+  }
+}

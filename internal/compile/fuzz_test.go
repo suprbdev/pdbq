@@ -2,6 +2,8 @@ package compile_test
 
 import (
 	"context"
+	"encoding/base64"
+	"strconv"
 	"testing"
 
 	"github.com/vektah/gqlparser/v2/ast"
@@ -20,7 +22,8 @@ import (
 // generic comparisons, rank, similarity and vector distance ordering, the
 // similarity and distance score fields, the vector and bit distance
 // thresholds and vector inputs are covered too, and against
-// the aggregates schema for having and relation-aggregate filters, and
+// the aggregates schema for having and relation-aggregate filters, through
+// offset and offset-cursor pagination (with and without distinctOn), and
 // through a custom mutation whose payload compiles to a Then statement.
 func FuzzFilter(f *testing.F) {
 	built := buildContrib(f)
@@ -107,6 +110,16 @@ func FuzzFilter(f *testing.F) {
 			orderBy: [NOTES_LEVENSHTEIN_DISTANCE_ASC]
 		) { nodes { id notesLevenshteinDistance pathSubpath(offset: $n, length: $len) } }
 	}`
+	const pageQuery = `query ($n: Int!, $after: Cursor) {
+		allUsers(distinctOn: [MOOD], orderBy: [MOOD_DESC], first: 2, offset: $n) {
+			totalCount edges { cursor node { id } } pageInfo { hasNextPage hasPreviousPage endCursor }
+		}
+		afterUsers: allUsers(distinctOn: [MOOD], orderBy: [MOOD_DESC], first: 2, after: $after) {
+			nodes { id } edges { cursor } pageInfo { hasNextPage hasPreviousPage startCursor }
+		}
+		allPosts(first: 3, offset: $n, orderBy: [TITLE_ASC]) { edges { cursor } pageInfo { hasNextPage hasPreviousPage } }
+		allMetrics(first: 2, offset: $n, after: $after) { totalCount edges { cursor } pageInfo { hasNextPage hasPreviousPage } }
+	}`
 	const mutationQuery = `mutation ($e: String, $n: Int!, $vec: [Float!], $cfg: String) {
 		createEmbedding(input: {embedding: $vec, half: $vec, sparse: $cfg}) { embedding { id embedding } }
 		publishPost(input: {postId: $n, clientMutationId: $e}) {
@@ -128,7 +141,7 @@ func FuzzFilter(f *testing.F) {
 		built   *schema.Built
 		query   string
 		lenient bool
-	}{{built, query, false}, {aggBuilt, aggQuery, false}, {built, mutationQuery, false}, {built, fuzzyQuery, true}} {
+	}{{built, query, false}, {aggBuilt, aggQuery, false}, {built, pageQuery, true}, {built, mutationQuery, false}, {built, fuzzyQuery, true}} {
 		doc, perr := parser.ParseQuery(&ast.Source{Input: tc.query})
 		if perr != nil {
 			f.Fatal(perr)
@@ -151,7 +164,7 @@ func FuzzFilter(f *testing.F) {
 				"e": email, "tag": []any{tag}, "n": n, "h": map[string]any{tag: email}, "b": n%2 == 0,
 				"d": email, "ip": email, "ips": []any{tag}, "cfg": "c" + email, "big": tag, "bigs": []any{tag}, "bf": email,
 				"vec": []any{float64(n), 0.5, -float64(n)}, "fl": float64(n) / 4, "sv": "c" + email, "vv": []any{0.5, float64(n)},
-				"len": length, "k": email,
+				"len": length, "k": email, "after": base64.StdEncoding.EncodeToString([]byte("o:" + strconv.Itoa(n))),
 			})
 			if verr != nil {
 				t.Skipf("rejected variables: %v", verr)
