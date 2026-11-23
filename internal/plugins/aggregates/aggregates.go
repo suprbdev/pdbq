@@ -181,7 +181,7 @@ func (p *Plugin) tableBehavior(t *introspect.Table) behavior {
 // grouping (additionally @behavior -groupBy).
 func columnTags(c *introspect.Column) (omitted, noGroup bool) {
 	tags, _ := smarttags.Parse(c.Comment)
-	omitted = omit.Column(c, omit.Aggregates) || omit.Column(c, omit.Read) ||
+	omitted = omit.Column(c, omit.Aggregates) ||
 		strings.EqualFold(tags.First("aggregates"), "off")
 	for _, v := range tags.All("behavior") {
 		for _, tok := range smarttags.SplitList(v) {

@@ -44,6 +44,23 @@ func TestHides(t *testing.T) {
 	}
 }
 
+func TestColumnReadImplies(t *testing.T) {
+	c := &introspect.Column{Comment: "@omit read"}
+	for _, a := range []omit.Action{omit.Read, omit.Filter, omit.Order, omit.Aggregates} {
+		if !omit.Column(c, a) {
+			t.Errorf("@omit read must hide a column from %s", a)
+		}
+	}
+	for _, a := range []omit.Action{omit.Create, omit.Update} {
+		if omit.Column(c, a) {
+			t.Errorf("@omit read must not hide a column from %s", a)
+		}
+	}
+	if omit.Hides("@omit read", omit.Filter) {
+		t.Error("Hides stays literal: only Column derives from read")
+	}
+}
+
 func TestDistinct(t *testing.T) {
 	for comment, want := range map[string]bool{
 		"":              false,

@@ -20,10 +20,12 @@
 //   - [Create] / [Update]: the create input / update patch field,
 //     including nested-mutation inputs and upsert's DO UPDATE SET list.
 //
-// [Read] does not imply [Filter] or [Order]: a column readable by neither
-// output nor ordering can still be compared, which reveals its value to a
-// client that bisects with range operators. Tag it with a bare @omit to
-// hide it completely.
+// For a column, [Read] implies [Filter], [Order] and [Aggregates]: a column
+// that can be compared or ordered reveals its value to a client that
+// bisects with range operators, so @omit read removes it from filters,
+// conditions, orderBy, distinctOn, aggregates and every key surface. This
+// deliberately differs from PostGraphile, where @omit read leaves the
+// column filterable and sortable.
 //
 // For tables the actions are [Read] (root query fields), [All] (the
 // connection query), [Many] (one-to-many relation surface), [Create],
@@ -77,16 +79,27 @@ func Everything(comment string) bool {
 	return everything
 }
 
-// Column reports whether column c is hidden from action a.
+// Column reports whether column c is hidden from action a. A column hidden
+// from [Read] is also hidden from [Filter], [Order] and [Aggregates].
 func Column(c *introspect.Column, a Action) bool {
-	return c != nil && Hides(c.Comment, a)
+	if c == nil {
+		return false
+	}
+	if Hides(c.Comment, a) {
+		return true
+	}
+	switch a {
+	case Filter, Order, Aggregates:
+		return Hides(c.Comment, Read)
+	}
+	return false
 }
 
 // Distinct reports whether c is left out of the distinctOn enum: DISTINCT ON
 // groups rows by equal values and orders by them, so it needs the column
 // readable, filterable and orderable.
 func Distinct(c *introspect.Column) bool {
-	return Column(c, Read) || Column(c, Filter) || Column(c, Order)
+	return Column(c, Filter) || Column(c, Order)
 }
 
 // HiddenKey reports whether any of t's columns named in cols is hidden from

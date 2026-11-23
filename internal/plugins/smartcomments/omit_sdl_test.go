@@ -287,7 +287,7 @@ func surfacesOf(occ map[string]bool) []string {
 // surface is not one the variant hides, and no new occurrence may appear.
 func TestOmitColumnEverywhere(t *testing.T) {
 	everything := []string{sOutput, sKey, sUpsert, sFilter, sAggFilter, sOrder, sRefOrder, sAggOrder, sRank, sRankOrder, sDistinct, sGroupBy, sCreate, sUpdate}
-	read := []string{sOutput, sKey, sUpsert, sAggFilter, sRefOrder, sAggOrder, sRank, sRankOrder, sDistinct, sGroupBy}
+	read := []string{sOutput, sKey, sUpsert, sFilter, sAggFilter, sOrder, sRefOrder, sAggOrder, sRank, sRankOrder, sDistinct, sGroupBy}
 	variants := []struct {
 		tag    string
 		hidden []string
@@ -454,7 +454,7 @@ func TestOmitTableEverywhere(t *testing.T) {
 // no row through the API — no nodeId, by-key fields, nested key operations
 // or payload edges, and nested operations copying it into vault_logs'
 // foreign key are gone — and connection cursors fall back to offsets
-// instead of encoding the key. The column stays filterable.
+// instead of encoding the key. The column is no longer filterable.
 func TestOmitPrimaryKeyColumn(t *testing.T) {
 	built := buildAll(t, func(c *introspect.Catalog) {
 		c.Table("public", "vaults").Column("id").Comment = "@omit read"
@@ -470,7 +470,8 @@ func TestOmitPrimaryKeyColumn(t *testing.T) {
 	rejectFields(t, s, "UpdateVaultBySecretCodePayload", "vaultEdge")
 	wantFields(t, s, "UserVaultsByOwnerIdNestedPatchInput", "connectBySecretCode")
 	rejectFields(t, s, "UserVaultsByOwnerIdNestedPatchInput", "connectById", "connectByNodeId")
-	wantFields(t, s, "VaultFilter", "id")
+	rejectFields(t, s, "VaultFilter", "id")
+	rejectFields(t, s, "VaultCondition", "id")
 	wantFields(t, s, "VaultLog", "vault")
 
 	sql := compileRoot(t, built, `{ allVaults(first: 1) { edges { cursor } } }`).SQL
