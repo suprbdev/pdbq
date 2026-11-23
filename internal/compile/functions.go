@@ -156,9 +156,9 @@ func (s *stmt) fnValueJSON(ref string, fn *introspect.Function, sel ast.Selectio
 		if expr, ok := s.enumArrayJSON(ref, ret); ok {
 			return expr
 		}
-		return "to_jsonb(" + ref + ")"
+		return arrayJSON(ref, ret)
 	}
-	return "to_jsonb(" + s.exprJSON(ref, ret) + ")"
+	return "to_json(" + s.exprJSON(ref, ret) + ")"
 }
 
 // fnCompositeJSON compiles sel over an already-materialized composite (or
@@ -168,7 +168,7 @@ func (s *stmt) fnCompositeJSON(ref string, fn *introspect.Function, comp *intros
 }
 
 // function compiles a PostgreSQL function field. Scalar returns become
-// to_jsonb(fn(...)); row returns (tables, OUT/TABLE records) compile like
+// to_json(fn(...)); row returns (tables, OUT/TABLE records) compile like
 // list queries with the function as the row source; composite returns
 // compile like composite columns.
 func (s *stmt) function(meta *schema.FieldMeta, f *ast.Field) (string, error) {
@@ -195,16 +195,16 @@ func (s *stmt) function(meta *schema.FieldMeta, f *ast.Field) (string, error) {
 				return "", err
 			}
 			sub := s.alias("s")
-			return fmt.Sprintf("SELECT coalesce(jsonb_agg(%s.data), '[]'::jsonb) AS data\nFROM (\n%s\n) AS %s",
+			return fmt.Sprintf("SELECT coalesce(json_agg(%s.data), '[]'::json) AS data\nFROM (\n%s\n) AS %s",
 				sub, indent(fmt.Sprintf("SELECT %s AS data\nFROM %s AS %s%s", jsonExpr, call, alias, joinLaterals(laterals))), sub), nil
 		case fnComposite:
 			expr, err := s.fnCompositeJSON("__v.v", fn, comp, f.SelectionSet, 1)
 			if err != nil {
 				return "", err
 			}
-			return fmt.Sprintf("SELECT coalesce(jsonb_agg(%s), '[]'::jsonb) AS data FROM (SELECT %s AS v) AS __v", expr, call), nil
+			return fmt.Sprintf("SELECT coalesce(json_agg(%s), '[]'::json) AS data FROM (SELECT %s AS v) AS __v", expr, call), nil
 		}
-		return fmt.Sprintf("SELECT coalesce(jsonb_agg(%s), '[]'::jsonb) AS data FROM %s AS __v",
+		return fmt.Sprintf("SELECT coalesce(json_agg(%s), '[]'::json) AS data FROM %s AS __v",
 			s.fnValueJSON("__v", fn, f.SelectionSet), call), nil
 	}
 	switch shape {
@@ -226,7 +226,7 @@ func (s *stmt) function(meta *schema.FieldMeta, f *ast.Field) (string, error) {
 		return fmt.Sprintf("SELECT %s AS data FROM (SELECT %s AS v) AS __fn", expr, call), nil
 	}
 	if fn.ReturnType == "void" {
-		return fmt.Sprintf("SELECT to_jsonb(true) AS data FROM (SELECT %s) AS __v", call), nil
+		return fmt.Sprintf("SELECT to_json(true) AS data FROM (SELECT %s) AS __v", call), nil
 	}
 	// Materialize the call first: fnValueJSON may subscript the value (enum
 	// arrays), and subscripting the call directly would re-evaluate it per
@@ -296,22 +296,22 @@ func (s *stmt) functionMutation(meta *schema.FieldMeta, f *ast.Field) (string, e
 				return "", err
 			}
 			sub := s.alias("s")
-			from = fmt.Sprintf("(SELECT coalesce(jsonb_agg(%s.data), '[]'::jsonb) AS data FROM (\n%s\n) AS %s) AS __agg",
+			from = fmt.Sprintf("(SELECT coalesce(json_agg(%s.data), '[]'::json) AS data FROM (\n%s\n) AS %s) AS __agg",
 				sub, indent(fmt.Sprintf("SELECT %s AS data\nFROM %s AS %s%s", jsonExpr, call, alias, joinLaterals(laterals))), sub)
 		case fnComposite:
 			expr, err := s.fnCompositeJSON("__v.v", fn, comp, resultField.SelectionSet, 1)
 			if err != nil {
 				return "", err
 			}
-			from = fmt.Sprintf("(SELECT coalesce(jsonb_agg(%s), '[]'::jsonb) AS data FROM (SELECT %s AS v) AS __v) AS __agg", expr, call)
+			from = fmt.Sprintf("(SELECT coalesce(json_agg(%s), '[]'::json) AS data FROM (SELECT %s AS v) AS __v) AS __agg", expr, call)
 		default:
-			from = fmt.Sprintf("(SELECT coalesce(jsonb_agg(%s), '[]'::jsonb) AS data FROM %s AS __v) AS __agg",
+			from = fmt.Sprintf("(SELECT coalesce(json_agg(%s), '[]'::json) AS data FROM %s AS __v) AS __agg",
 				s.fnValueJSON("__v", fn, resultSel), call)
 		}
 		resultExpr = "__agg.data"
 	case fn.ReturnType == "void":
 		from = fmt.Sprintf("(SELECT %s AS v) AS __fn", call)
-		resultExpr = "to_jsonb(true)"
+		resultExpr = "to_json(true)"
 	case shape == fnRows:
 		alias := s.alias("t")
 		jsonExpr, laterals, err := s.rowJSONAs(s.rowsTypeName(fn, resultField), resultField.SelectionSet, alias, 1)
@@ -341,7 +341,7 @@ func (s *stmt) functionMutation(meta *schema.FieldMeta, f *ast.Field) (string, e
 // with an explicit ROW(...)::table cast, which works over any row source —
 // a table scan, a function row source, or a mutation RETURNING CTE (whose
 // whole-row variable is an anonymous record the function would reject).
-// Set-returning functions aggregate into a scalar-transformed jsonb array
+// Set-returning functions aggregate into a scalar-transformed json array
 // (SETOF <scalar>) or a fully-selected row array (SETOF <table|record>);
 // row and composite results compile their selection in a scalar subquery.
 func (s *stmt) computedJSON(meta *schema.FieldMeta, f *ast.Field, alias string, depth int) (string, error) {
@@ -368,7 +368,7 @@ func (s *stmt) computedJSON(meta *schema.FieldMeta, f *ast.Field, alias string, 
 				jsonExpr, call, rowAlias, joinLaterals(laterals), rowAlias), nil
 		}
 		sub := s.alias("s")
-		return fmt.Sprintf("(SELECT coalesce(jsonb_agg(%s.data), '[]'::jsonb) FROM (\n%s\n) AS %s)",
+		return fmt.Sprintf("(SELECT coalesce(json_agg(%s.data), '[]'::json) FROM (\n%s\n) AS %s)",
 			sub,
 			indent(fmt.Sprintf("SELECT %s AS data\nFROM %s AS %s%s", jsonExpr, call, rowAlias, joinLaterals(laterals))),
 			sub), nil
@@ -379,7 +379,7 @@ func (s *stmt) computedJSON(meta *schema.FieldMeta, f *ast.Field, alias string, 
 			return "", err
 		}
 		if fn.ReturnsSet {
-			return fmt.Sprintf("(SELECT coalesce(jsonb_agg(%s), '[]'::jsonb) FROM (SELECT %s AS v) AS %s)", expr, call, sub), nil
+			return fmt.Sprintf("(SELECT coalesce(json_agg(%s), '[]'::json) FROM (SELECT %s AS v) AS %s)", expr, call, sub), nil
 		}
 		return fmt.Sprintf("(SELECT %s FROM (SELECT %s AS v) AS %s)", expr, call, sub), nil
 	}
@@ -389,7 +389,7 @@ func (s *stmt) computedJSON(meta *schema.FieldMeta, f *ast.Field, alias string, 
 		if !ok {
 			value = s.exprJSON(elem+".v", ret)
 		}
-		return fmt.Sprintf("(SELECT coalesce(jsonb_agg(%s), '[]'::jsonb) FROM %s AS %s(v))",
+		return fmt.Sprintf("(SELECT coalesce(json_agg(%s), '[]'::json) FROM %s AS %s(v))",
 			value, call, elem), nil
 	}
 	if ret.IsArray {
@@ -400,7 +400,7 @@ func (s *stmt) computedJSON(meta *schema.FieldMeta, f *ast.Field, alias string, 
 			mapped, _ := s.enumArrayJSON(sub+".v", ret)
 			return fmt.Sprintf("(SELECT %s FROM (SELECT %s AS v) AS %s)", mapped, call, sub), nil
 		}
-		return "to_jsonb(" + call + ")", nil
+		return arrayJSON(call, ret), nil
 	}
 	if expr, ok := s.contribJSON(call, ret, f.SelectionSet); ok {
 		return expr, nil

@@ -1,0 +1,12 @@
+# Connection fields render under their aliases in selection order; each
+# nodes field and each edges node field selects its own row object.
+{
+  allPosts(first: 2) {
+    count: totalCount
+    ids: nodes { id }
+    titles: nodes { title }
+    edges { cursor byId: node { id } }
+    page: pageInfo { hasNextPage }
+    __typename
+  }
+}

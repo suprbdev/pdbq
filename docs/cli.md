@@ -37,7 +37,7 @@ exactly what would run:
 ```console
 $ pdbq query '{allUsers(first: 2) {nodes {email}}}' --print-sql
 -- field: allUsers
-SELECT jsonb_build_object(...) AS data FROM ...
+SELECT json_build_object(...) AS data FROM ...
 -- args: [2]
 ```
 

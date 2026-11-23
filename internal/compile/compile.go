@@ -1,7 +1,7 @@
 // Package compile turns one validated GraphQL root field into exactly one
 // parameterized SQL statement, PostGraphile-style: nested selections become
-// jsonb_build_object trees, relations become LEFT JOIN LATERAL subqueries,
-// lists become jsonb_agg — so the database returns the response JSON directly
+// json_build_object trees, relations become LEFT JOIN LATERAL subqueries,
+// lists become json_agg — so the database returns the response JSON directly
 // and there is no N+1 problem to paper over.
 package compile
 
@@ -22,7 +22,7 @@ import (
 )
 
 // Statement is a single executable SQL statement. The statement always
-// returns a single row with a single jsonb column named "data" (possibly
+// returns a single row with a single json column named "data" (possibly
 // zero rows for missed single-row lookups).
 type Statement struct {
 	SQL  string
@@ -92,7 +92,7 @@ func (c *Compiler) Compile(ctx context.Context, req *Request) (*Statement, error
 	case schema.KindNode:
 		sql, err = s.nodeQuery(req.Field)
 	case schema.KindSynthetic:
-		sql = "SELECT NULL::jsonb AS data"
+		sql = "SELECT NULL::json AS data"
 	default:
 		err = fmt.Errorf("compile: unsupported root field kind %q", meta.Kind)
 	}
@@ -262,7 +262,7 @@ func (s *stmt) collectFields(sel ast.SelectionSet, typeName string) []*ast.Field
 // concatenating their sub-selections, as GraphQL field merging requires:
 // `location { x } location { y }`, or the same relation selected through two
 // fragments, must yield one key holding both selections rather than two
-// jsonb_build_object pairs of which only the last survives. Validation
+// json_build_object pairs that would both reach the response. Validation
 // guarantees that such fields have the same name and arguments.
 func mergeFields(fields []*ast.Field) []*ast.Field {
 	var out []*ast.Field
@@ -363,7 +363,7 @@ func (s *stmt) listQuery(meta *schema.FieldMeta, f *ast.Field) (string, error) {
 		return "", err
 	}
 	sub := s.alias("s")
-	return fmt.Sprintf("SELECT coalesce(jsonb_agg(%s.data), '[]'::jsonb) AS data\nFROM (\n%s\n) AS %s",
+	return fmt.Sprintf("SELECT coalesce(json_agg(%s.data), '[]'::json) AS data\nFROM (\n%s\n) AS %s",
 		sub, indent(inner), sub), nil
 }
 

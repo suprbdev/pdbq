@@ -20,8 +20,8 @@ time=... msg=listening addr=:8080 graphiql=true
 ## Highlights
 
 - **Single-statement compilation** — nested selections become
-  `jsonb_build_object` trees, relations become `LEFT JOIN LATERAL`, lists
-  become `jsonb_agg`; PostgreSQL returns the response JSON directly.
+  `json_build_object` trees, relations become `LEFT JOIN LATERAL`, lists
+  become `json_agg`; PostgreSQL returns the response JSON directly.
 - **RLS-aware by default** — each request runs in a transaction with
   `SET LOCAL ROLE` and claims exposed via `set_config('pdbq.claims.*', ...)`,
   from a verified JWT or trusted gateway headers.

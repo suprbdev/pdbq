@@ -296,7 +296,7 @@ func (s *stmt) contribJSON(ref string, c *introspect.Column, sel ast.SelectionSe
 			s.rangeObject(ci, v+".r", sel), ref, v, v), true
 	case contribtype.Multirange:
 		v, e := s.alias("mr"), s.alias("rg")
-		return fmt.Sprintf("(SELECT CASE WHEN %s.m IS NULL THEN NULL ELSE coalesce((SELECT jsonb_agg(%s ORDER BY %s.r) FROM unnest(%s.m) AS %s(r)), '[]'::jsonb) END FROM (SELECT %s AS m) AS %s)",
+		return fmt.Sprintf("(SELECT CASE WHEN %s.m IS NULL THEN NULL ELSE coalesce((SELECT json_agg(%s ORDER BY %s.r) FROM unnest(%s.m) AS %s(r)), '[]'::json) END FROM (SELECT %s AS m) AS %s)",
 			v, s.rangeObject(ci, e+".r", sel), e, v, e, ref, v), true
 	}
 	return "", false

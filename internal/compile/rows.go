@@ -2,6 +2,8 @@ package compile
 
 import (
 	"fmt"
+	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/vektah/gqlparser/v2/ast"
@@ -11,11 +13,12 @@ import (
 	"github.com/suprbdev/pdbq/internal/schema"
 )
 
-// jsonbBuildObjectChunk keeps each jsonb_build_object call under PostgreSQL's
-// 100-argument limit; wider selections are concatenated with ||.
-const jsonbBuildObjectChunk = 40 // pairs (80 args)
+// jsonBuildObjectChunk keeps each json_build_object call under PostgreSQL's
+// 100-argument limit; wider selections are spliced together (see
+// JSONObject).
+const jsonBuildObjectChunk = 40 // pairs (80 args)
 
-// rowJSON compiles a selection set over a table into a jsonb expression plus
+// rowJSON compiles a selection set over a table into a json expression plus
 // the LEFT JOIN LATERAL clauses it needs against `alias`.
 func (s *stmt) rowJSON(t *introspect.Table, sel ast.SelectionSet, alias string, depth int) (string, []string, error) {
 	return s.rowJSONAs(s.c.Built.TypeForTable[t.Schema+"."+t.Name], sel, alias, depth)
@@ -33,7 +36,7 @@ func (s *stmt) rowJSONAs(typeName string, sel ast.SelectionSet, alias string, de
 		// Validation guarantees a non-empty selection set, so this only
 		// happens when @skip/@include or non-matching fragments removed every
 		// field — per spec the result is an empty object, not an error.
-		return "'{}'::jsonb", nil, nil
+		return "'{}'::json", nil, nil
 	}
 	var pairs []string // key expr, value expr alternating
 	var laterals []string
@@ -112,17 +115,54 @@ func (s *stmt) rowJSONAs(typeName string, sel ast.SelectionSet, alias string, de
 	return buildJSONObject(pairs), laterals, nil
 }
 
-// buildJSONObject renders pairs into chunked jsonb_build_object calls.
+// JSONObject renders a json object constructor over alternating key and
+// value expressions (key1, value1, key2, value2, ...), keeping the keys in
+// the order given. Response objects are built as json rather than jsonb:
+// json_build_object only concatenates the text of its values, where
+// jsonb_build_object converts each nested value into the binary jsonb form,
+// and jsonb also reorders keys. CompileHook plugins that emit response
+// objects use this rather than naming the SQL function.
+//
+// No pairs yield '{}'::json. More pairs than one call accepts are split
+// into several json_build_object calls whose text is spliced into a single
+// object, since json has no object concatenation operator.
+func JSONObject(pairs ...string) string {
+	return buildJSONObject(pairs)
+}
+
 func buildJSONObject(pairs []string) string {
 	if len(pairs) == 0 {
-		return "'{}'::jsonb"
+		return "'{}'::json"
 	}
 	var chunks []string
-	for i := 0; i < len(pairs); i += jsonbBuildObjectChunk * 2 {
-		end := min(i+jsonbBuildObjectChunk*2, len(pairs))
-		chunks = append(chunks, "jsonb_build_object("+strings.Join(pairs[i:end], ", ")+")")
+	for i := 0; i < len(pairs); i += jsonBuildObjectChunk * 2 {
+		end := min(i+jsonBuildObjectChunk*2, len(pairs))
+		chunks = append(chunks, "json_build_object("+strings.Join(pairs[i:end], ", ")+")")
 	}
-	return strings.Join(chunks, " || ")
+	if len(chunks) == 1 {
+		return chunks[0]
+	}
+	parts := make([]string, len(chunks))
+	for i, c := range chunks {
+		switch i {
+		case 0:
+			parts[i] = "left(" + c + "::text, -1)"
+		case len(chunks) - 1:
+			parts[i] = "substr(" + c + "::text, 2)"
+		default:
+			parts[i] = "substr(left(" + c + "::text, -1), 2)"
+		}
+	}
+	return "(" + strings.Join(parts, " || ', ' || ") + ")::json"
+}
+
+// numberedCol names the i-th (0-based) inner scan column with prefix base:
+// base itself, then base2, base3, ...
+func numberedCol(base string, i int) string {
+	if i == 0 {
+		return base
+	}
+	return base + strconv.Itoa(i+1)
 }
 
 // columnJSON renders a column value for inclusion in the JSON response.
@@ -130,30 +170,40 @@ func (s *stmt) columnJSON(alias string, c *introspect.Column) string {
 	ref := alias + "." + quoteIdent(c.Name)
 	if c.IsArray {
 		if f := postgis.FlavourOf(c.PGType); f.Spatial() {
-			// to_jsonb on a geometry[] would emit WKB hex strings; map each
+			// to_json on a geometry[] would emit WKB hex strings; map each
 			// element through ST_AsGeoJSON instead.
 			return s.spatialArrayJSON(ref)
 		}
 		if expr, ok := s.enumArrayJSON(ref, c); ok {
 			return expr
 		}
-		return "to_jsonb(" + ref + ")"
+		return arrayJSON(ref, c)
 	}
 	return s.exprJSON(ref, c)
+}
+
+// arrayJSON renders an array value as a JSON array. Arrays of json elements
+// go through jsonb, like scalar json values in exprJSON.
+func arrayJSON(ref string, c *introspect.Column) string {
+	if strings.TrimPrefix(c.PGType, "_") == "json" {
+		return "to_jsonb(" + ref + ")"
+	}
+	return "to_json(" + ref + ")"
 }
 
 // spatialArrayJSON renders a geometry/geography array as a JSON array of
 // GeoJSON objects, preserving element order and NULL-ness of the array itself.
 func (s *stmt) spatialArrayJSON(ref string) string {
 	elem := s.alias("g")
-	return fmt.Sprintf("CASE WHEN %s IS NULL THEN NULL ELSE (SELECT coalesce(jsonb_agg(%s ORDER BY %s.o), '[]'::jsonb) FROM (SELECT generate_subscripts(%s, 1) AS o) AS %s) END",
+	return fmt.Sprintf("CASE WHEN %s IS NULL THEN NULL ELSE (SELECT coalesce(json_agg(%s ORDER BY %s.o), '[]'::json) FROM (SELECT generate_subscripts(%s, 1) AS o) AS %s) END",
 		ref, postgis.OutputSQL("("+ref+")["+elem+".o]"), elem, ref, elem)
 }
 
 // exprJSON renders a scalar value expression for inclusion in the JSON
 // response, applying representation fixes: 64-bit and arbitrary-precision
 // numbers are serialized as strings (BigInt/BigFloat scalars), bytea as
-// base64, and enum labels map back to their GraphQL enum value names.
+// base64, enum labels map back to their GraphQL enum value names, and json
+// values are converted to jsonb, which drops duplicate keys.
 func (s *stmt) exprJSON(ref string, c *introspect.Column) string {
 	if expr, ok := s.enumCase(ref, c); ok {
 		return expr
@@ -168,6 +218,8 @@ func (s *stmt) exprJSON(ref string, c *introspect.Column) string {
 		return "(" + ref + ")::text"
 	case "bytea":
 		return "encode(" + ref + ", 'base64')"
+	case "json":
+		return "(" + ref + ")::jsonb"
 	default:
 		return ref
 	}
@@ -203,7 +255,7 @@ func (s *stmt) compositeFor(c *introspect.Column) *introspect.Composite {
 }
 
 // compositeJSON compiles a selection set over a composite-typed value into a
-// jsonb expression. ref is a raw composite (or composite-array) value; NULL
+// json expression. ref is a raw composite (or composite-array) value; NULL
 // detection uses the text representation because `row IS NULL` is also true
 // for a row whose attributes are all NULL.
 func (s *stmt) compositeJSON(ref string, comp *introspect.Composite, isArray bool, sel ast.SelectionSet, depth int) (string, error) {
@@ -219,13 +271,13 @@ func (s *stmt) compositeJSON(ref string, comp *introspect.Composite, isArray boo
 		if err != nil {
 			return "", err
 		}
-		return fmt.Sprintf("CASE WHEN %s IS NULL THEN NULL ELSE (SELECT coalesce(jsonb_agg(%s ORDER BY %s.o), '[]'::jsonb) FROM (SELECT generate_subscripts(%s, 1) AS o) AS %s) END",
+		return fmt.Sprintf("CASE WHEN %s IS NULL THEN NULL ELSE (SELECT coalesce(json_agg(%s ORDER BY %s.o), '[]'::json) FROM (SELECT generate_subscripts(%s, 1) AS o) AS %s) END",
 			ref, inner, elem, ref, elem), nil
 	}
 	fields := s.expandFor(sel, typeName)
 	if len(fields) == 0 {
 		// Every field removed by @skip/@include: empty object per spec.
-		return fmt.Sprintf("CASE WHEN (%s)::text IS NULL THEN NULL ELSE '{}'::jsonb END", ref), nil
+		return fmt.Sprintf("CASE WHEN (%s)::text IS NULL THEN NULL ELSE '{}'::json END", ref), nil
 	}
 	var pairs []string
 	for _, f := range fields {
@@ -250,7 +302,7 @@ func (s *stmt) compositeJSON(ref string, comp *introspect.Composite, isArray boo
 			if mapped, ok := s.enumArrayJSON(attr, meta.Column); ok {
 				expr = mapped
 			} else {
-				expr = "to_jsonb(" + attr + ")"
+				expr = arrayJSON(attr, meta.Column)
 			}
 		} else if cexpr, ok := s.contribJSON(attr, meta.Column, f.SelectionSet); ok {
 			expr = cexpr
@@ -295,7 +347,7 @@ func (s *stmt) enumValuesFor(c *introspect.Column) (map[string]string, bool) {
 }
 
 // enumArrayJSON renders an enum array as a JSON array of GraphQL enum value
-// names. to_jsonb would emit the raw lowercase pg labels, which do not match
+// names. to_json would emit the raw lowercase pg labels, which do not match
 // the enum values the schema declares for the field ([Mood!]), so each element
 // goes through the same CASE mapping the scalar path uses. Element order and
 // the NULL-ness of the array itself are preserved.
@@ -305,7 +357,7 @@ func (s *stmt) enumArrayJSON(ref string, c *introspect.Column) (string, bool) {
 	}
 	elem := s.alias("m")
 	mapped, _ := s.enumCase("("+ref+")["+elem+".o]", c)
-	return fmt.Sprintf("CASE WHEN %s IS NULL THEN NULL ELSE (SELECT coalesce(jsonb_agg(%s ORDER BY %s.o), '[]'::jsonb) FROM (SELECT generate_subscripts(%s, 1) AS o) AS %s) END",
+	return fmt.Sprintf("CASE WHEN %s IS NULL THEN NULL ELSE (SELECT coalesce(json_agg(%s ORDER BY %s.o), '[]'::json) FROM (SELECT generate_subscripts(%s, 1) AS o) AS %s) END",
 		ref, mapped, elem, ref, elem), true
 }
 
@@ -422,26 +474,30 @@ func (s *stmt) connectionJSON(t *introspect.Table, f *ast.Field, extraCond strin
 	}
 
 	fields := s.expandFor(f.SelectionSet, connType)
-	var nodesSel, edgeNodeSel ast.SelectionSet
-	var edgeFields, pageInfoFields, aggFields []*ast.Field
+	var nodesFields, edgeNodeFields, aggFields []*ast.Field
+	rowCols := map[*ast.Field]string{}
+	edgeSubs := map[*ast.Field][]*ast.Field{}
+	pageInfoSubs := map[*ast.Field][]*ast.Field{}
 	wantTotal, wantEdges, wantPageInfo := false, false, false
 	for _, sub := range fields {
 		switch sub.Name {
 		case "nodes":
-			nodesSel = sub.SelectionSet
+			rowCols[sub] = numberedCol("ndata", len(nodesFields))
+			nodesFields = append(nodesFields, sub)
 		case "edges":
 			wantEdges = true
-			edgeFields = s.expandFor(sub.SelectionSet, typeName+"Edge")
-			for _, ef := range edgeFields {
+			edgeSubs[sub] = s.expandFor(sub.SelectionSet, typeName+"Edge")
+			for _, ef := range edgeSubs[sub] {
 				if ef.Name == "node" {
-					edgeNodeSel = ef.SelectionSet
+					rowCols[ef] = numberedCol("edata", len(edgeNodeFields))
+					edgeNodeFields = append(edgeNodeFields, ef)
 				}
 			}
 		case "totalCount":
 			wantTotal = true
 		case "pageInfo":
 			wantPageInfo = true
-			pageInfoFields = s.expandFor(sub.SelectionSet, "PageInfo")
+			pageInfoSubs[sub] = s.expandFor(sub.SelectionSet, "PageInfo")
 		default:
 			if m := s.fieldMeta(connType, sub.Name); m != nil && (m.Kind == schema.KindAggregates || m.Kind == schema.KindGroupedAggregates) {
 				aggFields = append(aggFields, sub)
@@ -456,20 +512,12 @@ func (s *stmt) connectionJSON(t *introspect.Table, f *ast.Field, extraCond strin
 	alias := s.alias("t")
 	selectCols := []string{}
 	var innerLaterals []string
-	if nodesSel != nil {
-		jsonExpr, laterals, err := s.rowJSON(t, nodesSel, alias, depth)
+	for _, rf := range append(append([]*ast.Field{}, nodesFields...), edgeNodeFields...) {
+		jsonExpr, laterals, err := s.rowJSON(t, rf.SelectionSet, alias, depth)
 		if err != nil {
 			return "", err
 		}
-		selectCols = append(selectCols, jsonExpr+" AS ndata")
-		innerLaterals = append(innerLaterals, laterals...)
-	}
-	if edgeNodeSel != nil {
-		jsonExpr, laterals, err := s.rowJSON(t, edgeNodeSel, alias, depth)
-		if err != nil {
-			return "", err
-		}
-		selectCols = append(selectCols, jsonExpr+" AS edata")
+		selectCols = append(selectCols, jsonExpr+" AS "+rowCols[rf])
 		innerLaterals = append(innerLaterals, laterals...)
 	}
 	if plan.emitKeyset && (wantEdges || wantPageInfo) {
@@ -556,7 +604,7 @@ func (s *stmt) connectionJSON(t *introspect.Table, f *ast.Field, extraCond strin
 	// Only allocate the trim parameter when an aggregate actually consumes it
 	// (a totalCount-only selection has no aggregates; an unused parameter
 	// would make pgx reject the statement with an argument-count mismatch).
-	if plan.predKeyset && plan.limit >= 0 && (nodesSel != nil || wantEdges || wantPageInfo) {
+	if plan.predKeyset && plan.limit >= 0 && (len(nodesFields) > 0 || wantEdges || wantPageInfo) {
 		// __rn numbers rows in the ordered scan BEFORE OFFSET trims, so rows
 		// surviving `LIMIT limit+1 OFFSET offset` carry __rn in
 		// [offset+1, offset+limit+1] — the trim threshold is offset+limit.
@@ -564,7 +612,7 @@ func (s *stmt) connectionJSON(t *introspect.Table, f *ast.Field, extraCond strin
 		aggFilter = fmt.Sprintf(" FILTER (WHERE %s.__rn <= %s)", sub, trimParam)
 	}
 	agg := func(expr string) string {
-		return fmt.Sprintf("coalesce(jsonb_agg(%s%s)%s, '[]'::jsonb)", expr, aggOrder, aggFilter)
+		return fmt.Sprintf("coalesce(json_agg(%s%s)%s, '[]'::json)", expr, aggOrder, aggFilter)
 	}
 	cursorExpr := encodeCursorSQL(sub+".__rn", plan.offset)
 	if plan.emitKeyset {
@@ -596,27 +644,7 @@ func (s *stmt) connectionJSON(t *introspect.Table, f *ast.Field, extraCond strin
 		}
 	}
 
-	var pairs []string
-	if nodesSel != nil {
-		pairs = append(pairs, quoteLiteral("nodes"), agg(sub+".ndata"))
-	}
-	if wantEdges {
-		var edgePairs []string
-		for _, ef := range edgeFields {
-			switch ef.Name {
-			case "cursor":
-				edgePairs = append(edgePairs, quoteLiteral(ef.Alias), cursorExpr)
-			case "node":
-				edgePairs = append(edgePairs, quoteLiteral(ef.Alias), sub+".edata")
-			case "__typename":
-				edgePairs = append(edgePairs, quoteLiteral(ef.Alias), quoteLiteral(typeName+"Edge")+"::text")
-			}
-		}
-		pairs = append(pairs, quoteLiteral("edges"), agg(buildJSONObject(edgePairs)))
-	}
-	if wantTotal {
-		pairs = append(pairs, quoteLiteral("totalCount"), countSQL+"::int")
-	}
+	hasNext, hasPrev := "", ""
 	if wantPageInfo {
 		boolLit := func(b bool) string {
 			if b {
@@ -624,7 +652,6 @@ func (s *stmt) connectionJSON(t *introspect.Table, f *ast.Field, extraCond strin
 			}
 			return "false"
 		}
-		hasNext, hasPrev := "", ""
 		if plan.predKeyset {
 			// Exact in the paging direction (limit+1 fetch); the opposite
 			// side falls back to what the supplied cursors imply.
@@ -650,35 +677,59 @@ func (s *stmt) connectionJSON(t *introspect.Table, f *ast.Field, extraCond strin
 			hasNext = fmt.Sprintf("(%s > %d + count(%s.__rn))", countSQL, plan.offset, sub)
 			hasPrev = fmt.Sprintf("(%d > 0)", plan.offset)
 		}
-		var piPairs []string
-		for _, pf := range pageInfoFields {
-			switch pf.Name {
-			case "hasNextPage":
-				piPairs = append(piPairs, quoteLiteral(pf.Alias), hasNext)
-			case "hasPreviousPage":
-				piPairs = append(piPairs, quoteLiteral(pf.Alias), hasPrev)
-			case "startCursor":
-				piPairs = append(piPairs, quoteLiteral(pf.Alias),
-					fmt.Sprintf("(jsonb_agg(%s%s)%s)->0", cursorExpr, aggOrder, aggFilter))
-			case "endCursor":
-				piPairs = append(piPairs, quoteLiteral(pf.Alias),
-					fmt.Sprintf("(jsonb_agg(%s%s)%s)->-1", cursorExpr, aggOrder, aggFilter))
-			case "__typename":
-				piPairs = append(piPairs, quoteLiteral(pf.Alias), "'PageInfo'::text")
+	}
+
+	var pairs []string
+	for _, cf := range fields {
+		key := quoteLiteral(cf.Alias)
+		switch cf.Name {
+		case "nodes":
+			pairs = append(pairs, key, agg(sub+"."+rowCols[cf]))
+		case "edges":
+			var edgePairs []string
+			for _, ef := range edgeSubs[cf] {
+				switch ef.Name {
+				case "cursor":
+					edgePairs = append(edgePairs, quoteLiteral(ef.Alias), cursorExpr)
+				case "node":
+					edgePairs = append(edgePairs, quoteLiteral(ef.Alias), sub+"."+rowCols[ef])
+				case "__typename":
+					edgePairs = append(edgePairs, quoteLiteral(ef.Alias), quoteLiteral(typeName+"Edge")+"::text")
+				}
 			}
-		}
-		pairs = append(pairs, quoteLiteral("pageInfo"), buildJSONObject(piPairs))
-	}
-	for _, af := range aggFields {
-		expr, err := s.connectionAggregate(t, f, af, s.fieldMeta(connType, af.Name), extraCond, depth+1)
-		if err != nil {
-			return "", err
-		}
-		pairs = append(pairs, quoteLiteral(af.Alias), expr)
-	}
-	for _, sf := range fields {
-		if sf.Name == "__typename" {
-			pairs = append(pairs, quoteLiteral(sf.Alias), quoteLiteral(connType)+"::text")
+			pairs = append(pairs, key, agg(buildJSONObject(edgePairs)))
+		case "totalCount":
+			pairs = append(pairs, key, countSQL+"::int")
+		case "pageInfo":
+			var piPairs []string
+			for _, pf := range pageInfoSubs[cf] {
+				switch pf.Name {
+				case "hasNextPage":
+					piPairs = append(piPairs, quoteLiteral(pf.Alias), hasNext)
+				case "hasPreviousPage":
+					piPairs = append(piPairs, quoteLiteral(pf.Alias), hasPrev)
+				case "startCursor":
+					piPairs = append(piPairs, quoteLiteral(pf.Alias),
+						fmt.Sprintf("(json_agg(%s%s)%s)->0", cursorExpr, aggOrder, aggFilter))
+				case "endCursor":
+					piPairs = append(piPairs, quoteLiteral(pf.Alias),
+						fmt.Sprintf("(json_agg(%s%s)%s)->-1", cursorExpr, aggOrder, aggFilter))
+				case "__typename":
+					piPairs = append(piPairs, quoteLiteral(pf.Alias), "'PageInfo'::text")
+				}
+			}
+			pairs = append(pairs, key, buildJSONObject(piPairs))
+		case "__typename":
+			pairs = append(pairs, key, quoteLiteral(connType)+"::text")
+		default:
+			if !slices.Contains(aggFields, cf) {
+				continue
+			}
+			expr, err := s.connectionAggregate(t, f, cf, s.fieldMeta(connType, cf.Name), extraCond, depth+1)
+			if err != nil {
+				return "", err
+			}
+			pairs = append(pairs, key, expr)
 		}
 	}
 
