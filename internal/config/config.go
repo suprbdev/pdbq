@@ -61,7 +61,7 @@ type Server struct {
 	PersistedQueriesPath string        `koanf:"persisted_queries_path" doc:"JSON file mapping sha256 hex hashes to GraphQL documents, preloaded as persisted queries (never evicted)."`
 	PersistedOnly        bool          `koanf:"persisted_only" doc:"Reject requests that do not reference a persisted query via the persistedQuery extension (requires apq or persisted_queries_path)."`
 	ReadOnly             bool          `koanf:"read_only" doc:"Reject every mutation operation (read-only mode) for maintenance, demos or defense in depth. Also toggleable at runtime when embedding pdbq as a library (App.SetReadOnly)."`
-	DisableIntrospection bool          `koanf:"disable_introspection" doc:"Reject __schema / __type introspection queries (off by default). Enable in production to hide the schema shape; __typename keeps working."`
+	DisableIntrospection bool          `koanf:"disable_introspection" doc:"Reject __schema / __type introspection queries and leave the \"Did you mean\" suggestions out of validation errors (off by default). Enable in production to hide the schema shape; __typename keeps working."`
 
 	Subscriptions                 bool          `koanf:"subscriptions" doc:"Serve PostGraphile-style simple subscriptions (Subscription.listen over LISTEN/NOTIFY) on /graphql over WebSocket, graphql-transport-ws or the legacy graphql-ws subprotocol. Off by default; while off the schema has no Subscription type."`
 	SubscriptionsMaxPerConnection int           `koanf:"subscriptions_max_per_connection" doc:"Maximum operations running at once on one WebSocket connection; a subscribe beyond it gets an error."`

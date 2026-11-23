@@ -46,7 +46,7 @@ server:
   persisted_only: false
   # Reject every mutation operation (read-only mode) for maintenance, demos or defense in depth. Also toggleable at runtime when embedding pdbq as a library (App.SetReadOnly).
   read_only: false
-  # Reject __schema / __type introspection queries (off by default). Enable in production to hide the schema shape; __typename keeps working.
+  # Reject __schema / __type introspection queries and leave the "Did you mean" suggestions out of validation errors (off by default). Enable in production to hide the schema shape; __typename keeps working.
   disable_introspection: false
   # Serve PostGraphile-style simple subscriptions (Subscription.listen over LISTEN/NOTIFY) on /graphql over WebSocket, graphql-transport-ws or the legacy graphql-ws subprotocol. Off by default; while off the schema has no Subscription type.
   subscriptions: false

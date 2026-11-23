@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"mime"
 	"net/http"
 	"sync"
 	"sync/atomic"
@@ -21,6 +22,7 @@ import (
 	"github.com/suprbdev/pdbq/internal/config"
 	"github.com/suprbdev/pdbq/internal/exec"
 	"github.com/suprbdev/pdbq/internal/subscribe"
+	"github.com/vektah/gqlparser/v2/ast"
 )
 
 // Authenticator turns an HTTP request into (claims, role); see pdbcore/auth.
@@ -204,10 +206,16 @@ type gqlHTTPRequest struct {
 	Extensions    json.RawMessage `json:"extensions"`
 }
 
+// handleGraphQL serves GraphQL over HTTP. GET (and HEAD) runs query
+// operations only and answers 405 for a mutation or subscription; POST
+// requires an application/json body and answers 415 for any other content
+// type. Both rules keep cross-site pages from running mutations with the
+// browser's ambient credentials: neither a GET nor a POST of a
+// CORS-safelisted content type is preflighted.
 func (s *Server) handleGraphQL(w http.ResponseWriter, r *http.Request) {
 	var req gqlHTTPRequest
 	switch r.Method {
-	case http.MethodGet:
+	case http.MethodGet, http.MethodHead:
 		req.Query = r.URL.Query().Get("query")
 		req.OperationName = r.URL.Query().Get("operationName")
 		if vars := r.URL.Query().Get("variables"); vars != "" {
@@ -220,6 +228,10 @@ func (s *Server) handleGraphQL(w http.ResponseWriter, r *http.Request) {
 			req.Extensions = json.RawMessage(ext)
 		}
 	default:
+		if !isJSONContentType(r.Header.Get("Content-Type")) {
+			writeError(w, http.StatusUnsupportedMediaType, "unsupported content type: POST requests must send Content-Type: application/json")
+			return
+		}
 		body := http.MaxBytesReader(w, r.Body, s.cfg.MaxBodyBytes)
 		if err := json.NewDecoder(body).Decode(&req); err != nil {
 			writeError(w, http.StatusBadRequest, "malformed request body")
@@ -235,6 +247,14 @@ func (s *Server) handleGraphQL(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "missing query")
 		return
 	}
+	ex := s.executor.Load()
+	if r.Method != http.MethodPost {
+		if typ, err := ex.OperationType(req.Query, req.OperationName); err == nil && typ != ast.Query {
+			w.Header().Set("Allow", http.MethodPost)
+			writeError(w, http.StatusMethodNotAllowed, fmt.Sprintf("%s operations are not allowed over GET; use POST", typ))
+			return
+		}
+	}
 
 	claims, role, err := s.auth.Authenticate(r)
 	if err != nil {
@@ -246,7 +266,7 @@ func (s *Server) handleGraphQL(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	res := s.executor.Load().Execute(r.Context(), exec.Request{
+	res := ex.Execute(r.Context(), exec.Request{
 		Query:         req.Query,
 		OperationName: req.OperationName,
 		Variables:     req.Variables,
@@ -254,6 +274,13 @@ func (s *Server) handleGraphQL(w http.ResponseWriter, r *http.Request) {
 		Role:          role,
 	})
 	s.writeResult(w, res)
+}
+
+// isJSONContentType reports whether the Content-Type header value v is
+// application/json, with or without parameters.
+func isJSONContentType(v string) bool {
+	mt, _, err := mime.ParseMediaType(v)
+	return err == nil && mt == "application/json"
 }
 
 // maxPooledResponse caps the response buffers kept for reuse, so one large

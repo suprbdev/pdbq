@@ -10,6 +10,7 @@ import (
 	"github.com/vektah/gqlparser/v2/gqlerror"
 	"github.com/vektah/gqlparser/v2/parser"
 	"github.com/vektah/gqlparser/v2/validator"
+	"github.com/vektah/gqlparser/v2/validator/core"
 	"github.com/vektah/gqlparser/v2/validator/rules"
 )
 
@@ -19,6 +20,26 @@ import (
 const documentCacheBytes = 32 << 20
 
 var defaultRules = rules.NewDefaultRules()
+
+// hiddenSchemaRules is the default rule set with the variants of the rules
+// that do not append "Did you mean" suggestions, which name schema
+// elements close to an unknown one. Executors use it when introspection is
+// disabled.
+var hiddenSchemaRules = newHiddenSchemaRules()
+
+func newHiddenSchemaRules() *rules.Rules {
+	r := rules.NewDefaultRules()
+	for _, rule := range []core.Rule{
+		rules.FieldsOnCorrectTypeRuleWithoutSuggestions,
+		rules.KnownArgumentNamesRuleWithoutSuggestions,
+		rules.KnownTypeNamesRuleWithoutSuggestions,
+		rules.ScalarLeafsRuleWithoutSuggestions,
+		rules.ValuesOfCorrectTypeRuleWithoutSuggestions,
+	} {
+		r.ReplaceRule(strings.TrimSuffix(rule.Name, "WithoutSuggestions"), rule.RuleFunc)
+	}
+	return r
+}
 
 // docCache is a concurrency-safe LRU of parsed and validated query
 // documents, keyed by query text. Entries hold either the document or the
@@ -85,14 +106,14 @@ func (c *docCache) len() int {
 	return len(c.items)
 }
 
-// parseAndValidate parses and validates query against schema, without
-// caching.
-func parseAndValidate(schema *ast.Schema, query string) (*ast.QueryDocument, error) {
+// parseAndValidate parses and validates query against schema with rs,
+// without caching.
+func parseAndValidate(schema *ast.Schema, rs *rules.Rules, query string) (*ast.QueryDocument, error) {
 	doc, err := parser.ParseQuery(&ast.Source{Input: query})
 	if err != nil {
 		return nil, err
 	}
-	if listErr := validator.ValidateWithRules(schema, doc, defaultRules); len(listErr) > 0 {
+	if listErr := validator.ValidateWithRules(schema, doc, rs); len(listErr) > 0 {
 		return nil, listErr
 	}
 	return doc, nil
@@ -101,15 +122,19 @@ func parseAndValidate(schema *ast.Schema, query string) (*ast.QueryDocument, err
 // document returns the parsed and validated document for query, consulting
 // and filling the executor's document cache when one is configured.
 func (e *Executor) document(query string) (*ast.QueryDocument, error) {
+	rs := defaultRules
+	if e.Opts.DisableIntrospection {
+		rs = hiddenSchemaRules
+	}
 	if e.docs == nil || e.docs.schema != e.Built.Schema {
-		return parseAndValidate(e.Built.Schema, query)
+		return parseAndValidate(e.Built.Schema, rs, query)
 	}
 	if ent, ok := e.docs.get(query); ok {
 		e.Opts.Metrics.documentLookup(true)
 		return ent.doc, cloneError(ent.err)
 	}
 	e.Opts.Metrics.documentLookup(false)
-	doc, err := parseAndValidate(e.Built.Schema, query)
+	doc, err := parseAndValidate(e.Built.Schema, rs, query)
 	e.docs.put(query, doc, err)
 	return doc, cloneError(err)
 }
