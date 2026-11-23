@@ -1,8 +1,8 @@
-# pg_trgm similarity fields against the list's similarTo: reference for the
-# same column, null without one; the reference is bound again for each
+# pg_trgm similarity fields against the list's near: reference for the
+# same column, an error without one; the reference is bound again for each
 # field, so the SQL text does not depend on its value.
 {
-  ranked: allDocuments(similarTo: {label: "postgres", title: "pg"}, orderBy: [LABEL_SIMILARITY_DESC], first: 5) {
+  ranked: allDocuments(near: {label: "postgres", title: "pg"}, orderBy: [LABEL_SIMILARITY_DESC], first: 5) {
     nodes {
       id
       labelSimilarity
@@ -11,7 +11,7 @@
       titleSimilarity
     }
   }
-  partial: allDocuments(similarTo: {label: "db"}) {
+  partial: allDocuments(near: {label: "db"}) {
     nodes { labelSimilarity titleSimilarity }
   }
   none: allDocuments(first: 1) {

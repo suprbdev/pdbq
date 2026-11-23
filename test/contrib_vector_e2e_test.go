@@ -128,10 +128,10 @@ INSERT INTO ` + unaccentSchema + `.dishes VALUES
 		res := post(t, url, `{__type(name: "DishFilter") { inputFields { name type { name } } }}`, nil)
 		requireNoErrors(t, res)
 		raw := string(res.Data["__type"])
-		if !strings.Contains(raw, `"name":"name","type":{"name":"StringTrgmUnaccentFilterOps"}`) {
+		if !strings.Contains(raw, `"name":"name","type":{"name":"StringTrgmUnaccentFilter"}`) {
 			t.Errorf("name filter: %s", raw)
 		}
-		if !strings.Contains(raw, `"name":"note","type":{"name":"StringFilterOps"}`) {
+		if !strings.Contains(raw, `"name":"note","type":{"name":"StringFilter"}`) {
 			t.Errorf("note filter: %s", raw)
 		}
 		res = post(t, url, `{allDishes(filter: {note: {unaccentEqualTo: "entree"}}) { nodes { id } }}`, nil)
@@ -176,7 +176,7 @@ CREATE FUNCTION ` + vectorSchema + `.scale_vector(v ` + v + `.vector, by float8)
 }
 
 // TestVector covers pgvector columns end to end: list input and output,
-// nearest-first ordering per metric against nearVector:, keyset paging, and
+// nearest-first ordering per metric against near:, keyset paging, and
 // the indexed-only policy for distance ordering.
 func TestVector(t *testing.T) {
 	setupVector(t)
@@ -224,12 +224,12 @@ func TestVector(t *testing.T) {
 		// An HNSW or IVFFlat index scan skips rows whose vector is NULL, so
 		// whether row 5 is returned depends on the plan; leave it out.
 		res := post(t, url, `{
-			l2: allItems(filter: {embedding: {isNull: false}}, nearVector: {embedding: [1, 1, 0]}, orderBy: [EMBEDDING_L2_DISTANCE_ASC]) { nodes { id } }
-			ip: allItems(filter: {embedding: {isNull: false}}, nearVector: {embedding: [1, 1, 0]}, orderBy: [EMBEDDING_NEGATIVE_INNER_PRODUCT_ASC]) { nodes { id } }
-			cosine: allItems(filter: {embedding: {isNull: false}}, nearVector: {embedding: [1, 1, 0]}, orderBy: [EMBEDDING_COSINE_DISTANCE_ASC]) { nodes { id } }
-			l1: allItems(filter: {embedding: {isNull: false}}, nearVector: {embedding: [1, 1, 0]}, orderBy: [EMBEDDING_L1_DISTANCE_ASC]) { nodes { id } }
-			sparse: allItems(filter: {sparse: {isNull: false}}, nearVector: {sparse: "{1:1}/3"}, orderBy: [SPARSE_L2_DISTANCE_ASC]) { nodes { id } }
-			l2Desc: allItems(nearVector: {embedding: [1, 1, 0]}, orderBy: [EMBEDDING_L2_DISTANCE_DESC]) { nodes { id } }
+			l2: allItems(filter: {embedding: {isNull: false}}, near: {embedding: [1, 1, 0]}, orderBy: [EMBEDDING_L2_DISTANCE_ASC]) { nodes { id } }
+			ip: allItems(filter: {embedding: {isNull: false}}, near: {embedding: [1, 1, 0]}, orderBy: [EMBEDDING_NEGATIVE_INNER_PRODUCT_ASC]) { nodes { id } }
+			cosine: allItems(filter: {embedding: {isNull: false}}, near: {embedding: [1, 1, 0]}, orderBy: [EMBEDDING_COSINE_DISTANCE_ASC]) { nodes { id } }
+			l1: allItems(filter: {embedding: {isNull: false}}, near: {embedding: [1, 1, 0]}, orderBy: [EMBEDDING_L1_DISTANCE_ASC]) { nodes { id } }
+			sparse: allItems(filter: {sparse: {isNull: false}}, near: {sparse: "{1:1}/3"}, orderBy: [SPARSE_L2_DISTANCE_ASC]) { nodes { id } }
+			l2Desc: allItems(near: {embedding: [1, 1, 0]}, orderBy: [EMBEDDING_L2_DISTANCE_DESC]) { nodes { id } }
 			unset: allItems(filter: {embedding: {isNull: true}}) { nodes { id } }
 		}`, nil)
 		requireNoErrors(t, res)
@@ -248,9 +248,9 @@ func TestVector(t *testing.T) {
 		}
 	})
 
-	t.Run("nearVector is required", func(t *testing.T) {
+	t.Run("the near: reference is required", func(t *testing.T) {
 		res := post(t, url, `{allItems(orderBy: [EMBEDDING_L2_DISTANCE_ASC]) { nodes { id } }}`, nil)
-		if len(res.Errors) == 0 || !strings.Contains(res.Errors[0].Message, "requires a nearVector") {
+		if len(res.Errors) == 0 || !strings.Contains(res.Errors[0].Message, "orderBy EMBEDDING_L2_DISTANCE_ASC requires near: {embedding: …}") {
 			t.Errorf("ordering without a reference: %+v", res.Errors)
 		}
 	})
@@ -260,7 +260,7 @@ func TestVector(t *testing.T) {
 		after := any(nil)
 		for range 4 {
 			res := post(t, url, `query ($after: Cursor) {
-				allItems(nearVector: {embedding: [1, 1, 0]}, orderBy: [EMBEDDING_COSINE_DISTANCE_DESC], first: 2, after: $after) {
+				allItems(near: {embedding: [1, 1, 0]}, orderBy: [EMBEDDING_COSINE_DISTANCE_DESC], first: 2, after: $after) {
 					edges { cursor node { id } }
 					pageInfo { hasNextPage }
 				}
@@ -327,8 +327,8 @@ func TestVectorPluginDisabled(t *testing.T) {
 	if got, want := normalize(t, res.Data["itemById"]), normalizeStr(t, `{"embedding":[2.5,1,0],"half":[0.5,1,2],"sparse":"{1:1}/3"}`); got != want {
 		t.Errorf("got %s want %s", got, want)
 	}
-	res = post(t, hs.URL, `{allItems(nearVector: {embedding: [1, 1, 0]}) { nodes { id } }}`, nil)
+	res = post(t, hs.URL, `{allItems(near: {embedding: [1, 1, 0]}) { nodes { id } }}`, nil)
 	if len(res.Errors) == 0 {
-		t.Error("nearVector: accepted with the contrib plugin disabled")
+		t.Error("near: accepted with the contrib plugin disabled")
 	}
 }

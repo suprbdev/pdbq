@@ -23,11 +23,11 @@ func TestScoreFields(t *testing.T) {
 	b := buildWith(t, contribfixture.Catalog(), nil, true, true)
 	docs := scoreFields(b, "Document")
 	for name, want := range map[string]schema.Score{
-		"labelSimilarity":           {Arg: "similarTo", Expr: "similarity"},
-		"labelWordSimilarity":       {Arg: "similarTo", Expr: "wordSimilarity"},
-		"labelStrictWordSimilarity": {Arg: "similarTo", Expr: "strictWordSimilarity"},
-		"titleSimilarity":           {Arg: "similarTo", Expr: "similarity"},
-		"titleStrictWordSimilarity": {Arg: "similarTo", Expr: "strictWordSimilarity"},
+		"labelSimilarity":           {Expr: "similarity"},
+		"labelWordSimilarity":       {Expr: "wordSimilarity"},
+		"labelStrictWordSimilarity": {Expr: "strictWordSimilarity"},
+		"titleSimilarity":           {Expr: "similarity"},
+		"titleStrictWordSimilarity": {Expr: "strictWordSimilarity"},
 		"notesSimilarity":           {},
 		"searchSimilarity":          {},
 		"slugSimilarity":            {},
@@ -42,8 +42,8 @@ func TestScoreFields(t *testing.T) {
 	if hasEnumValue(b, "DocumentsOrderBy", "TITLE_SIMILARITY_DESC") {
 		t.Error("similarity ordering offered without a GiST index")
 	}
-	if got := fieldType(t, b, "DocumentSimilarToInput", "title"); got != "String" {
-		t.Errorf("DocumentSimilarToInput.title = %q", got)
+	if got := fieldType(t, b, "DocumentNearInput", "title"); got != "String" {
+		t.Errorf("DocumentNearInput.title = %q", got)
 	}
 	if f := b.Objects["Document"].Field("labelSimilarity"); f.Type != "Float" {
 		t.Errorf("labelSimilarity type = %s", f.Type)
@@ -64,12 +64,12 @@ func TestScoreFields(t *testing.T) {
 	if !slices.Equal(names, want) {
 		t.Errorf("Embedding scores = %v\nwant %v", names, want)
 	}
-	if emb["codeHammingDistance"] != (schema.Score{Arg: "nearVector", Expr: "hammingDistance"}) {
+	if emb["codeHammingDistance"] != (schema.Score{Expr: "hammingDistance"}) {
 		t.Errorf("codeHammingDistance = %+v", emb["codeHammingDistance"])
 	}
 	for field, typ := range map[string]string{"embedding": "[Float!]", "half": "[Float!]", "sparse": "String", "code": "String", "flags": ""} {
-		if got := fieldType(t, b, "EmbeddingNearVectorInput", field); got != typ {
-			t.Errorf("EmbeddingNearVectorInput.%s = %q, want %q", field, got, typ)
+		if got := fieldType(t, b, "EmbeddingNearInput", field); got != typ {
+			t.Errorf("EmbeddingNearInput.%s = %q, want %q", field, got, typ)
 		}
 	}
 	if got := enumValues(b, "EmbeddingsOrderBy", "CODE_"); !slices.Equal(got, []string{
@@ -111,7 +111,7 @@ func TestScoreFieldsGating(t *testing.T) {
 	if len(scoreFields(noOrder, "Document")) != 0 || len(scoreFields(noOrder, "Embedding")) != 0 {
 		t.Error("ordering: false kept score fields")
 	}
-	if hasArg(noOrder.Query.Field("allDocuments"), "similarTo") {
+	if hasArg(noOrder.Query.Field("allDocuments"), "near") {
 		t.Error("ordering: false kept similarTo:")
 	}
 
@@ -123,31 +123,31 @@ func TestScoreFieldsGating(t *testing.T) {
 
 func TestVectorThresholdFilters(t *testing.T) {
 	b := buildWith(t, contribfixture.Catalog(), nil, true, true)
-	for field, want := range map[string]string{"embedding": "VectorFilterOps", "sparse": "", "code": "StringFilterOps"} {
+	for field, want := range map[string]string{"embedding": "VectorFilter", "sparse": "", "code": "StringFilter"} {
 		if got := fieldType(t, b, "EmbeddingFilter", field); got != want {
 			t.Errorf("indexed_only: EmbeddingFilter.%s = %s, want %s", field, got, want)
 		}
 	}
-	if in := b.Inputs["VectorFilterOps"]; in.Field("cosineDistanceLessThan") != nil {
-		t.Error("threshold operator on the shared VectorFilterOps")
+	if in := b.Inputs["VectorFilter"]; in.Field("cosineDistanceLessThan") != nil {
+		t.Error("threshold operator on the shared VectorFilter")
 	}
 
 	allowed, _ := buildAllowing(t, contribfixture.Catalog(), map[string][]string{"public.embeddings": {"embedding", "sparse", "code"}})
 	for field, want := range map[string]string{
-		"embedding": "VectorDistanceFilterOps", "half": "VectorFilterOps",
-		"sparse": "SparseVectorDistanceFilterOps", "code": "BitDistanceFilterOps", "flags": "",
+		"embedding": "VectorDistanceFilter", "half": "VectorFilter",
+		"sparse": "SparseVectorDistanceFilter", "code": "BitDistanceFilter", "flags": "",
 	} {
 		if got := fieldType(t, allowed, "EmbeddingFilter", field); got != want {
 			t.Errorf("allowlisted: EmbeddingFilter.%s = %s, want %s", field, got, want)
 		}
 	}
 	for input, ops := range map[string]map[string]string{
-		"VectorDistanceFilterOps": {
+		"VectorDistanceFilter": {
 			"isNull": "Boolean", "l2DistanceLessThan": "VectorDistanceInput", "negativeInnerProductLessThan": "VectorDistanceInput",
 			"cosineDistanceLessThan": "VectorDistanceInput", "l1DistanceLessThan": "VectorDistanceInput",
 		},
-		"SparseVectorDistanceFilterOps": {"isNull": "Boolean", "cosineDistanceLessThan": "SparseVectorDistanceInput"},
-		"BitDistanceFilterOps": {
+		"SparseVectorDistanceFilter": {"isNull": "Boolean", "cosineDistanceLessThan": "SparseVectorDistanceInput"},
+		"BitDistanceFilter": {
 			"equalTo": "String", "like": "String", "hammingDistanceLessThan": "BitDistanceInput", "jaccardDistanceLessThan": "BitDistanceInput",
 		},
 		"VectorDistanceInput":       {"vector": "[Float!]!", "distance": "Float!"},
@@ -162,14 +162,14 @@ func TestVectorThresholdFilters(t *testing.T) {
 	}
 
 	all := buildWith(t, contribfixture.Catalog(), nil, false, true)
-	if got := fieldType(t, all, "EmbeddingFilter", "half"); got != "VectorDistanceFilterOps" {
+	if got := fieldType(t, all, "EmbeddingFilter", "half"); got != "VectorDistanceFilter" {
 		t.Errorf("indexed_only off: EmbeddingFilter.half = %s", got)
 	}
-	if got := fieldType(t, all, "EmbeddingFilter", "flags"); got != "BitDistanceFilterOps" {
+	if got := fieldType(t, all, "EmbeddingFilter", "flags"); got != "BitDistanceFilter" {
 		t.Errorf("indexed_only off: EmbeddingFilter.flags = %s", got)
 	}
 	noFilters := buildWith(t, contribfixture.Catalog(), func(s *Settings) { s.Filters = false }, false, true)
-	if noFilters.Inputs["VectorDistanceFilterOps"] != nil || noFilters.Inputs["BitDistanceFilterOps"] != nil {
+	if noFilters.Inputs["VectorDistanceFilter"] != nil || noFilters.Inputs["BitDistanceFilter"] != nil {
 		t.Error("filters: false declared threshold inputs")
 	}
 }

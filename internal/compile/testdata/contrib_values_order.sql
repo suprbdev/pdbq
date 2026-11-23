@@ -34,16 +34,8 @@ GROUP BY ()
 -- args: ["kitten","kitten","3","3",2]
 
 -- field: allDocuments
--- error: compile: orderBy ATTRS_VALUE_DESC requires a hstoreKey: value for the same column
+-- error: compile: orderBy ATTRS_VALUE_DESC requires near: {attrs: …}
 
 -- field: allDocuments
-SELECT json_build_object('nodes', coalesce(json_agg(__s_2.ndata ORDER BY __s_2.__rn ASC) FILTER (WHERE __s_2.__rn <= $1), '[]'::json)) AS data
-FROM (
-  SELECT json_build_object('notesLevenshteinDistance', NULL::float8) AS ndata, row_number() OVER (ORDER BY __t_1."id" ASC) AS __rn
-  FROM "public"."documents" AS __t_1
-  ORDER BY __t_1."id" ASC
-  LIMIT 2
-) AS __s_2
-GROUP BY ()
--- args: [1]
+-- error: compile: field notesLevenshteinDistance requires near: {notes: …}
 

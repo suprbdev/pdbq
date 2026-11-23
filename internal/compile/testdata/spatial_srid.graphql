@@ -7,5 +7,5 @@
   ewkt: allPlaces(filter: {location: {intersects: "SRID=3857;POINT(1 2)"}}) { nodes { id } }
   geojson: allPlaces(filter: {location: {intersects: {type: "Point", coordinates: [111319, 222684], crs: {type: "name", properties: {name: "EPSG:3857"}}}}}) { nodes { id } }
   bbox: allPlaces(filter: {location: {bboxIntersects: {minX: 0, minY: 0, maxX: 1, maxY: 1}}}) { nodes { id } }
-  near: allPlaces(orderBy: LOCATION_DISTANCE_ASC, near: {geometry: "POINT(0 0)"}) { nodes { id } }
+  near: allPlaces(orderBy: LOCATION_DISTANCE_ASC, near: {location: "POINT(0 0)", area: "POINT(0 0)"}) { nodes { id } }
 }

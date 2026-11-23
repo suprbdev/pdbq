@@ -137,8 +137,8 @@ func TestAggregates(t *testing.T) {
 			allPosts(filter: {id: {lessThanOrEqualTo: 4}}) {
 				all: groupedAggregates(groupBy: [AUTHOR_ID]) { keys sum { id } }
 				big: groupedAggregates(groupBy: [AUTHOR_ID], having: {sum: {id: {greaterThan: "3"}}}) { keys }
-				either: groupedAggregates(groupBy: [AUTHOR_ID], having: {OR: [{max: {id: {equalTo: 1}}}, {max: {id: {equalTo: 2}}}]}) { keys }
-				any: groupedAggregates(groupBy: [AUTHOR_ID], having: {OR: [{}, {max: {id: {equalTo: 2}}}]}) { keys }
+				either: groupedAggregates(groupBy: [AUTHOR_ID], having: {or: [{max: {id: {equalTo: 1}}}, {max: {id: {equalTo: 2}}}]}) { keys }
+				any: groupedAggregates(groupBy: [AUTHOR_ID], having: {or: [{}, {max: {id: {equalTo: 2}}}]}) { keys }
 			}
 		}`, nil)
 		requireNoErrors(t, res)
@@ -186,18 +186,18 @@ func TestAggregates(t *testing.T) {
 	})
 
 	t.Run("order by relation aggregates", func(t *testing.T) {
-		ids := fetchIDs(t, url, `{allUsers(filter: {id: {lessThanOrEqualTo: 3}}, orderBy: [POSTS_BY_AUTHOR_ID_COUNT_DESC, ID_ASC]) { nodes { id } }}`)
+		ids := fetchIDs(t, url, `{allUsers(filter: {id: {lessThanOrEqualTo: 3}}, orderBy: [POSTS_BY_AUTHOR_ID__COUNT_DESC, ID_ASC]) { nodes { id } }}`)
 		if !equalInts(ids, []int{1, 2, 3}) {
 			t.Errorf("count desc: got %v", ids)
 		}
-		ids = fetchIDs(t, url, `{allUsers(filter: {id: {lessThanOrEqualTo: 3}}, orderBy: [POSTS_BY_AUTHOR_ID_SUM_ID_DESC, ID_DESC]) { nodes { id } }}`)
+		ids = fetchIDs(t, url, `{allUsers(filter: {id: {lessThanOrEqualTo: 3}}, orderBy: [POSTS_BY_AUTHOR_ID__SUM_ID_DESC, ID_DESC]) { nodes { id } }}`)
 		if !equalInts(ids, []int{3, 2, 1}) {
 			t.Errorf("sum desc: got %v", ids)
 		}
-		res := post(t, url, `{allUsers(first: 1, filter: {id: {lessThanOrEqualTo: 3}}, orderBy: [POSTS_BY_AUTHOR_ID_MAX_ID_DESC]) { pageInfo { endCursor } }}`, nil)
+		res := post(t, url, `{allUsers(first: 1, filter: {id: {lessThanOrEqualTo: 3}}, orderBy: [POSTS_BY_AUTHOR_ID__MAX_ID_DESC]) { pageInfo { endCursor } }}`, nil)
 		requireNoErrors(t, res)
 		cursor, _ := dig(t, decode(t, res.Data["allUsers"]), "pageInfo", "endCursor").(string)
-		ids = fetchIDs(t, url, `{allUsers(first: 5, after: "`+cursor+`", filter: {id: {lessThanOrEqualTo: 3}}, orderBy: [POSTS_BY_AUTHOR_ID_MAX_ID_DESC]) { nodes { id } }}`)
+		ids = fetchIDs(t, url, `{allUsers(first: 5, after: "`+cursor+`", filter: {id: {lessThanOrEqualTo: 3}}, orderBy: [POSTS_BY_AUTHOR_ID__MAX_ID_DESC]) { nodes { id } }}`)
 		if !equalInts(ids, []int{2, 1}) {
 			t.Errorf("keyset after the max-id leader: got %v", ids)
 		}
@@ -348,7 +348,7 @@ func TestAggregatesOptIn(t *testing.T) {
 	if !hasType(url, "PostAggregates") || hasType(url, "UserAggregates") {
 		t.Fatal("@aggregates must opt in exactly the tagged table")
 	}
-	res := post(t, url, `{allUsers(orderBy: [POSTS_BY_AUTHOR_ID_COUNT_DESC, ID_ASC], first: 1) { nodes { id } }}`, nil)
+	res := post(t, url, `{allUsers(orderBy: [POSTS_BY_AUTHOR_ID__COUNT_DESC, ID_ASC], first: 1) { nodes { id } }}`, nil)
 	requireNoErrors(t, res)
 
 	url = testServer(t, func(cfg *config.Config) { cfg.Plugins.Disabled = append(cfg.Plugins.Disabled, "aggregates") }).URL

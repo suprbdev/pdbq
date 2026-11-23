@@ -1,8 +1,13 @@
 # Filtering & ordering
 
 Every table gets a `<Type>Filter` input with `and` / `or` / `not`
-combinators plus one field per filterable column, typed by an operator set
-matching the Postgres type:
+combinators plus one field per filterable column, typed by a scalar operator
+input named after the column's GraphQL type (`StringFilter`, `IntFilter`,
+`BigIntFilter`, `DatetimeFilter`, `<Enum>Filter`, `StringListFilter`,
+`JSONFilter`, `GeoJSONFilter`, …) with an operator set matching the Postgres
+type. A table whose `<Type>Filter` would share its name with one of these
+inputs (a table `strings`, say) fails the schema build; rename it with
+`@name`.
 
 | Postgres type | Operators |
 |---|---|
@@ -13,7 +18,7 @@ matching the Postgres type:
 | enums | scalar set, with GraphQL enum values |
 | PostGIS geometry/geography | spatial set only (`bboxIntersects intersects within dwithin` …) — see [PostGIS](postgis.md) |
 | `tsvector`, `hstore`, `ltree`, ranges/multiranges, `inet`/`cidr`; text with `pg_trgm`, `unaccent` or `fuzzystrmatch`; `int4[]` with `intarray` | type-specific sets (`matches`, `containsKey`, `descendantOf`, `overlaps`, `containedBy`, `similarTo`, `unaccentIncludes`, `soundexEqualTo`, `matchesQueryInt` …) plus `_RANK_`/`_SIMILARITY_`/`_LEVENSHTEIN_DISTANCE_` ordering and `<field>Nlevel`/`<field>Value`/`<field>Icount` filters — see [Contrib types](contrib.md) |
-| pgvector `vector`/`halfvec`/`sparsevec` (and `bit`/`varbit` distances) | `isNull`, `<distance>LessThan` thresholds on allowlisted columns, plus `_L2_DISTANCE_`/`_COSINE_DISTANCE_`/… ordering via `nearVector:` — see [pgvector](contrib.md#pgvector) |
+| pgvector `vector`/`halfvec`/`sparsevec` (and `bit`/`varbit` distances) | `isNull`, `<distance>LessThan` thresholds on allowlisted columns, plus `_L2_DISTANCE_`/`_COSINE_DISTANCE_`/… ordering against the column's [`near:` reference](contrib.md#references-the-near-argument) — see [pgvector](contrib.md#pgvector) |
 
 `startsWith`/`endsWith` escape `%`/`_`/`\` in the operand; every operand is
 a bind parameter — the SQL text never varies with input values (fuzz-tested
@@ -125,7 +130,9 @@ cursors (and have no `nodeId`). Notes:
 With the `advanced_filters` plugin (on by default), each `<Types>OrderBy`
 enum also carries one-level relational values named
 `<RELATION>__<COLUMN>_ASC|_DESC` — a double underscore separates the relation
-from the column:
+from the column, as it does in every relational value (the
+[aggregates](aggregates.md#ordering-by-related-aggregates) ones are
+`<RELATION>__COUNT_ASC`, `<RELATION>__SUM_<COLUMN>_DESC`, …):
 
 ```graphql
 { allPosts(orderBy: [USER_BY_AUTHOR_ID__EMAIL_ASC]) { nodes { title } } }   # forward

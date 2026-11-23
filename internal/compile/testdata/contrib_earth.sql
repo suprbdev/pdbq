@@ -23,10 +23,10 @@ GROUP BY ()
 -- args: [40.7,-74,40.7,-74,40.7,-74,50,100]
 
 -- field: allLocations
--- error: compile: nearPoint: lat must be between -90 and 90
+-- error: compile: near: lat must be between -90 and 90
 
 -- field: allLocations
--- error: compile: orderBy SPOT_EARTH_DISTANCE_ASC requires a nearPoint: reference for the same column
+-- error: compile: orderBy SPOT_EARTH_DISTANCE_ASC requires near: {spot: …}
 
 -- field: locationById
 SELECT json_build_object('spot', (SELECT json_build_object('lat', "ext".latitude(__ll_2.e)) FROM (SELECT __t_1."spot" AS e) AS __ll_2 WHERE __ll_2.e IS NOT NULL), 'spotEarthDistance', NULL::float8) AS data

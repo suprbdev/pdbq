@@ -6,7 +6,7 @@ query ($after: Cursor) {
     edges { cursor node { id searchRank } }
     pageInfo { hasNextPage }
   }
-  similar: allDocuments(similarTo: {label: "pg"}, orderBy: [LABEL_SIMILARITY_DESC], after: $after, first: 2) {
+  similar: allDocuments(near: {label: "pg"}, orderBy: [LABEL_SIMILARITY_DESC], after: $after, first: 2) {
     nodes { id }
   }
 }

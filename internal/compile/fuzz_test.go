@@ -54,7 +54,7 @@ func FuzzFilter(f *testing.F) {
 				notes: {unaccentEqualTo: $e, unaccentLike: $e, unaccentIncludes: $e, unaccentStartsWith: $e}
 			}
 			condition: {slug: $e, attrs: $h}
-			similarTo: {label: $e, title: $e}
+			near: {label: $e, title: $e}
 			orderBy: [SEARCH_RANK_DESC, LABEL_SIMILARITY_DESC]
 		) { nodes { id searchRank attrs span { start { value inclusive } } labelSimilarity titleWordSimilarity } }
 		values: allDocuments(
@@ -65,7 +65,7 @@ func FuzzFilter(f *testing.F) {
 				notes: {soundexEqualTo: $e, doubleMetaphoneEqualTo: $e}
 				or: [{attrsValue: {key: $k, isNull: true}}, {pathNlevel: {lessThan: $n}}]
 			}
-			hstoreKey: {attrs: $e}
+			near: {attrs: $e}
 			orderBy: [ATTRS_VALUE_ASC, PATH_NLEVEL_DESC]
 		) { nodes { id pathNlevel pathParent pathsLca tagIdsIcount attrsValue(key: $k) pathLca(path: $k) } }
 		allEmbeddings(
@@ -74,11 +74,11 @@ func FuzzFilter(f *testing.F) {
 				sparse: {negativeInnerProductLessThan: {vector: $sv, distance: $fl}}
 				code: {hammingDistanceLessThan: {vector: "101", distance: $fl}}
 			}
-			nearVector: {embedding: $vec, half: $vec, sparse: $cfg, code: "011"}
+			near: {embedding: $vec, half: $vec, sparse: $cfg, code: "011"}
 			orderBy: [EMBEDDING_COSINE_DISTANCE_ASC, HALF_L2_DISTANCE_DESC, SPARSE_NEGATIVE_INNER_PRODUCT_ASC, EMBEDDING_L1_DISTANCE_ASC, CODE_HAMMING_DISTANCE_ASC]
 			first: 3
 		) { nodes { id embedding half sparse embeddingCosineDistance sparseL2Distance codeJaccardDistance } }
-		allPlaces(near: {geometry: "POINT(0 0)"}, orderBy: [LOCATION_DISTANCE_ASC]) {
+		allPlaces(near: {location: "POINT(0 0)", area: "POINT(0 0)"}, orderBy: [LOCATION_DISTANCE_ASC]) {
 			nodes { locationDistance(useSpheroid: true) areaDistance }
 		}
 	}`
@@ -89,7 +89,7 @@ func FuzzFilter(f *testing.F) {
 				groupBy: [AUTHOR_ID, TITLE]
 				having: {
 					sum: {id: {greaterThan: $big, lessThanOrEqualTo: $big}}
-					OR: [{max: {id: {equalTo: $n}}}, {average: {authorId: {notEqualTo: $bf}}}]
+					or: [{max: {id: {equalTo: $n}}}, {average: {authorId: {notEqualTo: $bf}}}]
 				}
 			) { keys distinctCount { title } }
 		}
@@ -100,7 +100,7 @@ func FuzzFilter(f *testing.F) {
 				distinctCount: {title: {equalTo: $big, isNull: false}}
 				max: {id: {lessThan: $n}}
 			}}}
-			orderBy: [POSTS_BY_AUTHOR_ID_SUM_ID_DESC]
+			orderBy: [POSTS_BY_AUTHOR_ID__SUM_ID_DESC]
 		) {
 			groupedAggregates(groupBy: [CREATED_AT_TRUNCATED_TO_DAY], having: {max: {createdAt: {greaterThan: $d}}}) { keys }
 		}
@@ -108,7 +108,7 @@ func FuzzFilter(f *testing.F) {
 	const fuzzyQuery = `query ($e: String!, $n: Int!, $len: Int, $b: Boolean!) {
 		allDocuments(
 			filter: {notes: {levenshteinDistanceLessThan: {text: $e, distance: $n}, metaphoneEqualTo: $e}, search: {matchesPlain: $e}}
-			similarTo: {notes: $e}
+			near: {notes: $e}
 			orderBy: [NOTES_LEVENSHTEIN_DISTANCE_ASC]
 		) { nodes { id notesLevenshteinDistance pathSubpath(offset: $n, length: $len) searchHeadline(document: NOTES, options: {maxWords: $n, minWords: 1, startSel: $e, highlightAll: $b}) } }
 	}`
@@ -130,8 +130,7 @@ func FuzzFilter(f *testing.F) {
 				spot: {earthDistanceLessThan: {lat: $lat, lon: $lon, distance: $fl}}
 				here: {earthDistanceMilesLessThan: {lat: $lat, lon: $lon, distance: $fl}}
 			}
-			nearVector: {pos: $cu, box: $cs}
-			nearPoint: {spot: {lat: $lat, lon: $lon}, here: {lat: $lon, lon: $lat}}
+			near: {pos: $cu, box: $cs, spot: {lat: $lat, lon: $lon}, home: {lat: $lat, lon: $lon}, here: {lat: $lon, lon: $lat}}
 			orderBy: [POS_CHEBYSHEV_DISTANCE_ASC, SPOT_EARTH_DISTANCE_DESC, HERE_EARTH_DISTANCE_MILES_ASC]
 			first: 3
 		) { nodes { id pos spot { lat lon } posL2Distance boxL1Distance spotEarthDistance homeEarthDistance hereEarthDistanceMiles } }
@@ -267,7 +266,7 @@ func FuzzSpatial(f *testing.F) {
 				bboxIntersectsND: $wkt
 				bboxIntersects2D: $wkt
 			}
-		}, near: {geometry: $wkt}, orderBy: [AREA_DISTANCE_ASC]) { nodes { id locationDistance areaDistance location(buffer: $d, precision: $p) area(buffer: $x, simplify: $d, transform: 3857, precision: $p) } }
+		}, near: {location: $wkt, area: $wkt}, orderBy: [AREA_DISTANCE_ASC]) { nodes { id locationDistance areaDistance location(buffer: $d, precision: $p) area(buffer: $x, simplify: $d, transform: 3857, precision: $p) } }
 		allTiles(filter: {rast: {intersects: $wkt}}) {
 			nodes { rastEnvelope rastValue(point: $wkt, band: $band) rastSummaryStats(band: $band) { count mean } }
 		}

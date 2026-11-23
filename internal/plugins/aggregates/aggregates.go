@@ -12,9 +12,9 @@
 //     group, its keys field holding the stringified group keys. Group-by
 //     values are the table's orderable, non-unique columns, plus
 //     _TRUNCATED_TO_HOUR / _TRUNCATED_TO_DAY derivatives of timestamps.
-//   - relational aggregate ordering: <REL>_COUNT_ASC/_DESC and
-//     <REL>_<SPEC>_<COLUMN>_ASC/_DESC orderBy values sort a table by
-//     aggregates over a reverse relation (POSTS_BY_AUTHOR_ID_SUM_ID_DESC).
+//   - relational aggregate ordering: <REL>__COUNT_ASC/_DESC and
+//     <REL>__<SPEC>_<COLUMN>_ASC/_DESC orderBy values sort a table by
+//     aggregates over a reverse relation (POSTS_BY_AUTHOR_ID__SUM_ID_DESC).
 //   - relational aggregate filtering: the advanced_filters
 //     <Type>ToManyFilter wrapper gains an aggregates field
 //     ({postsByAuthorId: {aggregates: {filter: {...}, sum: {id: {greaterThan:
@@ -73,7 +73,7 @@ const Name = "aggregates"
 type Settings struct {
 	Enabled             bool `koanf:"enabled" doc:"Aggregates for every table; otherwise only for tables tagged @aggregates."`
 	Grouped             bool `koanf:"grouped" doc:"groupedAggregates, <Type>GroupBy and <Type>HavingInput."`
-	Order               bool `koanf:"order" doc:"<REL>_COUNT_* and <REL>_<AGGREGATE>_<COLUMN>_* orderBy values."`
+	Order               bool `koanf:"order" doc:"<REL>__COUNT_* and <REL>__<AGGREGATE>_<COLUMN>_* orderBy values."`
 	Filters             bool `koanf:"filters" doc:"The aggregates field of to-many relation filters."`
 	Spatial             bool `koanf:"spatial" doc:"The stExtent and stCentroid spatial aggregates."`
 	SpatialUnionCollect bool `koanf:"spatial_union_collect" doc:"The stUnion and stCollect spatial aggregates, whose results grow with the row set."`
@@ -491,8 +491,9 @@ func (r *build) addHaving(t *introspect.Table, s *surface) string {
 		Name:        name,
 		Description: "Conditions for `" + s.typeName + "` aggregates.",
 		Fields: []*schema.InputField{
-			{Name: "AND", Type: "[" + name + "!]"},
-			{Name: "OR", Type: "[" + name + "!]"},
+			{Name: "and", Type: "[" + name + "!]"},
+			{Name: "or", Type: "[" + name + "!]"},
+			{Name: "not", Type: name},
 		},
 	}
 	for _, sp := range specs {
@@ -521,7 +522,7 @@ func (r *build) addHaving(t *introspect.Table, s *surface) string {
 		b.Inputs[groupName] = group
 		in.Fields = append(in.Fields, &schema.InputField{Name: sp.id, Type: groupName})
 	}
-	if len(in.Fields) == 2 {
+	if len(in.Fields) == 3 {
 		return ""
 	}
 	b.Inputs[name] = in
@@ -531,9 +532,9 @@ func (r *build) addHaving(t *introspect.Table, s *surface) string {
 // havingScalars maps aggregate result types to the having filter family.
 var havingScalars = map[string]string{
 	"int2": "Int", "int4": "Int",
-	"int8":   "Bigint",
+	"int8":   "BigInt",
 	"float4": "Float", "float8": "Float",
-	"numeric": "Bigfloat",
+	"numeric": "BigFloat",
 	"date":    "Datetime", "timestamp": "Datetime", "timestamptz": "Datetime",
 }
 
@@ -552,29 +553,26 @@ func (r *build) havingFilter(t *introspect.Table, pgType string) string {
 		}
 		return ""
 	}
+	r.b.ClaimOperatorInput(name)
 	if !free(r.b, name) {
 		warn(r.b, "aggregates: having filter type name taken, skipping", t, name)
 		r.owned[name] = false
 		return ""
 	}
-	scalar := map[string]string{"Bigint": "BigInt", "Bigfloat": "BigFloat"}[family]
-	if scalar == "" {
-		scalar = family
-	}
 	in := &schema.Input{Name: name}
 	for _, op := range []string{"equalTo", "notEqualTo", "greaterThan", "greaterThanOrEqualTo", "lessThan", "lessThanOrEqualTo"} {
-		in.Fields = append(in.Fields, &schema.InputField{Name: op, Type: scalar})
+		in.Fields = append(in.Fields, &schema.InputField{Name: op, Type: family})
 	}
 	r.b.Inputs[name] = in
 	r.owned[name] = true
 	return name
 }
 
-// addRelationOrder adds <REL>_COUNT_* and <REL>_<SPEC>_<COLUMN>_* values to
+// addRelationOrder adds <REL>__COUNT_* and <REL>__<SPEC>_<COLUMN>_* values to
 // t's orderBy enum for every reverse relation from an opted-in table, unless
 // the foreign key opts out the way advanced_filters' relational ordering
 // does (@omit order, @omit many on the key or the child table,
-// relations_opt_in without @filterable / @sortable).
+// relations_opt_in without @sortable).
 func (r *build) addRelationOrder(t *introspect.Table, surfaces map[*introspect.Table]*surface) {
 	b := r.b
 	en := b.Enums[b.Inflect(inflect.KindOrderByTypeName, inflect.Input{Schema: t.Schema, Table: t.Name})]
@@ -599,8 +597,8 @@ func (r *build) addRelationOrder(t *introspect.Table, surfaces map[*introspect.T
 			relName := b.Inflect(inflect.KindRelationBackward, inflect.Input{
 				Schema: child.Schema, Table: child.Name, Columns: fk.Columns, Constraint: fk.Name,
 			})
-			prefix := coreinflect.EnumValue(relName) + "_"
-			addOrderPair(en, prefix+"COUNT", &schema.OrderRelation{FK: fk, Table: child, Aggregate: countAggregate(r.scanCost)})
+			prefix := coreinflect.EnumValue(relName) + "__"
+			r.addOrderPair(t, en, prefix+"COUNT", &schema.OrderRelation{FK: fk, Table: child, Aggregate: countAggregate(r.scanCost)})
 			for _, sp := range specs {
 				if sp.spatial {
 					continue
@@ -610,7 +608,7 @@ func (r *build) addRelationOrder(t *introspect.Table, surfaces map[*introspect.T
 					if a == nil {
 						continue
 					}
-					addOrderPair(en, prefix+coreinflect.EnumValue(sp.id)+"_"+coreinflect.EnumValue(c.Name),
+					r.addOrderPair(t, en, prefix+coreinflect.EnumValue(sp.id)+"_"+coreinflect.EnumValue(c.Name),
 						&schema.OrderRelation{FK: fk, Table: child, Column: c.Name, Aggregate: a})
 				}
 			}
@@ -619,17 +617,18 @@ func (r *build) addRelationOrder(t *introspect.Table, surfaces map[*introspect.T
 }
 
 // omitsOrder applies advanced_filters' relational-ordering rules to a
-// foreign key comment (@omit order, relations_opt_in without @filterable or
-// @sortable).
+// foreign key comment (@omit order, relations_opt_in without @sortable).
 func (r *build) omitsOrder(comment string) bool {
 	tags, _ := smarttags.Parse(comment)
-	optedOut := r.relationsOptIn && !tags.Has("filterable") && !tags.Has("sortable")
-	return optedOut || omit.Hides(comment, omit.Order)
+	return r.relationsOptIn && !tags.Has("sortable") || omit.Hides(comment, omit.Order)
 }
 
-// addOrderPair appends base_ASC/base_DESC unless either name is taken.
-func addOrderPair(en *schema.Enum, base string, rel *schema.OrderRelation) {
+// addOrderPair appends base_ASC/base_DESC to t's orderBy enum en unless
+// either name is taken (by an advanced_filters relational value over a
+// column named like the aggregate, say count), which it logs.
+func (r *build) addOrderPair(t *introspect.Table, en *schema.Enum, base string, rel *schema.OrderRelation) {
 	if en.HasValue(base+"_ASC") || en.HasValue(base+"_DESC") {
+		warn(r.b, "aggregates: orderBy value name taken, skipping", t, base+"_ASC")
 		return
 	}
 	en.Values = append(en.Values,
@@ -678,7 +677,7 @@ func (r *build) addRelationFilter(t *introspect.Table, s *surface) {
 				continue
 			}
 			group.Fields = append(group.Fields, &schema.InputField{
-				Name: s.cols[c], Type: b.FilterOpsInputFor(a.ResultColumn()), Aggregate: a,
+				Name: s.cols[c], Type: b.FilterInputFor(a.ResultColumn()), Aggregate: a,
 			})
 		}
 		if len(group.Fields) == 0 || !free(b, groupName) {

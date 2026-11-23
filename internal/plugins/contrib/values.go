@@ -21,10 +21,6 @@ var valueVocabs = []string{pgcontrib.VocabLtree, pgcontrib.VocabLtreeArray, pgco
 // operand.
 var derivedArgs = map[string]string{"value": "key", "lca": "path"}
 
-// hstoreKeyArg is the list argument holding the key per hstore column for
-// the <COLUMN>_VALUE_ASC/_DESC orderBy values.
-const hstoreKeyArg = "hstoreKey"
-
 // valueVocabsOf returns the column's vocabularies among valueVocabs.
 func valueVocabsOf(ci contribtype.Column) []pgcontrib.Vocabulary {
 	var out []pgcontrib.Vocabulary
@@ -131,7 +127,7 @@ func (st *build) addValueFields(t *introspect.Table, cols []column) {
 }
 
 // addValueFilters adds the table-filter fields comparing contrib values of
-// column cc: <field>Nlevel / <field>Icount (IntFilterOps) and <field>Value
+// column cc: <field>Nlevel / <field>Icount (IntFilter) and <field>Value
 // (KeyValueHashValueFilter). The caller checked that the column is
 // filterable and that the policy admits unindexed surface on it.
 func (st *build) addValueFilters(t *introspect.Table, cc column) {
@@ -154,7 +150,7 @@ func (st *build) addValueFilters(t *introspect.Table, cc column) {
 			}
 			add(&schema.InputField{
 				Name:        field + coreinflect.UpperCamel(a.Name),
-				Type:        st.b.FilterOpsInputFor(&introspect.Column{Name: a.Name, PGType: "int4", TypeSchema: "pg_catalog"}),
+				Type:        st.b.FilterInputFor(&introspect.Column{Name: a.Name, PGType: "int4", TypeSchema: "pg_catalog"}),
 				Description: "Filter by " + strings.ToLower(strings.TrimSuffix(a.Description, ".")) + " of " + cc.col.Name + ". No index serves it.",
 				Contrib:     &schema.ContribValue{Column: cc.col.Name, Vocab: v.Name, Name: a.Name},
 			})
@@ -171,17 +167,18 @@ func (st *build) addValueFilters(t *introspect.Table, cc column) {
 }
 
 // ensureValueFilter declares KeyValueHashValueFilter, {key: String!} plus
-// the StringFilterOps operators, reporting false when the name is taken.
+// the StringFilter operators, reporting false when the name is taken.
 func (st *build) ensureValueFilter() bool {
 	name := contribtype.KeyValueHashValueFilter
 	if st.extended[name] {
 		return true
 	}
+	st.b.ClaimOperatorInput(name)
 	if st.nameTaken(name) {
 		st.b.Options.Logger.Warn("contrib: type name already taken, hstore value filters disabled", "type", name)
 		return false
 	}
-	base := st.b.Inputs[st.b.FilterOpsInputFor(&introspect.Column{Name: "value", PGType: "text", TypeSchema: "pg_catalog"})]
+	base := st.b.Inputs[st.b.FilterInputFor(&introspect.Column{Name: "value", PGType: "text", TypeSchema: "pg_catalog"})]
 	if base == nil {
 		return false
 	}
@@ -202,7 +199,7 @@ func (st *build) ensureValueFilter() bool {
 // addValueOrdering adds the orderBy values sorting by contrib values of
 // t's columns the policy admits unindexed ordering on:
 // <COLUMN>_NLEVEL_ASC/_DESC, <COLUMN>_ICOUNT_ASC/_DESC and, against the
-// hstoreKey: argument it declares, <COLUMN>_VALUE_ASC/_DESC.
+// column's key in the table's near: argument, <COLUMN>_VALUE_ASC/_DESC.
 func (st *build) addValueOrdering(t *introspect.Table, cols []column) {
 	b := st.b
 	enumName := b.Inflect(inflect.KindOrderByTypeName, inflect.Input{Schema: t.Schema, Table: t.Name})
@@ -232,46 +229,24 @@ func (st *build) addValueOrdering(t *introspect.Table, cols []column) {
 			}
 		}
 	}
-	if len(keyed) == 0 || !st.addHstoreKeyArg(t, enumName, keyed) {
+	if len(keyed) == 0 {
+		return
+	}
+	near := st.b.NearInput(t)
+	if near == nil {
 		return
 	}
 	for _, cc := range keyed {
-		cv := &schema.ContribValue{Column: cc.col.Name, Vocab: pgcontrib.VocabHstore, Name: "value", Expr: true, Arg: hstoreKeyArg}
+		cv := &schema.ContribValue{Column: cc.col.Name, Vocab: pgcontrib.VocabHstore, Name: "value", Expr: true, Arg: schema.NearArg}
 		base := coreinflect.EnumValue(cc.col.Name) + "_VALUE"
-		desc := "Order by the value of the hstoreKey: key of " + cc.col.Name
-		addValue(en, base+"_ASC", schema.EnumValue{Column: cc.col.Name, Contrib: cv, Description: desc + " (ascending; null values last). Requires hstoreKey:."})
-		addValue(en, base+"_DESC", schema.EnumValue{Column: cc.col.Name, Contrib: cv, Desc: true, Description: desc + " (descending; null values last). Requires hstoreKey:."})
-	}
-}
-
-// addHstoreKeyArg declares <Type>HstoreKeyInput (one String per hstore
-// column with value ordering) and adds hstoreKey: to every field taking
-// the table's orderBy enum, reporting false when the input's name is taken.
-func (st *build) addHstoreKeyArg(t *introspect.Table, enumName string, cols []column) bool {
-	b := st.b
-	typeName := b.TypeForTable[t.Schema+"."+t.Name]
-	inputName := typeName + "HstoreKeyInput"
-	if st.nameTaken(inputName) {
-		b.Options.Logger.Warn("contrib: type name already taken, hstore value ordering skipped", "type", inputName)
-		return false
-	}
-	input := &schema.Input{
-		Name:        inputName,
-		Description: "Keys for the hstore value orderBy values of " + typeName + ", per column.",
-	}
-	for _, cc := range cols {
-		input.AddField(&schema.InputField{
+		desc := "Order by the value of the near: key of " + cc.col.Name
+		addValue(en, base+"_ASC", schema.EnumValue{Column: cc.col.Name, Contrib: cv, Description: desc + " (ascending; null values last). Requires that key."})
+		addValue(en, base+"_DESC", schema.EnumValue{Column: cc.col.Name, Contrib: cv, Desc: true, Description: desc + " (descending; null values last). Requires that key."})
+		near.AddField(&schema.InputField{
 			Name:        st.fieldName(t, cc.col),
 			Type:        "String",
 			Description: "Key whose value the " + cc.col.Name + " value orderBy values sort by.",
 			Column:      cc.col.Name,
 		})
 	}
-	b.Inputs[inputName] = input
-	for _, f := range st.orderBy[enumName] {
-		if !hasArg(f, hstoreKeyArg) {
-			f.Args = append(f.Args, schema.Arg{Name: hstoreKeyArg, Type: inputName})
-		}
-	}
-	return true
 }

@@ -166,9 +166,9 @@ values as strings (`null` outside grouped aggregates), in `groupBy` order:
 ### Having
 
 `having: <Type>HavingInput` filters the groups. It takes one entry per
-aggregate, plus `AND`/`OR` lists of nested having inputs. Entries at the same
-level are ANDed. An empty object matches every group, so `OR: [{}, ...]` is
-always true. The entries cover the table's filterable columns, the columns
+aggregate, plus the `and`/`or` lists and the `not` of nested having inputs,
+as in table filters. Entries at the same level are ANDed. An empty object
+matches every group, so `or: [{}, ...]` is always true. The entries cover the table's filterable columns, the columns
 of its `<Type>Filter` input, so `filters.indexed_only` and `@omit filter`
 apply:
 
@@ -177,14 +177,14 @@ apply:
   allPosts {
     groupedAggregates(
       groupBy: [AUTHOR_ID]
-      having: {sum: {id: {greaterThan: "3"}}, OR: [{max: {id: {equalTo: 1}}}, {max: {id: {equalTo: 4}}}]}
+      having: {sum: {id: {greaterThan: "3"}}, or: [{max: {id: {equalTo: 1}}}, {max: {id: {equalTo: 4}}}], not: {min: {id: {equalTo: 2}}}}
     ) { keys }
   }
 }
 ```
 
-The comparison inputs are `HavingIntFilter`, `HavingBigintFilter`,
-`HavingFloatFilter`, `HavingBigfloatFilter` and `HavingDatetimeFilter`, each
+The comparison inputs are `HavingIntFilter`, `HavingBigIntFilter`,
+`HavingFloatFilter`, `HavingBigFloatFilter` and `HavingDatetimeFilter`, each
 with `equalTo notEqualTo greaterThan greaterThanOrEqualTo lessThan
 lessThanOrEqualTo`. pdbq picks the input from the aggregate's **result** type,
 so `distinctCount` always compares a `BigInt`. Upstream picks it from the
@@ -198,11 +198,11 @@ pg-aggregates:
 
 | Value | Sorts by |
 |---|---|
-| `<REL>_COUNT_ASC` / `_DESC` | the number of related rows |
-| `<REL>_<AGGREGATE>_<COLUMN>_ASC` / `_DESC` | an aggregate of a related column, e.g. `POSTS_BY_AUTHOR_ID_SUM_ID_DESC`, `POSTS_BY_AUTHOR_ID_DISTINCT_COUNT_TITLE_ASC` |
+| `<REL>__COUNT_ASC` / `_DESC` | the number of related rows |
+| `<REL>__<AGGREGATE>_<COLUMN>_ASC` / `_DESC` | an aggregate of a related column, e.g. `POSTS_BY_AUTHOR_ID__SUM_ID_DESC`, `POSTS_BY_AUTHOR_ID__DISTINCT_COUNT_TITLE_ASC` |
 
 With `simple_names` the relation is `posts`, so the values read
-`POSTS_COUNT_DESC` and `POSTS_SUM_ID_DESC`. Each value compiles to a
+`POSTS__COUNT_DESC` and `POSTS__SUM_ID_DESC`. Each value compiles to a
 correlated scalar subquery, like the advanced_filters relational ordering. It
 works with keyset cursors, and descending values sort `NULL` (no related rows)
 last. The related table's aggregated columns are its orderable columns,
@@ -210,7 +210,7 @@ those behind its own `orderBy` values, so `filters.indexed_only` and column
 `@omit order` apply as in advanced_filters. On the foreign key, `@omit order`
 and `@omit many` skip the relation, as does `@omit many` on the referencing
 table. In advanced_filters' `relations_opt_in`
-mode, only keys tagged `@filterable`/`@sortable` get values.
+mode, only keys tagged `@sortable` get values.
 
 Keyset cursors over a floating-point aggregate (`sum`, `average`,
 `stddev*`/`variance*` of `float4`/`float8` columns) can skip or repeat a row
@@ -244,7 +244,7 @@ field, the pg-aggregates shape:
 
 `<Type>AggregatesFilter` takes the related table's `filter` plus one
 `<Type><Aggregate>AggregateFilter` per aggregate. The operators come from the
-aggregate's result type (`BigIntFilterOps` for the sum of an integer). The
+aggregate's result type (`BigIntFilter` for the sum of an integer). The
 whole object compiles to one scalar subquery over the related rows. With no
 related rows, `sum` reads 0 and every other aggregate reads `NULL`, so a
 comparison on them is false. `not: {...}` around it is the exact complement.
@@ -262,7 +262,7 @@ it too. Spatial results have no filter.
 | `@aggregates off`, `@omit aggregates` | table | opt the table out |
 | `@behavior -aggregates` / `+aggregates` | table | same, in PostGraphile V5 behavior form |
 | `@behavior -groupedAggregates` | table | no `groupedAggregates` (or `having`) on the table's connections |
-| `@behavior -aggregates:orderBy` | table | the table drives no `<REL>_..._ASC` values on its parents |
+| `@behavior -aggregates:orderBy` | table | the table drives no `<REL>__..._ASC` values on its parents |
 | `@behavior -aggregates:filterBy` | table | no `aggregates` field in the table's `<Type>ToManyFilter` |
 | `@omit aggregates`, `@aggregates off`, `@behavior -aggregate` | column | the column is aggregated nowhere |
 | `@behavior -groupBy` | column | the column is not a `groupBy` value |
@@ -281,7 +281,7 @@ All under the top-level `aggregates` section (not `plugins.settings`; the
 |---|---|---|
 | `enabled` | `false` | aggregates for every table; otherwise only for `@aggregates` tables |
 | `grouped` | `true` | `groupedAggregates`, `<Type>GroupBy`, `<Type>HavingInput` |
-| `order` | `true` | `<REL>_COUNT_*` / `<REL>_<AGGREGATE>_<COLUMN>_*` orderBy values |
+| `order` | `true` | `<REL>__COUNT_*` / `<REL>__<AGGREGATE>_<COLUMN>_*` orderBy values |
 | `filters` | `true` | the `aggregates` field of to-many relation filters |
 | `spatial` | `true` | `stExtent`, `stCentroid` (and the next row) |
 | `spatial_union_collect` | `false` | `stUnion`, `stCollect`, whose results grow with the row set |

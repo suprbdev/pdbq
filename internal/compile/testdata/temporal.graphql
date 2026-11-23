@@ -14,7 +14,7 @@
     nodes { nodeId guest bookingNotesByRoomIdAndValidAt { nodes { note } } }
   }
   roomBookingByRoomId(roomId: 1, at: "2026-03-02") { guest validAt { end { value } } }
-  noteless: allRoomBookings(filter: {bookingNotesByRoomIdAndValidAtExist: false}) { totalCount }
-  periodless: allBookingNotes(filter: {roomBookingsByRoomIdAndValidAtExist: false}) { totalCount }
+  noteless: allRoomBookings(filter: {bookingNotesByRoomIdAndValidAtExists: false}) { totalCount }
+  periodless: allBookingNotes(filter: {roomBookingsByRoomIdAndValidAtExists: false}) { totalCount }
   cover: allRoomBookings(orderBy: [BOOKING_NOTES_BY_ROOM_ID_AND_VALID_AT__ID_ASC]) { nodes { guest } }
 }

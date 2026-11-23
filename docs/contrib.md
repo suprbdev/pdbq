@@ -16,25 +16,25 @@ connection-filter operator names) wherever PostGraphile has one.
 
 | Postgres type | GraphQL output | Input | Operator input |
 |---|---|---|---|
-| `tsvector` | `FullText` (text form) | `FullText` | `FullTextFilterOps` |
-| `citext` | `String` | `String` | `StringFilterOps` (case-insensitive) |
-| `hstore` | `KeyValueHash` (JSON object of string → string or null) | `KeyValueHash` | `KeyValueHashFilterOps` |
-| `ltree` | `String` | `String` | `LtreeFilterOps` |
-| `ltree[]` | `[String!]` | `[String!]` | `LtreeListFilterOps` |
-| `int4range` / `int8range` / `numrange` / `daterange` / `tsrange`, `tstzrange` | `IntRange` / `BigIntRange` / `BigFloatRange` / `DateRange` / `DatetimeRange` | `<X>RangeInput` | `<X>RangeFilterOps` |
-| the matching multiranges (PostgreSQL 14+) | `[<X>Range!]` | `[<X>RangeInput!]` | `<X>MultirangeFilterOps` |
-| custom range types over a `pg_catalog` subtype (`CREATE TYPE ... AS RANGE`) | `<X>Range` of the subtype's scalar (`FloatRange` for `float8`) | `<X>RangeInput` | `<X>RangeFilterOps` |
-| `inet` / `cidr` | `InternetAddress` / `CidrAddress` | same | `InternetAddressFilterOps` / `CidrAddressFilterOps` |
-| `text`, `varchar`, `char(n)`, `citext` with `pg_trgm` installed | `String` | `String` | `StringTrgmFilterOps` (see [Trigram](#trigram-similarity-pg_trgm)) |
-| the same with `unaccent` installed | `String` | `String` | `StringUnaccentFilterOps` / `StringTrgmUnaccentFilterOps` (see [Unaccent](#unaccent)) |
-| the same with `fuzzystrmatch` installed | `String` | `String` | `String[Trgm][Unaccent]FuzzyFilterOps` (see [fuzzystrmatch](#fuzzystrmatch)) |
-| `int4[]` with `intarray` installed | `[Int!]` | `[Int!]` | `IntListFilterOps`, `IntListIntarrayFilterOps` with `matchesQueryInt` (see [intarray](#intarray)) |
-| `vector`, `halfvec` (pgvector) | `[Float!]` | `[Float!]` | `VectorFilterOps` (`isNull` only), `VectorDistanceFilterOps` with distance thresholds (see [pgvector](#pgvector)) |
-| `sparsevec` (pgvector) | `String` (`"{1:1.5,3:2}/5"`) | `String` | `VectorFilterOps`, `SparseVectorDistanceFilterOps` with distance thresholds |
-| `bit`, `varbit` with pgvector installed | `String` (`"101"`) | `String` | `StringFilterOps`, `BitDistanceFilterOps` with Hamming/Jaccard thresholds (see [Bit vectors](#bit-vectors)) |
-| `cube` | `Cube` (JSON: `[1, 2, 3]` for a point, `[[1, 2], [3, 4]]` for a box) | `Cube` (the same, or the text form `"(1, 2), (3, 4)"`) | `CubeFilterOps`, `CubeDistanceFilterOps` with distance thresholds (see [cube](#cube)) |
-| earthdistance's `earth` (and domains over it) | `LatLon { lat lon }` | `LatLonInput` | `LatLonFilterOps` (`isNull` only), `LatLonDistanceFilterOps` with the radius filter (see [earthdistance](#earthdistance)) |
-| `point` with earthdistance installed | `String` (unchanged) | `String` | `StringFilterOps`, `PointDistanceFilterOps` with the `<@>` radius filter on admitted columns (see [earthdistance](#earthdistance)) |
+| `tsvector` | `FullText` (text form) | `FullText` | `FullTextFilter` |
+| `citext` | `String` | `String` | `StringFilter` (case-insensitive) |
+| `hstore` | `KeyValueHash` (JSON object of string → string or null) | `KeyValueHash` | `KeyValueHashFilter` |
+| `ltree` | `String` | `String` | `LtreeFilter` |
+| `ltree[]` | `[String!]` | `[String!]` | `LtreeListFilter` |
+| `int4range` / `int8range` / `numrange` / `daterange` / `tsrange`, `tstzrange` | `IntRange` / `BigIntRange` / `BigFloatRange` / `DateRange` / `DatetimeRange` | `<X>RangeInput` | `<X>RangeFilter` |
+| the matching multiranges (PostgreSQL 14+) | `[<X>Range!]` | `[<X>RangeInput!]` | `<X>MultirangeFilter` |
+| custom range types over a `pg_catalog` subtype (`CREATE TYPE ... AS RANGE`) | `<X>Range` of the subtype's scalar (`FloatRange` for `float8`) | `<X>RangeInput` | `<X>RangeFilter` |
+| `inet` / `cidr` | `InternetAddress` / `CidrAddress` | same | `InternetAddressFilter` / `CidrAddressFilter` |
+| `text`, `varchar`, `char(n)`, `citext` with `pg_trgm` installed | `String` | `String` | `StringTrgmFilter` (see [Trigram](#trigram-similarity-pg_trgm)) |
+| the same with `unaccent` installed | `String` | `String` | `StringUnaccentFilter` / `StringTrgmUnaccentFilter` (see [Unaccent](#unaccent)) |
+| the same with `fuzzystrmatch` installed | `String` | `String` | `String[Trgm][Unaccent]FuzzyFilter` (see [fuzzystrmatch](#fuzzystrmatch)) |
+| `int4[]` with `intarray` installed | `[Int!]` | `[Int!]` | `IntListFilter`, `IntListIntarrayFilter` with `matchesQueryInt` (see [intarray](#intarray)) |
+| `vector`, `halfvec` (pgvector) | `[Float!]` | `[Float!]` | `VectorFilter` (`isNull` only), `VectorDistanceFilter` with distance thresholds (see [pgvector](#pgvector)) |
+| `sparsevec` (pgvector) | `String` (`"{1:1.5,3:2}/5"`) | `String` | `VectorFilter`, `SparseVectorDistanceFilter` with distance thresholds |
+| `bit`, `varbit` with pgvector installed | `String` (`"101"`) | `String` | `StringFilter`, `BitDistanceFilter` with Hamming/Jaccard thresholds (see [Bit vectors](#bit-vectors)) |
+| `cube` | `Cube` (JSON: `[1, 2, 3]` for a point, `[[1, 2], [3, 4]]` for a box) | `Cube` (the same, or the text form `"(1, 2), (3, 4)"`) | `CubeFilter`, `CubeDistanceFilter` with distance thresholds (see [cube](#cube)) |
+| earthdistance's `earth` (and domains over it) | `LatLon { lat lon }` | `LatLonInput` | `LatLonFilter` (`isNull` only), `LatLonDistanceFilter` with the radius filter (see [earthdistance](#earthdistance)) |
+| `point` with earthdistance installed | `String` (unchanged) | `String` | `StringFilter`, `PointDistanceFilter` with the `<@>` radius filter on admitted columns (see [earthdistance](#earthdistance)) |
 
 Ranges have PostGraphile's shape:
 
@@ -100,16 +100,16 @@ the vocabulary:
 
 | Input | Operators |
 |---|---|
-| `FullTextFilterOps` | `matches` (`to_tsquery`: `& \| ! <->`, `:*` prefixes), `matchesPlain` (`plainto_tsquery`), `matchesPhrase` (`phraseto_tsquery`), `matchesWebsearch` (`websearch_to_tsquery`: `"quoted phrase"`, `or`, `-negation`; never raises), and `config` |
-| `StringTrgmFilterOps` | every `StringFilterOps` operator, `similarTo` (`%`), `wordSimilarTo` (`<%`), `strictWordSimilarTo` (`<<%`) |
-| `StringUnaccentFilterOps`, `StringTrgmUnaccentFilterOps` | every `StringFilterOps` / `StringTrgmFilterOps` operator, `unaccentEqualTo`, `unaccentLike`, `unaccentIncludes`, `unaccentStartsWith` (see [Unaccent](#unaccent)) |
-| `StringFuzzyFilterOps`, `StringTrgmFuzzyFilterOps`, `StringUnaccentFuzzyFilterOps`, `StringTrgmUnaccentFuzzyFilterOps` | the operators of the input without `Fuzzy`, `levenshteinDistanceLessThan`, `soundexEqualTo`, `metaphoneEqualTo`, `doubleMetaphoneEqualTo` (see [fuzzystrmatch](#fuzzystrmatch)) |
-| `IntListIntarrayFilterOps` | every `IntListFilterOps` operator, `matchesQueryInt` (`@@ query_int`, see [intarray](#intarray)) |
-| `KeyValueHashFilterOps` | `containsKey` (`?`), `containsAllKeys` (`?&`), `containsAnyKeys` (`?\|`), `contains` (`@>`), `containedBy` (`<@`), `containsDefinedKey` (`defined(col, key)`: present with a non-null value) |
-| `LtreeFilterOps` | `ancestorOf` (`@>`), `descendantOf` (`<@`), `ancestorOfAny`, `descendantOfAny`, `matchesLquery` (`~`), `matchesAnyLquery` (`?`), `matchesLtxtquery` (`@`) |
-| `LtreeListFilterOps` | the same, holding when some element matches (no `*Any` forms) |
-| `<X>RangeFilterOps`, `<X>MultirangeFilterOps` | `overlaps` (`&&`), `contains` (`@>`), `containsElement` (`@>` element), `containedBy` (`<@`), `strictlyLeftOf` (`<<`), `strictlyRightOf` (`>>`), `notExtendsRightOf` (`&<`), `notExtendsLeftOf` (`&>`), `adjacentTo` (`-\|-`); range operands for multiranges too |
-| `InternetAddressFilterOps`, `CidrAddressFilterOps` | `contains` (`>>`), `containsOrEqualTo` (`>>=`), `containedBy` (`<<`), `containedByOrEqualTo` (`<<=`), `containsOrContainedBy` (`&&`) |
+| `FullTextFilter` | `matches` (`to_tsquery`: `& \| ! <->`, `:*` prefixes), `matchesPlain` (`plainto_tsquery`), `matchesPhrase` (`phraseto_tsquery`), `matchesWebsearch` (`websearch_to_tsquery`: `"quoted phrase"`, `or`, `-negation`; never raises), and `config` |
+| `StringTrgmFilter` | every `StringFilter` operator, `similarTo` (`%`), `wordSimilarTo` (`<%`), `strictWordSimilarTo` (`<<%`) |
+| `StringUnaccentFilter`, `StringTrgmUnaccentFilter` | every `StringFilter` / `StringTrgmFilter` operator, `unaccentEqualTo`, `unaccentLike`, `unaccentIncludes`, `unaccentStartsWith` (see [Unaccent](#unaccent)) |
+| `StringFuzzyFilter`, `StringTrgmFuzzyFilter`, `StringUnaccentFuzzyFilter`, `StringTrgmUnaccentFuzzyFilter` | the operators of the input without `Fuzzy`, `levenshteinDistanceLessThan`, `soundexEqualTo`, `metaphoneEqualTo`, `doubleMetaphoneEqualTo` (see [fuzzystrmatch](#fuzzystrmatch)) |
+| `IntListIntarrayFilter` | every `IntListFilter` operator, `matchesQueryInt` (`@@ query_int`, see [intarray](#intarray)) |
+| `KeyValueHashFilter` | `containsKey` (`?`), `containsAllKeys` (`?&`), `containsAnyKeys` (`?\|`), `contains` (`@>`), `containedBy` (`<@`), `containsDefinedKey` (`defined(col, key)`: present with a non-null value) |
+| `LtreeFilter` | `ancestorOf` (`@>`), `descendantOf` (`<@`), `ancestorOfAny`, `descendantOfAny`, `matchesLquery` (`~`), `matchesAnyLquery` (`?`), `matchesLtxtquery` (`@`) |
+| `LtreeListFilter` | the same, holding when some element matches (no `*Any` forms) |
+| `<X>RangeFilter`, `<X>MultirangeFilter` | `overlaps` (`&&`), `contains` (`@>`), `containsElement` (`@>` element), `containedBy` (`<@`), `strictlyLeftOf` (`<<`), `strictlyRightOf` (`>>`), `notExtendsRightOf` (`&<`), `notExtendsLeftOf` (`&>`), `adjacentTo` (`-\|-`); range operands for multiranges too |
+| `InternetAddressFilter`, `CidrAddressFilter` | `contains` (`>>`), `containsOrEqualTo` (`>>=`), `containedBy` (`<<`), `containedByOrEqualTo` (`<<=`), `containsOrContainedBy` (`&&`) |
 
 ```graphql
 {
@@ -145,19 +145,19 @@ Columns follow the usual [indexed-only policy](filtering.md#the-indexed-only-pol
 On top of that, with `indexed_only` on (the default):
 
 - operators no index can serve are left out of the shared inputs:
-  `KeyValueHashFilterOps.containedBy` / `containsDefinedKey`,
-  `LtreeFilterOps.ancestorOfAny` / `descendantOfAny`,
-  `LtreeListFilterOps.ancestorOf`;
+  `KeyValueHashFilter.containedBy` / `containsDefinedKey`,
+  `LtreeFilter.ancestorOfAny` / `descendantOfAny`,
+  `LtreeListFilter.ancestorOf`;
 - the unaccent and fuzzystrmatch operators, which no index can serve, are
   offered only on columns listed in `filters.allow_columns`, and so are the
   ltree, hstore and intarray value filters and orderings (`<field>Nlevel`,
   `<field>Value`, `<field>Icount`) and Levenshtein distance ordering;
-- an `int4[]` column takes `IntListIntarrayFilterOps` only when an index
+- an `int4[]` column takes `IntListIntarrayFilter` only when an index
   led by it is a GIN or GiST index (build it with `gin__int_ops` /
   `gist__int_ops`);
-- a text column takes `StringTrgmFilterOps` only when an index led by it is a
+- a text column takes `StringTrgmFilter` only when an index led by it is a
   GIN or GiST index (build it with `gin_trgm_ops` / `gist_trgm_ops`), so the
-  common btree-indexed text column keeps `StringFilterOps`;
+  common btree-indexed text column keeps `StringFilter`;
 - trigram ordering needs a GiST index (only GiST serves the KNN distance
   operators);
 - each vector distance ordering needs an index led by the column that is
@@ -198,6 +198,40 @@ CREATE INDEX ON articles USING gin (search);
 
 pdbr, the REST sibling, offers these searches (as PostgREST does) on columns
 the [indexed-only policy](filtering.md#the-indexed-only-policy) admits.
+
+## References: the `near:` argument
+
+Orderings and score fields that measure a column against a value of the
+client's choosing (trigram similarity, Levenshtein distance, pgvector, cube
+and earthdistance distances, hstore value ordering, and PostGIS distance,
+see [PostGIS](postgis.md#distance-ordering)) read that value from one list
+argument, `near: <Type>NearInput`. It has one field per reference-taking
+column, named after the column and typed by its kind:
+
+| Column | `near:` field type |
+|---|---|
+| `geometry`, `geography` | `GeoJSON` (GeoJSON or WKT) |
+| text with trigram or fuzzystrmatch surface | `String` (the reference text) |
+| `vector`, `halfvec` | `[Float!]` |
+| `sparsevec`, `bit`, `varbit` | `String` (the text form) |
+| `cube` | `Cube` |
+| `earth`, admitted `point` | `LatLonInput` |
+| `hstore` with value ordering | `String` (the key whose value is ordered by) |
+
+```graphql
+{
+  allDocuments(near: {title: "postgres", embedding: [0.12, -0.4, 0.9]}, orderBy: [TITLE_SIMILARITY_DESC]) {
+    nodes { title titleSimilarity embeddingCosineDistance }
+  }
+}
+```
+
+Every list and connection field taking the table's `orderBy` takes `near:`
+(backward relation connections included). An orderBy value or score field
+whose column has no reference in the list's `near:` is an error, `orderBy
+TITLE_SIMILARITY_DESC requires near: {title: …}` (`field titleSimilarity
+requires near: {title: …}`). Score fields are `null` on rows read outside
+such a list (single-row lookups, forward relations, mutation payloads).
 
 ## Full-text rank
 
@@ -292,12 +326,12 @@ exceed it. Lower the bound for long documents read by untrusted callers.
 Text columns with trigram operators also get `<COLUMN>_SIMILARITY_ASC/_DESC`,
 `<COLUMN>_WORD_SIMILARITY_ASC/_DESC` and
 `<COLUMN>_STRICT_WORD_SIMILARITY_ASC/_DESC` orderBy values, and fields taking
-the table's orderBy gain `similarTo: <Type>SimilarToInput`, one reference
-text per column:
+the table's orderBy take the reference text per column in
+[`near:`](#references-the-near-argument):
 
 ```graphql
 {
-  allAccounts(similarTo: {fullName: "Ada Lovlace"}, orderBy: [FULL_NAME_SIMILARITY_DESC], first: 5) {
+  allAccounts(near: {fullName: "Ada Lovlace"}, orderBy: [FULL_NAME_SIMILARITY_DESC], first: 5) {
     nodes { fullName }
   }
 }
@@ -305,7 +339,7 @@ text per column:
 
 `_DESC` puts the most similar rows first. The values compile to the pg_trgm
 distance operators (`<->`, `<->>`, `<->>>`), which a GiST trigram index
-answers directly (nearest-first, like spatial `near:`). Ordering by
+answers directly (nearest-first, like spatial distance). Ordering by
 similarity without a reference text for that column is an error. Combine
 with a `similarTo` filter to drop weak matches.
 
@@ -314,14 +348,14 @@ with a `similarTo` filter to drop weak matches.
 The scores themselves are fields: `<field>Similarity`,
 `<field>WordSimilarity` and `<field>StrictWordSimilarity: Float` (0 to 1,
 higher is more similar) evaluate `similarity`, `word_similarity` and
-`strict_word_similarity` against the `similarTo:` text for the same column
+`strict_word_similarity` against the `near:` text for the same column
 of the list the row was read through:
 
 ```graphql
 {
   allAccounts(
     filter: {fullName: {similarTo: "Ada Lovlace"}}
-    similarTo: {fullName: "Ada Lovlace"}
+    near: {fullName: "Ada Lovlace"}
     orderBy: [FULL_NAME_SIMILARITY_DESC]
     first: 5
   ) {
@@ -330,11 +364,12 @@ of the list the row was read through:
 }
 ```
 
-A field is `null` when the list has no reference for its column, and for
-rows read outside such a list (single-row lookups, forward relations,
-mutation payloads). The fields exist on every column that takes the trigram
-operators (a GIN or GiST trigram index, or an allowlisted column, under
-`filters.indexed_only`), so `similarTo:` also names columns that have
+Selecting a field through a list without a reference for its column is an
+error; rows read outside such a list (single-row lookups, forward
+relations, mutation payloads) read `null`. The fields exist on every column
+that takes the trigram operators (a GIN or GiST trigram index, or an
+allowlisted column, under `filters.indexed_only`), so `near:` also names
+columns that have
 similarity fields but no similarity ordering (a GIN-indexed column). They
 are projections of the returned rows: `@omit order` keeps them, `@omit
 read` removes them, and the cost estimator prices each like a column.
@@ -364,8 +399,8 @@ case:
 index over an `IMMUTABLE` wrapper does not match what pdbq emits). With
 `filters.indexed_only` on (the default) they are therefore offered only on
 columns listed in `filters.allow_columns`; with it off, on every text column.
-The column then takes `StringUnaccentFilterOps`, or
-`StringTrgmUnaccentFilterOps` when it also takes the trigram operators; other
+The column then takes `StringUnaccentFilter`, or
+`StringTrgmUnaccentFilter` when it also takes the trigram operators; other
 text columns keep their input, so a database without unaccent, or without an
 admitted column, gets the schema it got before. pdbq calls the two-argument
 `unaccent('"ext"."unaccent"'::regdictionary, ...)`, so the dictionary
@@ -385,7 +420,7 @@ changes, and pdbq does not need it to run.
 Vectors have no meaningful scalar comparison, so like spatial columns they
 get no `equalTo`/`lessThan`/`in` operators, no `condition:` field, no
 `distinctOn:` value and no `<COLUMN>_ASC` ordering; their filter input,
-`VectorFilterOps`, holds `isNull` only. What they get is nearest-neighbour
+`VectorFilter`, holds `isNull` only. What they get is nearest-neighbour
 ordering:
 
 | orderBy value | pgvector operator |
@@ -395,13 +430,13 @@ ordering:
 | `<COLUMN>_COSINE_DISTANCE_ASC/_DESC` | `<=>` (1 - cosine similarity) |
 | `<COLUMN>_L1_DISTANCE_ASC/_DESC` | `<+>` (taxicab; pgvector 0.7 and later) |
 
-Fields taking the table's orderBy gain `nearVector: <Type>NearVectorInput`,
-one reference vector per column with distance ordering (`[Float!]`, or a
-`String` for `sparsevec`):
+Fields taking the table's orderBy take one reference vector per column in
+[`near:`](#references-the-near-argument) (`[Float!]`, or a `String` for
+`sparsevec`):
 
 ```graphql
 {
-  allItems(nearVector: {embedding: [0.12, -0.4, 0.9]}, orderBy: [EMBEDDING_COSINE_DISTANCE_ASC], first: 10) {
+  allItems(near: {embedding: [0.12, -0.4, 0.9]}, orderBy: [EMBEDDING_COSINE_DISTANCE_ASC], first: 10) {
     nodes { id embedding }
   }
 }
@@ -424,17 +459,17 @@ hstore and intarray values are, see [below](#ltree-paths)).
 ### Distance fields
 
 Every readable vector column gets one `Float` field per metric, measured
-from the `nearVector:` reference for that column of the list the row was
+from the `near:` reference for that column of the list the row was
 read through: `<field>L2Distance`, `<field>NegativeInnerProduct`,
 `<field>CosineDistance` and `<field>L1Distance` (pgvector 0.7 and later).
-They are `null` without a reference and for rows read outside such a list,
-and exist whether or not the metric's ordering is offered, so `nearVector:`
-names every vector column (a reference for a column without ordering only
+They are an error without a reference and `null` for rows read outside such
+a list, and exist whether or not the metric's ordering is offered, so
+`near:` names every vector column (a reference for a column without ordering only
 feeds its fields):
 
 ```graphql
 {
-  allItems(nearVector: {embedding: [0.12, -0.4, 0.9]}, orderBy: [EMBEDDING_COSINE_DISTANCE_ASC], first: 10) {
+  allItems(near: {embedding: [0.12, -0.4, 0.9]}, orderBy: [EMBEDDING_COSINE_DISTANCE_ASC], first: 10) {
     nodes { id embeddingCosineDistance }
   }
 }
@@ -443,8 +478,8 @@ feeds its fields):
 ### Distance thresholds
 
 "Similar enough" cut-offs are filters: on columns the policy admits them
-for, the filter takes `VectorDistanceFilterOps` (`vector`, `halfvec`) or
-`SparseVectorDistanceFilterOps` (`sparsevec`), `isNull` plus one
+for, the filter takes `VectorDistanceFilter` (`vector`, `halfvec`) or
+`SparseVectorDistanceFilter` (`sparsevec`), `isNull` plus one
 `<distance>LessThan` operator per metric, each taking its own reference and
 an exclusive bound:
 
@@ -452,7 +487,7 @@ an exclusive bound:
 {
   allItems(
     filter: {embedding: {cosineDistanceLessThan: {vector: [0.12, -0.4, 0.9], distance: 0.2}}}
-    nearVector: {embedding: [0.12, -0.4, 0.9]}
+    near: {embedding: [0.12, -0.4, 0.9]}
     orderBy: [EMBEDDING_COSINE_DISTANCE_ASC]
     first: 10
   ) { nodes { id embeddingCosineDistance } }
@@ -471,7 +506,7 @@ The operand is `VectorDistanceInput {vector: [Float!]!, distance: Float!}`
 indexes serve ordering, not these predicates, so on their own they scan;
 with `filters.indexed_only` on they are offered only on columns listed in
 `filters.allow_columns` (every vector column with it off), and other
-columns keep `VectorFilterOps`. Combined with nearest-first ordering by the
+columns keep `VectorFilter`. Combined with nearest-first ordering by the
 same distance and `first:`, an approximate index scan feeds the filter.
 
 ### Bit vectors
@@ -481,7 +516,7 @@ embeddings) take pgvector's Hamming (`<~>`) and Jaccard (`<%>`) distances:
 `<COLUMN>_HAMMING_DISTANCE_ASC/_DESC` and `<COLUMN>_JACCARD_DISTANCE_ASC/_DESC`
 orderings, `<field>HammingDistance` / `<field>JaccardDistance` fields and
 `hammingDistanceLessThan` / `jaccardDistanceLessThan` thresholds (on
-`BitDistanceFilterOps`, `StringFilterOps` plus the two). References are bit
+`BitDistanceFilter`, `StringFilter` plus the two). References are bit
 strings (`"1010"`), sent as `$1::varbit`; one of another length is rejected
 by pgvector. A bit column gets this surface only where an index serves a
 metric (HNSW with `bit_hamming_ops` / `bit_jaccard_ops`, IVFFlat with
@@ -499,7 +534,7 @@ CREATE INDEX ON items USING hnsw (code bit_hamming_ops);
 
 ```graphql
 {
-  allItems(nearVector: {code: "0110…", embedding: [0.12, …]}, orderBy: [CODE_HAMMING_DISTANCE_ASC], first: 100) {
+  allItems(near: {code: "0110…", embedding: [0.12, …]}, orderBy: [CODE_HAMMING_DISTANCE_ASC], first: 100) {
     nodes { id codeHammingDistance embeddingCosineDistance }
   }
 }
@@ -531,12 +566,12 @@ every input is one text parameter cast to the type
 (`$1::"ext".cube`). Output is built from the value's text form in the same
 statement.
 
-`CubeFilterOps` holds `equalTo`, `notEqualTo` and `isNull` (cube's own
+`CubeFilter` holds `equalTo`, `notEqualTo` and `isNull` (cube's own
 equality) plus `contains` (`@>`), `containedBy` (`<@`) and `overlaps` (`&&`),
 each taking a `Cube`. Like vectors, cube columns get no `condition:` field,
 `distinctOn:` value or plain `<COLUMN>_ASC` ordering: cube's btree order is a
 storage order with no meaning. What they get is distance ordering against
-the `nearVector:` reference for the column, which takes a `Cube`:
+the column's `near:` reference, a `Cube`:
 
 | orderBy value | cube operator | field |
 |---|---|---|
@@ -548,7 +583,7 @@ the `nearVector:` reference for the column, which takes a `Cube`:
 {
   allShapes(
     filter: {pos: {l2DistanceLessThan: {cube: [1, 2], distance: 5}, containedBy: [[0, 0], [10, 10]]}}
-    nearVector: {pos: [1, 2]}
+    near: {pos: [1, 2]}
     orderBy: [POS_L2_DISTANCE_ASC]
     first: 10
   ) { nodes { id pos posL2Distance } }
@@ -557,7 +592,7 @@ the `nearVector:` reference for the column, which takes a `Cube`:
 
 A GiST index on the column serves all of it: the operators directly, the
 orderings as KNN scans (`ORDER BY pos <-> $1::cube LIMIT n`), and the
-`<distance>LessThan: {cube, distance}` thresholds of `CubeDistanceFilterOps`
+`<distance>LessThan: {cube, distance}` thresholds of `CubeDistanceFilter`
 through an overlap prefilter with the reference enlarged by the distance
 (`pos && cube_enlarge($1, $2, cube_dim($1)) AND (pos <-> $1) < $2`). The
 KNN scans need PostgreSQL 17 or later, which adds the primary-key
@@ -566,7 +601,7 @@ order; earlier versions sort the filtered rows instead (the same holds for
 the earth ordering below). Under
 `filters.indexed_only` the orderings and thresholds are therefore offered only
 on columns led by a GiST index (or allowlisted); other filterable cube
-columns keep `CubeFilterOps`. The distance fields come with every readable
+columns keep `CubeFilter`. The distance fields come with every readable
 cube column, `null` without a reference, and the cost estimator prices each
 like a column. Cube columns take no aggregates either.
 
@@ -577,20 +612,20 @@ With `earthdistance` (which needs `cube`) installed, columns declared as its
 (degrees) with input `LatLonInput`; an `earth` value is written through
 `ll_to_earth($1::float8, $2::float8)` and read back with `latitude()` and
 `longitude()`. Latitude must lie within ±90 and longitude within ±180.
-`LatLonFilterOps` holds `isNull`; `LatLonDistanceFilterOps` adds the radius
+`LatLonFilter` holds `isNull`; `LatLonDistanceFilter` adds the radius
 filter `earthDistanceLessThan: {lat, lon, distance}` (metres), compiled to the
 index-friendly `earth_box(ll_to_earth($1, $2), $3) @> col` prefilter refined
 by `earth_distance(col, ll_to_earth($1, $2)) < $3`.
 
 Distance to a reference location is an ordering and a score. Fields taking
-the table's orderBy gain `nearPoint: <Type>NearPointInput`, one `LatLonInput`
-per earth (and admitted point) column:
+the table's orderBy take one `LatLonInput` per earth (and admitted point)
+column in [`near:`](#references-the-near-argument):
 
 ```graphql
 {
   allStores(
     filter: {location: {earthDistanceLessThan: {lat: 51.5074, lon: -0.1278, distance: 5000}}}
-    nearPoint: {location: {lat: 51.5074, lon: -0.1278}}
+    near: {location: {lat: 51.5074, lon: -0.1278}}
     orderBy: [LOCATION_EARTH_DISTANCE_ASC]
     first: 10
   ) { nodes { id location { lat lon } locationEarthDistance } }
@@ -617,8 +652,8 @@ schema-qualifies everything it emits.
 `point` columns holding (longitude, latitude) take earthdistance's `<@>`
 operator, in statute miles: `<COLUMN>_EARTH_DISTANCE_MILES_ASC/_DESC`,
 `<field>EarthDistanceMiles` and `earthDistanceMilesLessThan: {lat, lon,
-distance}` on `PointDistanceFilterOps` (`StringFilterOps` plus the radius
-filter), all against `nearPoint:`. No index serves `<@>`, so like the bit
+distance}` on `PointDistanceFilter` (`StringFilter` plus the radius
+filter), all against `near:`. No index serves `<@>`, so like the bit
 surface of pgvector it is generated only where the policy admits unindexed
 surface (an allowlisted column, or `indexed_only` off): installing
 earthdistance leaves other point columns' schema unchanged. For
@@ -642,17 +677,16 @@ comparisons:
 {
   allPeople(
     filter: {lastName: {levenshteinDistanceLessThan: {text: "Jonson", distance: 3}}}
-    similarTo: {lastName: "Jonson"}
+    near: {lastName: "Jonson"}
     orderBy: [LAST_NAME_LEVENSHTEIN_DISTANCE_ASC]
   ) { nodes { lastName lastNameLevenshteinDistance } }
 }
 ```
 
 `<COLUMN>_LEVENSHTEIN_DISTANCE_ASC/_DESC` orders by `levenshtein(col,
-similarTo)` (`_ASC` is nearest first) and `<field>LevenshteinDistance: Int`
-selects it, both against the list's `similarTo:` text for the column, like
-the trigram similarities; ordering without one is an error and the field is
-`null` without it. fuzzystrmatch rejects arguments longer than 255
+reference)` (`_ASC` is nearest first) and `<field>LevenshteinDistance: Int`
+selects it, both against the list's `near:` text for the column, like the
+trigram similarities; either is an error without it. fuzzystrmatch rejects arguments longer than 255
 characters (`metaphone`: 255 bytes): a longer reference text is a client
 error, and a longer column value has no distance (`null`, sorted last) and
 matches neither an operator nor its negation under `not`. Levenshtein
@@ -663,9 +697,9 @@ No index serves these operators (an expression index such as
 `(soundex(col))` does not match what pdbq emits), so under
 `filters.indexed_only` they, the ordering and the distance field are offered
 only on columns listed in `filters.allow_columns`; with it off, on every
-text column. The column then takes the `…FuzzyFilterOps` variant of its
-input, named after everything it adds to `StringFilterOps`
-(`StringTrgmUnaccentFuzzyFilterOps` with pg_trgm and unaccent too).
+text column. The column then takes the `…FuzzyFilter` variant of its
+input, named after everything it adds to `StringFilter`
+(`StringTrgmUnaccentFuzzyFilter` with pg_trgm and unaccent too).
 
 ## hstore values
 
@@ -677,19 +711,19 @@ value of one key (`col -> $1`), `null` when the key is absent or its value is
 {
   allProducts(
     filter: {attrsValue: {key: "color", in: ["red", "blue"]}}
-    hstoreKey: {attrs: "size"}
+    near: {attrs: "size"}
     orderBy: [ATTRS_VALUE_ASC]
   ) { nodes { id color: attrsValue(key: "color") size: attrsValue(key: "size") } }
 }
 ```
 
 `<field>Value: KeyValueHashValueFilter` takes the `key` plus the
-`StringFilterOps` comparisons of its value (`isNull: true` matches rows
+`StringFilter` comparisons of its value (`isNull: true` matches rows
 without the key); several keys combine with `and`. `<COLUMN>_VALUE_ASC/_DESC`
 sorts by the value of the key named for the column in the list's
-`hstoreKey: <Type>HstoreKeyInput` argument (`null` values last), and is an
-error without it. Keyset cursors work with it. `containsDefinedKey: "k"`
-(`defined(col, k)`) on `KeyValueHashFilterOps` matches a key present with a
+[`near:`](#references-the-near-argument) argument (`null` values last), and
+is an error without it. Keyset cursors work with it. `containsDefinedKey: "k"`
+(`defined(col, k)`) on `KeyValueHashFilter` matches a key present with a
 non-null value.
 
 ## ltree paths
@@ -703,7 +737,7 @@ String` (the labels from `offset`, counted from the end when negative,
 the row's path instead of ltree's error; a negative `length` is a client
 error). `ltree[]` columns get `<field>Lca: String`, the longest common
 ancestor of the non-null elements. `<field>Nlevel` is also a filter
-(`<field>Nlevel: IntFilterOps`) and an ordering (`<COLUMN>_NLEVEL_ASC/_DESC`):
+(`<field>Nlevel: IntFilter`) and an ordering (`<COLUMN>_NLEVEL_ASC/_DESC`):
 
 ```graphql
 {
@@ -717,7 +751,7 @@ ancestor of the non-null elements. `<field>Nlevel` is also a filter
 
 With the `intarray` extension installed, `int4[]` columns can take
 `matchesQueryInt`, intarray's boolean query match (`col @@ '1&(2|3)'::query_int`;
-`&`, `|`, `!` and parentheses), on `IntListIntarrayFilterOps`. A GIN index
+`&`, `|`, `!` and parentheses), on `IntListIntarrayFilter`. A GIN index
 built with `gin__int_ops` (or GiST with `gist__int_ops` / `gist__intbig_ops`)
 serves it, so under `filters.indexed_only` the column needs a GIN or GiST
 index led by it (or an allowlist entry). A malformed query is a client
@@ -763,20 +797,19 @@ plugin's surface.
 
 | Key | Default | Effect |
 |---|---|---|
-| `plugins.settings.contrib.filters` | `true` | vocabulary operators, `StringTrgmFilterOps`, the unaccent, fuzzystrmatch and intarray inputs, the distance-threshold inputs, the value filters (`<field>Nlevel`, `<field>Value`, `<field>Icount`), `<field>Rank` fields (and so rank ordering) |
-| `plugins.settings.contrib.ordering` | `true` | `_RANK_`, `_SIMILARITY_`, `_LEVENSHTEIN_DISTANCE_`, `_NLEVEL_`, `_ICOUNT_`, `_VALUE_`, vector and cube `_DISTANCE_`/`_INNER_PRODUCT_` and earthdistance `_EARTH_DISTANCE_`/`_EARTH_DISTANCE_MILES_` orderBy values, the similarity and distance fields and the `similarTo:`, `nearVector:`, `nearPoint:` and `hstoreKey:` arguments |
+| `plugins.settings.contrib.filters` | `true` | vocabulary operators, `StringTrgmFilter`, the unaccent, fuzzystrmatch and intarray inputs, the distance-threshold inputs, the value filters (`<field>Nlevel`, `<field>Value`, `<field>Icount`), `<field>Rank` fields (and so rank ordering) |
+| `plugins.settings.contrib.ordering` | `true` | `_RANK_`, `_SIMILARITY_`, `_LEVENSHTEIN_DISTANCE_`, `_NLEVEL_`, `_ICOUNT_`, `_VALUE_`, vector and cube `_DISTANCE_`/`_INNER_PRODUCT_` and earthdistance `_EARTH_DISTANCE_`/`_EARTH_DISTANCE_MILES_` orderBy values, the similarity and distance fields and their `near:` references |
 
 `@omit filter` / `@omit order` on a column removes its filter / ordering
 surface (the similarity, distance and value fields stay); `@omit read` also
 removes its rank, similarity, distance and value fields and its rank,
 similarity and distance orderings, which measure the value against a
 reference of the client's choosing. Schema contracts hide columns the same
-way. If a table's `<Type>NearVectorInput` or `<Type>NearPointInput` name is
-already taken, its vector and cube or earthdistance ordering is skipped and
-the builder logs a warning; the same goes for `<Type>HstoreKeyInput` (hstore
-value ordering), the text operator inputs, `TextDistanceInput`,
-`KeyValueHashValueFilter`, `IntListIntarrayFilterOps` and the
-distance-threshold inputs and operands (`CubeDistanceFilterOps`,
+way. If a table's `<Type>NearInput` name is already taken, its reference
+orderings and score fields are skipped and the builder logs a warning; the
+same goes for the text operator inputs, `TextDistanceInput`,
+`KeyValueHashValueFilter`, `IntListIntarrayFilter` and the
+distance-threshold inputs and operands (`CubeDistanceFilter`,
 `LatLonDistanceInput`, ...), and for a value field or filter field whose name
 a column already takes. A table taking the `Cube`, `LatLon` or `LatLonInput`
 name makes cube or earth columns fall back to `String`.

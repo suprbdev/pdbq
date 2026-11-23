@@ -7,12 +7,12 @@
 //     {some|none|every} wrapper over the child's filter
 //     (users: {postsByAuthorId: {some: {published: {eq: true}}}}). Both
 //     compile to EXISTS subqueries inside the single statement. Each relation
-//     also gets a Boolean existence variant — <rel>Exists for forward FKs
-//     (posts: {authorExists: true}), <rel>Exist for reverse
-//     (users: {postsByAuthorIdExist: false}) — compiling to a bare
-//     (NOT) EXISTS over the join. A forward PERIOD FK (PostgreSQL 18
-//     temporal key) may reference several rows, so it gets the reverse
-//     shape: a {some|none|every} wrapper and a <rel>Exist variant.
+//     also gets a Boolean existence variant, <rel>Exists
+//     (posts: {authorExists: true}, users: {postsByAuthorIdExists: false}),
+//     compiling to a bare (NOT) EXISTS over the join. A forward PERIOD FK
+//     (PostgreSQL 18 temporal key) may reference several rows, so it gets
+//     the reverse shape: a {some|none|every} wrapper and a <rel>Exists
+//     variant.
 //   - relational ordering: one-level orderBy over related rows, named
 //     REL__COLUMN_{ASC,DESC} with a double underscore separating relation and
 //     column (posts: orderBy: [AUTHOR__NAME_ASC]). Forward FKs sort by the
@@ -45,7 +45,8 @@
 //     orderBy values.
 //   - with plugins.settings.advanced_filters.relations_opt_in (or
 //     computed_opt_in) set, the default flips: only foreign keys / computed
-//     functions tagged "@filterable" (alias "@sortable") get filter surface.
+//     functions tagged "@filterable" get filter surface, and only those
+//     tagged "@sortable" orderBy values.
 //   - "@fieldName" / "@foreignFieldName" renames apply automatically (they
 //     flow through the shared inflection pipeline).
 //
@@ -71,7 +72,8 @@ type Plugin struct {
 	computed      bool
 	relationOrder bool
 	// *OptIn flip the per-object default: only @filterable-tagged foreign
-	// keys / computed functions get filter surface.
+	// keys / computed functions get filter surface, only @sortable-tagged
+	// ones orderBy values.
 	relationsOptIn bool
 	computedOptIn  bool
 }
@@ -81,11 +83,11 @@ const Name = "advanced_filters"
 
 // Settings is the plugins.settings.advanced_filters section.
 type Settings struct {
-	Relations      bool `koanf:"relations" doc:"Relation filters (forward, reverse some/none/every and the <rel>Exists/<rel>Exist variants)."`
+	Relations      bool `koanf:"relations" doc:"Relation filters (forward, reverse some/none/every and the <rel>Exists variants)."`
 	Computed       bool `koanf:"computed" doc:"Filtering and ordering by computed columns (single row-argument stable functions; needs schema.functions). Computed filters are not index-backed, so they bypass filters.indexed_only."`
 	RelationOrder  bool `koanf:"relation_order" doc:"One-level relational orderBy values (REL__COLUMN_ASC/_DESC); off as well when relations is off."`
-	RelationsOptIn bool `koanf:"relations_opt_in" doc:"Only foreign keys tagged @filterable (alias @sortable) get relation filters and orderings."`
-	ComputedOptIn  bool `koanf:"computed_opt_in" doc:"Only computed-column functions tagged @filterable (alias @sortable) get filter and orderBy surface."`
+	RelationsOptIn bool `koanf:"relations_opt_in" doc:"Only foreign keys tagged @filterable get relation filters, and only those tagged @sortable relational orderBy values."`
+	ComputedOptIn  bool `koanf:"computed_opt_in" doc:"Only computed-column functions tagged @filterable get filter fields, and only those tagged @sortable orderBy values."`
 }
 
 // DefaultSettings returns the documented defaults: every half on, opt-in
@@ -106,12 +108,12 @@ func New(s Settings) *Plugin {
 }
 
 // filterOmits reports which halves of the filter surface a smart comment
-// removes, honoring the opt-in mode.
+// removes, honoring the opt-in mode, where the filter half needs
+// @filterable and the order half @sortable.
 func filterOmits(comment string, optIn bool) (skipFilter, skipOrder bool) {
 	tags, _ := smarttags.Parse(comment)
-	optedOut := optIn && !tags.Has("filterable") && !tags.Has("sortable")
-	skipFilter = optedOut || omit.Hides(comment, omit.Filter)
-	skipOrder = optedOut || omit.Hides(comment, omit.Order)
+	skipFilter = optIn && !tags.Has("filterable") || omit.Hides(comment, omit.Filter)
+	skipOrder = optIn && !tags.Has("sortable") || omit.Hides(comment, omit.Order)
 	return skipFilter, skipOrder
 }
 
@@ -205,7 +207,7 @@ func (p *Plugin) addRelationFilters(b *schema.Builder) {
 	}
 }
 
-// addToManyFilter adds the quantified filter field and its <rel>Exist
+// addToManyFilter adds the quantified filter field and its <rel>Exists
 // variant for a to-many relation: a reverse FK, or a forward PERIOD FK
 // (forward set) whose child row may reference several rows.
 func addToManyFilter(in *schema.Input, relName string, related *introspect.Table, fk *introspect.ForeignKey, filterType, wrapper string, forward bool) {
@@ -221,7 +223,7 @@ func addToManyFilter(in *schema.Input, relName string, related *introspect.Table
 			Relation:    &schema.FilterRelation{Forward: forward, FK: fk, Table: related, FilterType: filterType},
 		})
 	}
-	if existsName := relName + "Exist"; in.Field(existsName) == nil {
+	if existsName := relName + "Exists"; in.Field(existsName) == nil {
 		in.AddField(&schema.InputField{
 			Name:        existsName,
 			Type:        "Boolean",
@@ -344,7 +346,7 @@ func (p *Plugin) addComputed(b *schema.Builder) {
 			}
 			in.AddField(&schema.InputField{
 				Name:        fieldName,
-				Type:        b.FilterOpsInputFor(ret),
+				Type:        b.FilterInputFor(ret),
 				Description: "Filter on the computed column " + fieldName + " (not index-backed).",
 				Computed:    f,
 			})

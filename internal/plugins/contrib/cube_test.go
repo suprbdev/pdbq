@@ -31,16 +31,16 @@ func TestCubeEarthTypeMapping(t *testing.T) {
 	if !strings.Contains(sdl, "scalar Cube") || b.Objects["LatLon"] == nil || b.Inputs["LatLonInput"] == nil {
 		t.Error("Cube, LatLon or LatLonInput not declared")
 	}
-	if got := b.Inputs["LatLonFilterOps"].Fields; len(got) != 1 || got[0].Name != "isNull" {
-		t.Errorf("LatLonFilterOps fields: %+v", got)
+	if got := b.Inputs["LatLonFilter"].Fields; len(got) != 1 || got[0].Name != "isNull" {
+		t.Errorf("LatLonFilter fields: %+v", got)
 	}
 	for _, op := range []string{"equalTo", "notEqualTo", "isNull", "contains", "containedBy", "overlaps"} {
-		if fieldType(t, b, "CubeFilterOps", op) == "" {
-			t.Errorf("CubeFilterOps.%s missing", op)
+		if fieldType(t, b, "CubeFilter", op) == "" {
+			t.Errorf("CubeFilter.%s missing", op)
 		}
 	}
-	if got := fieldType(t, b, "CubeFilterOps", "contains"); got != "Cube" {
-		t.Errorf("CubeFilterOps.contains operand = %s", got)
+	if got := fieldType(t, b, "CubeFilter", "contains"); got != "Cube" {
+		t.Errorf("CubeFilter.contains operand = %s", got)
 	}
 	for _, f := range []string{"pos", "spot"} {
 		if c := b.Inputs["LocationCondition"]; c != nil && c.Field(f) != nil {
@@ -71,7 +71,7 @@ func TestCubeEarthTypeMapping(t *testing.T) {
 
 func TestCubeEarthFilterPolicy(t *testing.T) {
 	b := buildWith(t, contribfixture.Catalog(), nil, true, true)
-	for field, want := range map[string]string{"pos": "CubeDistanceFilterOps", "box": "CubeFilterOps", "spot": "LatLonDistanceFilterOps"} {
+	for field, want := range map[string]string{"pos": "CubeDistanceFilter", "box": "CubeFilter", "spot": "LatLonDistanceFilter"} {
 		if got := fieldType(t, b, "LocationFilter", field); got != want {
 			t.Errorf("LocationFilter.%s = %s, want %s", field, got, want)
 		}
@@ -82,45 +82,45 @@ func TestCubeEarthFilterPolicy(t *testing.T) {
 		}
 	}
 	for _, op := range []string{"l2DistanceLessThan", "l1DistanceLessThan", "chebyshevDistanceLessThan", "contains", "equalTo"} {
-		if fieldType(t, b, "CubeDistanceFilterOps", op) == "" {
-			t.Errorf("CubeDistanceFilterOps.%s missing", op)
+		if fieldType(t, b, "CubeDistanceFilter", op) == "" {
+			t.Errorf("CubeDistanceFilter.%s missing", op)
 		}
 	}
 	if got := fieldType(t, b, "CubeDistanceInput", "cube"); got != "Cube!" {
 		t.Errorf("CubeDistanceInput.cube = %s", got)
 	}
-	if got := fieldType(t, b, "LatLonDistanceFilterOps", "earthDistanceLessThan"); got != "LatLonDistanceInput" {
-		t.Errorf("LatLonDistanceFilterOps.earthDistanceLessThan = %s", got)
+	if got := fieldType(t, b, "LatLonDistanceFilter", "earthDistanceLessThan"); got != "LatLonDistanceInput" {
+		t.Errorf("LatLonDistanceFilter.earthDistanceLessThan = %s", got)
 	}
-	if b.Inputs["PointDistanceFilterOps"] != nil {
-		t.Error("PointDistanceFilterOps declared without an admitted point column")
+	if b.Inputs["PointDistanceFilter"] != nil {
+		t.Error("PointDistanceFilter declared without an admitted point column")
 	}
 
 	allowed, _ := buildAllowing(t, contribfixture.Catalog(), map[string][]string{"public.locations": {"home", "here"}})
-	if got := fieldType(t, allowed, "LocationFilter", "home"); got != "LatLonDistanceFilterOps" {
+	if got := fieldType(t, allowed, "LocationFilter", "home"); got != "LatLonDistanceFilter" {
 		t.Errorf("allowlisted home = %s", got)
 	}
-	if got := fieldType(t, allowed, "LocationFilter", "here"); got != "PointDistanceFilterOps" {
+	if got := fieldType(t, allowed, "LocationFilter", "here"); got != "PointDistanceFilter" {
 		t.Errorf("allowlisted here = %s", got)
 	}
 	for _, op := range []string{"equalTo", "isNull", "earthDistanceMilesLessThan"} {
-		if fieldType(t, allowed, "PointDistanceFilterOps", op) == "" {
-			t.Errorf("PointDistanceFilterOps.%s missing", op)
+		if fieldType(t, allowed, "PointDistanceFilter", op) == "" {
+			t.Errorf("PointDistanceFilter.%s missing", op)
 		}
 	}
 
 	off := buildWith(t, contribfixture.Catalog(), nil, false, true)
-	for field, want := range map[string]string{"box": "CubeDistanceFilterOps", "home": "LatLonDistanceFilterOps", "there": "PointDistanceFilterOps"} {
+	for field, want := range map[string]string{"box": "CubeDistanceFilter", "home": "LatLonDistanceFilter", "there": "PointDistanceFilter"} {
 		if got := fieldType(t, off, "LocationFilter", field); got != want {
 			t.Errorf("indexed_only off: LocationFilter.%s = %s, want %s", field, got, want)
 		}
 	}
 
 	noFilters := buildWith(t, contribfixture.Catalog(), func(s *Settings) { s.Filters = false }, true, true)
-	if got := fieldType(t, noFilters, "LocationFilter", "pos"); got != "CubeFilterOps" {
+	if got := fieldType(t, noFilters, "LocationFilter", "pos"); got != "CubeFilter" {
 		t.Errorf("filters: false: pos = %s", got)
 	}
-	if fieldType(t, noFilters, "CubeFilterOps", "contains") != "" {
+	if fieldType(t, noFilters, "CubeFilter", "contains") != "" {
 		t.Error("filters: false kept the cube operators")
 	}
 }
@@ -143,37 +143,31 @@ func TestCubeEarthOrdering(t *testing.T) {
 		}
 	}
 	for _, v := range b.Enums["LocationsOrderBy"].Values {
-		if v.Name == "SPOT_EARTH_DISTANCE_ASC" && (v.Vector != "earthDistance" || v.Reference != "nearPoint") {
+		if v.Name == "SPOT_EARTH_DISTANCE_ASC" && v.Vector != "earthDistance" {
 			t.Errorf("SPOT_EARTH_DISTANCE_ASC binding: %+v", v)
 		}
-		if v.Name == "POS_CHEBYSHEV_DISTANCE_ASC" && (v.Vector != "chebyshevDistance" || v.Reference != "nearVector") {
+		if v.Name == "POS_CHEBYSHEV_DISTANCE_ASC" && v.Vector != "chebyshevDistance" {
 			t.Errorf("POS_CHEBYSHEV_DISTANCE_ASC binding: %+v", v)
 		}
 	}
-	for field, want := range map[string]string{"pos": "Cube", "box": "Cube"} {
-		if got := fieldType(t, b, "LocationNearVectorInput", field); got != want {
-			t.Errorf("LocationNearVectorInput.%s = %q", field, got)
+	for field, want := range map[string]string{"pos": "Cube", "box": "Cube", "spot": "LatLonInput", "home": "LatLonInput", "here": ""} {
+		if got := fieldType(t, b, "LocationNearInput", field); got != want {
+			t.Errorf("LocationNearInput.%s = %q, want %q", field, got, want)
 		}
 	}
-	for field, want := range map[string]string{"spot": "LatLonInput", "home": "LatLonInput", "here": ""} {
-		if got := fieldType(t, b, "LocationNearPointInput", field); got != want {
-			t.Errorf("LocationNearPointInput.%s = %q, want %q", field, got, want)
-		}
+	if !hasArg(b.Query.Field("allLocations"), "near") {
+		t.Error("allLocations lacks near:")
 	}
-	all := b.Query.Field("allLocations")
-	if !hasArg(all, "nearVector") || !hasArg(all, "nearPoint") {
-		t.Error("allLocations lacks nearVector: or nearPoint:")
-	}
-	if hasArg(b.Query.Field("allEmbeddings"), "nearPoint") {
-		t.Error("nearPoint: on a table without earth or point columns")
+	if fieldType(t, b, "EmbeddingNearInput", "spot") != "" {
+		t.Error("an earth reference on a table without earth or point columns")
 	}
 
 	scores := scoreFields(b, "Location")
 	for name, want := range map[string]schema.Score{
-		"posL2Distance":        {Arg: "nearVector", Expr: "l2Distance"},
-		"boxChebyshevDistance": {Arg: "nearVector", Expr: "chebyshevDistance"},
-		"spotEarthDistance":    {Arg: "nearPoint", Expr: "earthDistance"},
-		"homeEarthDistance":    {Arg: "nearPoint", Expr: "earthDistance"},
+		"posL2Distance":        {Expr: "l2Distance"},
+		"boxChebyshevDistance": {Expr: "chebyshevDistance"},
+		"spotEarthDistance":    {Expr: "earthDistance"},
+		"homeEarthDistance":    {Expr: "earthDistance"},
 	} {
 		if got, ok := scores[name]; !ok || got != want {
 			t.Errorf("score %s = %+v (present %v), want %+v", name, got, ok, want)
@@ -187,15 +181,15 @@ func TestCubeEarthOrdering(t *testing.T) {
 	if got := enumValues(allowed, "LocationsOrderBy", "HERE_EARTH"); len(got) != 2 {
 		t.Errorf("allowlisted here orderings = %v", got)
 	}
-	if got := fieldType(t, allowed, "LocationNearPointInput", "here"); got != "LatLonInput" {
-		t.Errorf("LocationNearPointInput.here = %q", got)
+	if got := fieldType(t, allowed, "LocationNearInput", "here"); got != "LatLonInput" {
+		t.Errorf("LocationNearInput.here = %q", got)
 	}
 	if _, ok := scoreFields(allowed, "Location")["hereEarthDistanceMiles"]; !ok {
 		t.Error("allowlisted point column lacks its score")
 	}
 
 	noOrder := buildWith(t, contribfixture.Catalog(), func(s *Settings) { s.Ordering = false }, true, true)
-	if len(enumValues(noOrder, "LocationsOrderBy", "POS_")) != 0 || hasArg(noOrder.Query.Field("allLocations"), "nearPoint") {
+	if len(enumValues(noOrder, "LocationsOrderBy", "POS_")) != 0 || hasArg(noOrder.Query.Field("allLocations"), "near") {
 		t.Error("ordering: false kept the distance ordering")
 	}
 }
@@ -236,18 +230,18 @@ func TestCubeEarthOmit(t *testing.T) {
 				t.Errorf("%s: %s orderings present = %v", tag, prefix, got)
 			}
 		}
-		if got := fieldType(t, b, "LocationFilter", "pos") == "CubeDistanceFilterOps"; got == (read || filter) {
+		if got := fieldType(t, b, "LocationFilter", "pos") == "CubeDistanceFilter"; got == (read || filter) {
 			t.Errorf("%s: pos thresholds present = %v", tag, got)
 		}
-		if got := fieldType(t, b, "LocationFilter", "spot") == "LatLonDistanceFilterOps"; got == (read || filter) {
+		if got := fieldType(t, b, "LocationFilter", "spot") == "LatLonDistanceFilter"; got == (read || filter) {
 			t.Errorf("%s: spot radius filter present = %v", tag, got)
 		}
 		obj := b.Objects["Location"]
 		if got := obj.Field("posL2Distance") != nil || obj.Field("spotEarthDistance") != nil; got == read {
 			t.Errorf("%s: distance fields present = %v", tag, got)
 		}
-		if in := b.Inputs["LocationNearPointInput"]; (in != nil && in.Field("spot") != nil) == read {
-			t.Errorf("%s: nearPoint field for spot present = %v", tag, !read)
+		if in := b.Inputs["LocationNearInput"]; (in != nil && in.Field("spot") != nil) == read {
+			t.Errorf("%s: near: field for spot present = %v", tag, !read)
 		}
 	}
 }
@@ -257,14 +251,14 @@ func TestCubeEarthNamesTaken(t *testing.T) {
 		typ   string
 		check func(*schema.Builder) bool
 	}{
-		{"LocationNearPointInput", func(b *schema.Builder) bool {
-			return len(enumValues(b, "LocationsOrderBy", "SPOT_")) == 0 && !hasArg(b.Query.Field("allLocations"), "nearPoint")
+		{"LocationNearInput", func(b *schema.Builder) bool {
+			return len(enumValues(b, "LocationsOrderBy", "SPOT_")) == 0 && !hasArg(b.Query.Field("allLocations"), "near")
 		}},
-		{"CubeDistanceFilterOps", func(b *schema.Builder) bool {
-			return fieldType(t, b, "LocationFilter", "pos") == "CubeFilterOps"
+		{"CubeDistanceFilter", func(b *schema.Builder) bool {
+			return fieldType(t, b, "LocationFilter", "pos") == "CubeFilter"
 		}},
 		{"LatLonDistanceInput", func(b *schema.Builder) bool {
-			return fieldType(t, b, "LocationFilter", "spot") == "LatLonFilterOps"
+			return fieldType(t, b, "LocationFilter", "spot") == "LatLonFilter"
 		}},
 	} {
 		var logs bytes.Buffer
@@ -293,8 +287,8 @@ func TestCubeEarthNamesTaken(t *testing.T) {
 	if got := b.Objects["Location"].Field("spot").Type; got != "String" {
 		t.Errorf("spot with LatLon taken = %s, want String", got)
 	}
-	if b.Inputs["LocationNearPointInput"] != nil || hasArg(b.Query.Field("allLocations"), "nearPoint") {
-		t.Error("nearPoint: added although LatLonInput cannot be declared")
+	if fieldType(t, b, "LocationNearInput", "spot") != "" || fieldType(t, b, "LocationNearInput", "here") != "" {
+		t.Error("an earth reference added although LatLonInput cannot be declared")
 	}
 	if !strings.Contains(logs, "LatLon") {
 		t.Errorf("no warning: %s", logs)

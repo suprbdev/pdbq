@@ -124,7 +124,7 @@ func TestDomainScalars(t *testing.T) {
 		"  lucky: [Int!]\n", "  home: GeoJSON\n", "  handle: String\n",
 		"  rank: PositiveInt\n", "  scoreTwice: PositiveInt\n",
 		"doubleScore(s: Percent): PositiveInt", "firstAlias(a: [Email]): Email", "spotX(s: GeoJSON): Float",
-		"  email: StringFilterOps\n", "  score: IntFilterOps\n",
+		"  email: StringFilter\n", "  score: IntFilter\n",
 	} {
 		if !strings.Contains(sdl, want) {
 			t.Errorf("SDL missing %q", want)

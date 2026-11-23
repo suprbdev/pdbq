@@ -87,10 +87,10 @@ func TestDistanceScore(t *testing.T) {
 	hs := testServer(t, nil)
 	const ref = "SRID=4326;POINT(-0.1 51.5)"
 	res := post(t, hs.URL, `query ($ref: GeoJSON!) {
-		allPlaces(near: {geometry: $ref}, orderBy: [LOCATION_DISTANCE_ASC]) {
+		allPlaces(near: {location: $ref, area: $ref}, orderBy: [LOCATION_DISTANCE_ASC]) {
 			nodes { id locationDistance metres: locationDistance(useSpheroid: true) areaDistance }
 		}
-		none: allPlaces(first: 1) { nodes { id locationDistance } }
+		byId: placeById(id: 1) { locationDistance }
 	}`, map[string]any{"ref": ref})
 	requireNoErrors(t, res)
 	got := scoreRows(t, res.Data["allPlaces"])
@@ -108,10 +108,12 @@ func TestDistanceScore(t *testing.T) {
 			}
 		}
 	}
-	for _, row := range scoreRows(t, res.Data["none"]) {
-		if !math.IsNaN(row["locationDistance"]) {
-			t.Errorf("distance without near: = %v", row["locationDistance"])
-		}
+	if got := normalize(t, res.Data["byId"]); got != `{"locationDistance":null}` {
+		t.Errorf("distance outside a list = %s", res.Data["byId"])
+	}
+	res = post(t, hs.URL, `{allPlaces(first: 1) { nodes { id locationDistance } }}`, nil)
+	if len(res.Errors) == 0 || !strings.Contains(res.Errors[0].Message, "field locationDistance requires near: {location: …}") {
+		t.Errorf("distance without its reference: %+v", res.Errors)
 	}
 }
 
@@ -163,8 +165,7 @@ INSERT INTO ` + scoresSchema + `.items VALUES
 	t.Run("scores", func(t *testing.T) {
 		res := post(t, url, `{
 			allItems(
-				similarTo: {name: "postgres"}
-				nearVector: {embedding: [1, 0.5, 0], code: "100"}
+				near: {name: "postgres", embedding: [1, 0.5, 0], code: "100"}
 				orderBy: [NAME_SIMILARITY_DESC]
 			) {
 				nodes {
@@ -199,13 +200,10 @@ INSERT INTO ` + scoresSchema + `.items VALUES
 		}
 	})
 
-	t.Run("null without the reference", func(t *testing.T) {
-		res := post(t, url, `{allItems(similarTo: {name: "x"}) { nodes { id nameSimilarity embeddingL2Distance codeHammingDistance } }}`, nil)
-		requireNoErrors(t, res)
-		for id, row := range scoreRows(t, res.Data["allItems"]) {
-			if math.IsNaN(row["nameSimilarity"]) || !math.IsNaN(row["embeddingL2Distance"]) || !math.IsNaN(row["codeHammingDistance"]) {
-				t.Errorf("item %d: %v", id, row)
-			}
+	t.Run("an error without the reference", func(t *testing.T) {
+		res := post(t, url, `{allItems(near: {name: "x"}) { nodes { id nameSimilarity embeddingL2Distance } }}`, nil)
+		if len(res.Errors) == 0 || !strings.Contains(res.Errors[0].Message, "field embeddingL2Distance requires near: {embedding: …}") {
+			t.Errorf("score without its reference: %+v", res.Errors)
 		}
 	})
 
@@ -213,12 +211,12 @@ INSERT INTO ` + scoresSchema + `.items VALUES
 		res := post(t, url, `{
 			cosine: allItems(
 				filter: {embedding: {cosineDistanceLessThan: {vector: [1, 0.5, 0], distance: 0.1}}}
-				nearVector: {embedding: [1, 0.5, 0]}
+				near: {embedding: [1, 0.5, 0]}
 				orderBy: [EMBEDDING_COSINE_DISTANCE_ASC]
 			) { nodes { id } }
 			l2: allItems(filter: {embedding: {l2DistanceLessThan: {vector: [1, 0.5, 0], distance: 1}}}, orderBy: [ID_ASC]) { nodes { id } }
 			hamming: allItems(filter: {code: {hammingDistanceLessThan: {vector: "100", distance: 2}}}, orderBy: [ID_ASC]) { nodes { id } }
-			hammingOrder: allItems(filter: {code: {isNull: false}}, nearVector: {code: "001"}, orderBy: [CODE_HAMMING_DISTANCE_ASC, ID_ASC]) { nodes { id } }
+			hammingOrder: allItems(filter: {code: {isNull: false}}, near: {code: "001"}, orderBy: [CODE_HAMMING_DISTANCE_ASC, ID_ASC]) { nodes { id } }
 		}`, nil)
 		requireNoErrors(t, res)
 		for alias, want := range map[string][]int{
@@ -247,7 +245,7 @@ INSERT INTO ` + scoresSchema + `.items VALUES
 		if len(res.Errors) == 0 {
 			t.Error("threshold filter accepted on a column the policy does not admit")
 		}
-		res = post(t, strict.URL, `{allItems(nearVector: {embedding: [1, 0, 0]}, orderBy: [ID_ASC]) { nodes { id embeddingL2Distance } }}`, nil)
+		res = post(t, strict.URL, `{allItems(near: {embedding: [1, 0, 0]}, orderBy: [ID_ASC]) { nodes { id embeddingL2Distance } }}`, nil)
 		requireNoErrors(t, res)
 	})
 }

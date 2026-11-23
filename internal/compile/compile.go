@@ -177,8 +177,7 @@ type stmt struct {
 	ranks    map[string]rankSource
 	rankRefs []rankRef
 	// scoreLists maps the alias of a list's row scan to the list field
-	// whose reference arguments (near:, similarTo:, nearVector:, nearPoint:) the score
-	// fields of those rows measure against.
+	// whose near: argument the score fields of those rows measure against.
 	scoreLists map[string]*ast.Field
 	// then is the Then statement of the compiled field (functionMutation).
 	then *Statement
@@ -554,15 +553,14 @@ func (s *stmt) orderTerms(t *introspect.Table, f *ast.Field, alias string) []ord
 				}
 				near := ""
 				if spec.Distance {
-					// Distance ordering needs a reference geometry; without
-					// near: the value is meaningless, so drop the term rather
-					// than emit an unordered scan that looks sorted.
 					expr, err := s.nearExpr(t, spec.Column, f)
 					if err != nil {
 						s.fail(err)
 						continue
 					}
 					if expr == "" {
+						_, field := s.nearValue(f, spec.Column)
+						s.fail(errNoReference("orderBy "+name, field))
 						continue
 					}
 					near = expr

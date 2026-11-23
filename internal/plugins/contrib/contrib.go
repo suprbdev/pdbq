@@ -12,35 +12,36 @@
 // search_path. This plugin adds everything built on top of that:
 //
 //   - vocabulary filter operators on each type's operator input:
-//     FullTextFilterOps (matches, matchesPlain, matchesPhrase,
+//     FullTextFilter (matches, matchesPlain, matchesPhrase,
 //     matchesWebsearch, plus a sibling config: naming the text search
-//     configuration), KeyValueHashFilterOps (containsKey, containsAllKeys,
-//     containsAnyKeys, contains, containedBy), LtreeFilterOps and
-//     LtreeListFilterOps (ancestorOf, descendantOf, matchesLquery, ...),
-//     <Range>FilterOps and <Range>MultirangeFilterOps (overlaps, contains,
+//     configuration), KeyValueHashFilter (containsKey, containsAllKeys,
+//     containsAnyKeys, contains, containedBy), LtreeFilter and
+//     LtreeListFilter (ancestorOf, descendantOf, matchesLquery, ...),
+//     <Range>Filter and <Range>MultirangeFilter (overlaps, contains,
 //     containsElement, containedBy, strictlyLeftOf, ...), and
-//     InternetAddressFilterOps (contains, containsOrEqualTo, containedBy, ...);
+//     InternetAddressFilter (contains, containsOrEqualTo, containedBy, ...);
 //
 //   - pg_trgm operators on text columns when the extension is installed:
-//     the column's filter takes StringTrgmFilterOps, StringFilterOps plus
+//     the column's filter takes StringTrgmFilter, StringFilter plus
 //     similarTo, wordSimilarTo and strictWordSimilarTo;
 //
 //   - unaccent operators on text columns when the extension is installed
 //     and the filter policy admits unindexable operators on the column:
-//     StringUnaccentFilterOps (or StringTrgmUnaccentFilterOps on top of the
+//     StringUnaccentFilter (or StringTrgmUnaccentFilter on top of the
 //     trigram input) adds unaccentEqualTo, unaccentLike, unaccentIncludes
 //     and unaccentStartsWith;
 //
 //   - fuzzystrmatch operators on text columns when the extension is
 //     installed and the filter policy admits unindexable operators on the
-//     column: the String[Trgm][Unaccent]FuzzyFilterOps inputs add
+//     column: the String[Trgm][Unaccent]FuzzyFilter inputs add
 //     levenshteinDistanceLessThan ({text, distance}), soundexEqualTo,
 //     metaphoneEqualTo and doubleMetaphoneEqualTo, and
 //     <COLUMN>_LEVENSHTEIN_DISTANCE_ASC/_DESC orderBy values and a
-//     <field>LevenshteinDistance: Int score measure against similarTo:;
+//     <field>LevenshteinDistance: Int score measure against the column's
+//     reference text in near:;
 //
 //   - intarray's matchesQueryInt (query_int) on int4[] columns led by a GIN
-//     or GiST index (or allowlisted), through IntListIntarrayFilterOps;
+//     or GiST index (or allowlisted), through IntListIntarrayFilter;
 //
 //   - value fields: <field>Nlevel, <field>Parent, <field>Lca(path:) and
 //     <field>Subpath(offset:, length:) on ltree columns, <field>Lca on
@@ -48,8 +49,8 @@
 //     <field>Icount on int4[] columns with intarray, with <field>Nlevel,
 //     <field>Icount and <field>Value table-filter fields and
 //     <COLUMN>_NLEVEL_, _ICOUNT_ and _VALUE_ orderBy values (the last
-//     against a hstoreKey: <Type>HstoreKeyInput argument) on columns the
-//     policy admits unindexed surface on;
+//     against the column's key in near:) on columns the policy admits
+//     unindexed surface on;
 //
 //   - full-text rank: a <field>Rank: Float sibling of every filterable
 //     tsvector column and <COLUMN>_RANK_ASC/_DESC orderBy values, both
@@ -60,49 +61,47 @@
 //     same match;
 //
 //   - trigram ordering: <COLUMN>_SIMILARITY_ASC/_DESC (and _WORD_SIMILARITY_,
-//     _STRICT_WORD_SIMILARITY_) orderBy values plus a similarTo:
-//     <Type>SimilarToInput argument naming the reference text per column,
-//     compiled to the index-assisted pg_trgm distance operators (<->, <->>,
+//     _STRICT_WORD_SIMILARITY_) orderBy values against the column's
+//     reference text in near:, compiled to the index-assisted pg_trgm distance operators (<->, <->>,
 //     <->>>);
 //
 //   - pgvector ordering: <COLUMN>_L2_DISTANCE_ASC/_DESC (and
 //     _NEGATIVE_INNER_PRODUCT_, _COSINE_DISTANCE_, _L1_DISTANCE_) orderBy
 //     values on vector, halfvec and sparsevec columns, and
 //     _HAMMING_DISTANCE_ / _JACCARD_DISTANCE_ on bit and varbit columns,
-//     plus a nearVector: <Type>NearVectorInput argument holding the
-//     reference vector per column, compiled to pgvector's distance operators
+//     against the column's reference vector in near:, compiled to pgvector's distance operators
 //     (<->, <#>, <=>, <+>, <~>, <%>), which an HNSW or IVFFlat index answers
 //     nearest-first;
 //
-//   - cube: CubeFilterOps (contains, containedBy, overlaps) on cube columns,
+//   - cube: CubeFilter (contains, containedBy, overlaps) on cube columns,
 //     _L2_DISTANCE_, _L1_DISTANCE_ and _CHEBYSHEV_DISTANCE_ orderBy values
-//     against nearVector:, <distance>LessThan thresholds on
-//     CubeDistanceFilterOps, all served by a GiST index;
+//     against near:, <distance>LessThan thresholds on
+//     CubeDistanceFilter, all served by a GiST index;
 //
 //   - earthdistance: on earth columns the earthDistanceLessThan radius filter
-//     (LatLonDistanceFilterOps) and <COLUMN>_EARTH_DISTANCE_ASC/_DESC ordered
+//     (LatLonDistanceFilter) and <COLUMN>_EARTH_DISTANCE_ASC/_DESC ordered
 //     by cube's <-> chord distance (a GiST KNN scan, which keyset cursors
-//     compare too) against a nearPoint: <Type>NearPointInput argument; on
+//     compare too) against the column's location in near:; on
 //     point columns the policy admits, the <@> statute-mile
 //     _EARTH_DISTANCE_MILES_ ordering and earthDistanceMilesLessThan filter
-//     (PointDistanceFilterOps);
+//     (PointDistanceFilter);
 //
 //   - score fields: <field>Similarity, <field>WordSimilarity and
 //     <field>StrictWordSimilarity on text columns with trigram surface,
-//     measured against similarTo:, and <field>L2Distance,
+//     and <field>L2Distance,
 //     <field>NegativeInnerProduct, <field>CosineDistance, <field>L1Distance
 //     (<field>HammingDistance, <field>JaccardDistance on bit columns,
-//     <field>ChebyshevDistance on cube columns) measured against
-//     nearVector:, <field>EarthDistance (metres, earth columns) and
-//     <field>EarthDistanceMiles (point columns) measured against nearPoint:,
-//     null without the reference; they come
+//     <field>ChebyshevDistance on cube columns),
+//     <field>EarthDistance (metres, earth columns) and
+//     <field>EarthDistanceMiles (point columns), each measured against the
+//     column's reference in near:; they come
 //     with the ordering setting and ignore @omit order and index coverage;
 //
-//   - distance thresholds: VectorDistanceFilterOps,
-//     SparseVectorDistanceFilterOps and BitDistanceFilterOps add
+//   - distance thresholds: VectorDistanceFilter,
+//     SparseVectorDistanceFilter and BitDistanceFilter add
 //     <distance>LessThan: {vector, distance} operators, which no index
-//     serves, CubeDistanceFilterOps, LatLonDistanceFilterOps and
-//     PointDistanceFilterOps the cube and earthdistance ones, on columns the
+//     serves, CubeDistanceFilter, LatLonDistanceFilter and
+//     PointDistanceFilter the cube and earthdistance ones, on columns the
 //     indexed-only policy admits them for.
 //
 // Under filters.indexed_only, operators no index can serve (hstore
@@ -148,8 +147,7 @@ type Plugin struct {
 	// distance-threshold operators and rank fields.
 	filters bool
 	// ordering adds the rank, similarity, vector, cube and earth distance
-	// orderBy values, the score fields, similarTo:, nearVector: and
-	// nearPoint:.
+	// orderBy values, the score fields and their near: references.
 	ordering bool
 }
 
@@ -158,8 +156,8 @@ const Name = "contrib"
 
 // Settings is the plugins.settings.contrib section.
 type Settings struct {
-	Filters  bool `koanf:"filters" doc:"Vocabulary operators, StringTrgmFilterOps, the unaccent, fuzzystrmatch and intarray inputs, the distance-threshold inputs, the value filters (<field>Nlevel, <field>Value, <field>Icount) and the <field>Rank fields (and so rank ordering)."`
-	Ordering bool `koanf:"ordering" doc:"Rank, similarity, Levenshtein, nlevel, icount, value, vector, cube and earth distance orderBy values, the similarity and distance fields and the similarTo:, nearVector:, nearPoint: and hstoreKey: arguments."`
+	Filters  bool `koanf:"filters" doc:"Vocabulary operators, StringTrgmFilter, the unaccent, fuzzystrmatch and intarray inputs, the distance-threshold inputs, the value filters (<field>Nlevel, <field>Value, <field>Icount) and the <field>Rank fields (and so rank ordering)."`
+	Ordering bool `koanf:"ordering" doc:"Rank, similarity, Levenshtein, nlevel, icount, value, vector, cube and earth distance orderBy values, the similarity and distance fields and their references in the near: argument."`
 }
 
 // DefaultSettings returns the documented defaults: both halves on.
@@ -190,7 +188,6 @@ type column struct {
 type build struct {
 	b        *schema.Builder
 	extended map[string]bool
-	orderBy  map[string][]*schema.Field
 	// documents maps each declared <Type>HeadlineDocument enum to the
 	// columns its values name.
 	documents map[string]map[string]*introspect.Column
@@ -198,7 +195,7 @@ type build struct {
 
 // TransformSchema implements plugin.SchemaHook.
 func (p *Plugin) TransformSchema(_ context.Context, b *schema.Builder) error {
-	st := &build{b: b, extended: map[string]bool{}, orderBy: b.FieldsByOrderBy(), documents: map[string]map[string]*introspect.Column{}}
+	st := &build{b: b, extended: map[string]bool{}, documents: map[string]map[string]*introspect.Column{}}
 	for _, t := range b.Catalog.Tables {
 		var cols []column
 		for _, c := range t.Columns {
@@ -265,7 +262,7 @@ func (st *build) addFilters(t *introspect.Table, cols []column) {
 				st.addHeadlineField(t, cc.col)
 			}
 		}
-		if trgm, ok := cc.ci.Trgm(); ok && f.Type == "StringFilterOps" && st.served(t, cc.col, trgm.Ops[0].Index) {
+		if trgm, ok := cc.ci.Trgm(); ok && f.Type == "StringFilter" && st.served(t, cc.col, trgm.Ops[0].Index) {
 			if st.ensureTrgmOps(trgm) {
 				f.Type = contribtype.StringTrgmOps
 			}
@@ -281,7 +278,7 @@ func (st *build) addFilters(t *introspect.Table, cols []column) {
 				f.Type = name
 			}
 		}
-		if ia, ok := cc.ci.Intarray(); ok && len(ia.Ops) > 0 && f.Type == "IntListFilterOps" && st.served(t, cc.col, ia.Ops[0].Index) {
+		if ia, ok := cc.ci.Intarray(); ok && len(ia.Ops) > 0 && f.Type == "IntListFilter" && st.served(t, cc.col, ia.Ops[0].Index) {
 			if st.ensureIntarrayOps(ia) {
 				f.Type = contribtype.IntListIntarrayOps
 			}
@@ -350,11 +347,11 @@ func distanceTargetFor(ci contribtype.Column) (distanceTarget, bool) {
 	switch {
 	case !ok:
 	case dv.Name == pgcontrib.VocabBit:
-		return distanceTarget{contribtype.BitDistanceOps, "StringFilterOps", contribtype.BitDistanceInput,
+		return distanceTarget{contribtype.BitDistanceOps, "StringFilter", contribtype.BitDistanceInput,
 			"String operators plus pgvector Hamming and Jaccard distance thresholds against a reference bit string; no index serves the thresholds.",
 			vector("String!")}, true
 	case dv.Name == pgcontrib.VocabEarthPoint:
-		return distanceTarget{contribtype.PointDistanceOps, "StringFilterOps", contribtype.LatLonDistanceInput,
+		return distanceTarget{contribtype.PointDistanceOps, "StringFilter", contribtype.LatLonDistanceInput,
 			"Point operators plus the earthdistance <@> radius filter in statute miles, the point being (longitude, latitude); no index serves it.",
 			latLonDistanceFields()}, true
 	}
@@ -374,6 +371,7 @@ func (st *build) ensureDistanceOps(base string, ci contribtype.Column, ops []pgc
 	if st.extended[target.name] {
 		return target.name
 	}
+	st.b.ClaimOperatorInput(target.name)
 	src := st.b.Inputs[base]
 	if src == nil {
 		return ""
@@ -407,7 +405,7 @@ func (st *build) ensureDistanceOps(base string, ci contribtype.Column, ops []pgc
 }
 
 // textOpsDescriptions describe the text operator inputs by the
-// vocabularies they add to StringFilterOps.
+// vocabularies they add to StringFilter.
 var textOpsDescriptions = map[string]string{
 	contribtype.StringUnaccentOps: "String operators plus unaccent comparisons, which ignore accents and case; no index can serve them.",
 	contribtype.StringTrgmUnaccentOps: "String operators plus pg_trgm similarity and unaccent comparisons. The similarity predicates compare " +
@@ -416,7 +414,7 @@ var textOpsDescriptions = map[string]string{
 }
 
 // textOpsDescription describes a text operator input adding the given
-// vocabularies to StringFilterOps.
+// vocabularies to StringFilter.
 func textOpsDescription(name string, trgm, unaccent, fuzzy bool) string {
 	if d, ok := textOpsDescriptions[name]; ok {
 		return d
@@ -439,11 +437,11 @@ func textOpsDescription(name string, trgm, unaccent, fuzzy bool) string {
 }
 
 // ensureTextOps declares the input adding the operators of extra (unaccent,
-// fuzzystrmatch) to the text operator input base (StringFilterOps or
-// StringTrgmFilterOps), returning its name, or "" when base takes none or a
+// fuzzystrmatch) to the text operator input base (StringFilter or
+// StringTrgmFilter), returning its name, or "" when base takes none or a
 // name is taken.
 func (st *build) ensureTextOps(base string, extra []pgcontrib.Vocabulary) string {
-	if base != "StringFilterOps" && base != contribtype.StringTrgmOps {
+	if base != "StringFilter" && base != contribtype.StringTrgmOps {
 		return ""
 	}
 	has := map[string]bool{}
@@ -455,6 +453,7 @@ func (st *build) ensureTextOps(base string, extra []pgcontrib.Vocabulary) string
 	if st.extended[name] {
 		return name
 	}
+	st.b.ClaimOperatorInput(name)
 	src := st.b.Inputs[base]
 	if src == nil {
 		return ""
@@ -508,14 +507,15 @@ func (st *build) ensureTextDistanceInput() bool {
 	return true
 }
 
-// ensureIntarrayOps declares IntListIntarrayFilterOps from IntListFilterOps
+// ensureIntarrayOps declares IntListIntarrayFilter from IntListFilter
 // plus the intarray operators, reporting false when the name is taken.
 func (st *build) ensureIntarrayOps(ia pgcontrib.Vocabulary) bool {
 	name := contribtype.IntListIntarrayOps
 	if st.extended[name] {
 		return true
 	}
-	base := st.b.Inputs["IntListFilterOps"]
+	st.b.ClaimOperatorInput(name)
+	base := st.b.Inputs["IntListFilter"]
 	if base == nil {
 		return false
 	}
@@ -600,13 +600,14 @@ func (st *build) extendOps(ci contribtype.Column) {
 	}
 }
 
-// ensureTrgmOps declares StringTrgmFilterOps from StringFilterOps plus the
+// ensureTrgmOps declares StringTrgmFilter from StringFilter plus the
 // pg_trgm operators, reporting false when the name is taken.
 func (st *build) ensureTrgmOps(trgm pgcontrib.Vocabulary) bool {
 	if st.extended[contribtype.StringTrgmOps] {
 		return true
 	}
-	base := st.b.Inputs["StringFilterOps"]
+	st.b.ClaimOperatorInput(contribtype.StringTrgmOps)
+	base := st.b.Inputs["StringFilter"]
 	if base == nil {
 		return false
 	}
@@ -771,9 +772,10 @@ func (st *build) addOrdering(t *introspect.Table, cols []column) {
 	if !ok {
 		return
 	}
+	var near *schema.Input
 	var similar []*introspect.Column
 	levenshtein := map[string]bool{}
-	refs := map[string][]vectorColumn{}
+	var refs []vectorColumn
 	var filterable map[string]bool
 	for _, cc := range cols {
 		if omit.Column(cc.col, omit.Read) {
@@ -781,6 +783,9 @@ func (st *build) addOrdering(t *introspect.Table, cols []column) {
 		}
 		ordered := !omit.Column(cc.col, omit.Order)
 		if dv, ok := cc.ci.Distances(); ok {
+			if near = b.NearInput(t); near == nil {
+				continue
+			}
 			if filterable == nil {
 				filterable = map[string]bool{}
 				for _, c := range b.FilterableColumns(t) {
@@ -791,8 +796,7 @@ func (st *build) addOrdering(t *introspect.Table, cols []column) {
 			for _, e := range dv.Exprs {
 				hints = append(hints, e.Index...)
 			}
-			arg := cc.ci.ReferenceArg()
-			refs[arg] = append(refs[arg], vectorColumn{
+			refs = append(refs, vectorColumn{
 				column: cc, vocab: dv,
 				ordered: ordered && filterable[cc.col.Name],
 				scored:  cc.ci.Owned() || st.served(t, cc.col, hints),
@@ -816,22 +820,25 @@ func (st *build) addOrdering(t *introspect.Table, cols []column) {
 			}
 			continue
 		}
+		if near = b.NearInput(t); near == nil {
+			continue
+		}
 		added := false
 		if fz, ok := cc.ci.Fuzzy(); ok && len(fz.Ops) > 0 && st.served(t, cc.col, fz.Ops[0].Index) {
 			if e, ok := fz.Expr("levenshteinDistance"); ok && ordered {
 				base := coreinflect.EnumValue(cc.col.Name) + "_LEVENSHTEIN_DISTANCE"
-				desc := "Order by fuzzystrmatch Levenshtein distance to the similarTo: reference text for this column"
+				desc := "Order by fuzzystrmatch Levenshtein distance to the near: reference text for this column"
 				addValue(en, base+"_ASC", schema.EnumValue{
 					Column: cc.col.Name, Similarity: e.Name,
-					Description: desc + " (nearest first; values over 255 characters last). Requires similarTo:.",
+					Description: desc + " (nearest first; values over 255 characters last). Requires that reference.",
 				})
 				addValue(en, base+"_DESC", schema.EnumValue{
 					Column: cc.col.Name, Similarity: e.Name, Desc: true,
-					Description: desc + " (farthest first). Requires similarTo:.",
+					Description: desc + " (farthest first). Requires that reference.",
 				})
 				added = true
 			}
-			if st.addScores(t, cc.col, fz, "similarTo") {
+			if st.addScores(t, cc.col, fz) {
 				added = true
 			}
 			levenshtein[cc.col.Name] = added
@@ -850,31 +857,33 @@ func (st *build) addOrdering(t *introspect.Table, cols []column) {
 			}
 			base := coreinflect.EnumValue(cc.col.Name) + so.Infix
 			desc := "Order by pg_trgm " + strings.ToLower(strings.TrimPrefix(strings.ReplaceAll(so.Infix, "_", " "), " ")) +
-				" to the similarTo: reference text for this column"
+				" to the near: reference text for this column"
 			addValue(en, base+"_ASC", schema.EnumValue{
 				Column: cc.col.Name, Similarity: so.Expr, Desc: true,
-				Description: desc + " (least similar first). Requires similarTo:.",
+				Description: desc + " (least similar first). Requires that reference.",
 			})
 			addValue(en, base+"_DESC", schema.EnumValue{
 				Column: cc.col.Name, Similarity: so.Expr,
-				Description: desc + " (most similar first; index-assisted with a GiST trigram index). Requires similarTo:.",
+				Description: desc + " (most similar first; index-assisted with a GiST trigram index). Requires that reference.",
 			})
 			added = true
 		}
-		if len(trgm.Ops) > 0 && st.served(t, cc.col, trgm.Ops[0].Index) && st.addScores(t, cc.col, trgm, "similarTo") {
+		if len(trgm.Ops) > 0 && st.served(t, cc.col, trgm.Ops[0].Index) && st.addScores(t, cc.col, trgm) {
 			added = true
 		}
 		if added {
 			similar = append(similar, cc.col)
 		}
 	}
-	if len(similar) > 0 && !st.addSimilarToArg(t, enumName, similar, levenshtein) {
-		st.dropScores(t, "similarTo")
-	}
-	for _, arg := range []string{contribtype.NearVectorArg, contribtype.NearPointArg} {
-		if len(refs[arg]) > 0 {
-			st.addReferenceOrdering(t, enumName, en, arg, refs[arg])
+	for _, c := range similar {
+		desc := "Reference text for the " + c.Name + " similarity orderBy values and similarity fields."
+		if levenshtein[c.Name] {
+			desc = "Reference text for the " + c.Name + " similarity and Levenshtein distance orderBy values and fields."
 		}
+		near.AddField(&schema.InputField{Name: st.fieldName(t, c), Type: "String", Description: desc, Column: c.Name})
+	}
+	if len(refs) > 0 {
+		st.addReferenceOrdering(t, en, near, refs)
 	}
 }
 
@@ -893,9 +902,9 @@ type vectorColumn struct {
 
 // addScores adds a score field per [pgcontrib.Expr.Score] expression of
 // vocab on column c (<field>Similarity, <field>CosineDistance, ...),
-// measured against the list's arg reference, reporting whether any was
-// added.
-func (st *build) addScores(t *introspect.Table, c *introspect.Column, vocab pgcontrib.Vocabulary, arg string) bool {
+// measured against the column's reference in the list's near: argument,
+// reporting whether any was added.
+func (st *build) addScores(t *introspect.Table, c *introspect.Column, vocab pgcontrib.Vocabulary) bool {
 	obj := st.b.Objects[st.b.TypeForTable[t.Schema+"."+t.Name]]
 	if obj == nil {
 		return false
@@ -913,29 +922,13 @@ func (st *build) addScores(t *introspect.Table, c *introspect.Column, vocab pgco
 		obj.AddField(&schema.Field{
 			Name: name,
 			Type: scalarFor(e.Type),
-			Description: strings.TrimSuffix(e.Description, ".") + "; " + c.Name + " measured against the " + arg +
-				": reference of the list this row was read through, null without one.",
-			Meta: &schema.FieldMeta{Kind: schema.KindScore, Table: t, Column: c, Score: &schema.Score{Arg: arg, Expr: e.Name}},
+			Description: strings.TrimSuffix(e.Description, ".") + "; " + c.Name + " measured against its reference in the near: " +
+				"argument of the list this row was read through (required there), null for rows read elsewhere.",
+			Meta: &schema.FieldMeta{Kind: schema.KindScore, Table: t, Column: c, Score: &schema.Score{Expr: e.Name}},
 		})
 		added = true
 	}
 	return added
-}
-
-// dropScores removes the score fields reading arg from t's object type, for
-// a table whose reference input could not be declared.
-func (st *build) dropScores(t *introspect.Table, arg string) {
-	obj := st.b.Objects[st.b.TypeForTable[t.Schema+"."+t.Name]]
-	if obj == nil {
-		return
-	}
-	var keep []*schema.Field
-	for _, f := range obj.Fields {
-		if f.Meta == nil || f.Meta.Kind != schema.KindScore || f.Meta.Score == nil || f.Meta.Score.Arg != arg {
-			keep = append(keep, f)
-		}
-	}
-	obj.Fields = keep
 }
 
 // referenceKind describes the distance surface of one vocabulary in
@@ -953,33 +946,24 @@ var referenceKinds = map[string]referenceKind{
 }
 
 // addReferenceOrdering adds the distance orderBy values of the columns
-// measured against the list argument arg (nearVector: for vector, bit and
-// cube columns, nearPoint: for earth and point columns) that the
-// indexed-only policy admits them for and the distance score fields of
-// every readable one, declares <Type>NearVectorInput or
-// <Type>NearPointInput (one reference per such column) and adds arg to
-// every field taking the table's orderBy enum. Nothing is added when the
-// input's name is taken.
-func (st *build) addReferenceOrdering(t *introspect.Table, enumName string, en *schema.Enum, arg string, cols []vectorColumn) {
+// with distances to a per-request reference (vector, bit, cube, earth and
+// point columns) that the indexed-only policy admits them for and the
+// distance score fields of every readable one, and the reference of each
+// such column to near, the table's <Type>NearInput. Earth and point
+// references are LatLonInput: their columns are skipped when the LatLon
+// types cannot be declared.
+func (st *build) addReferenceOrdering(t *introspect.Table, en *schema.Enum, near *schema.Input, cols []vectorColumn) {
 	b := st.b
-	typeName := b.TypeForTable[t.Schema+"."+t.Name]
-	inputName := typeName + coreinflect.UpperCamel(arg) + "Input"
-	if st.nameTaken(inputName) {
-		b.Options.Logger.Warn("contrib: type name already taken, distance ordering skipped", "type", inputName)
-		return
+	latLon := true
+	if slices.ContainsFunc(cols, func(vc vectorColumn) bool { return vc.scored && vc.ci.DistanceInput() == contribtype.LatLonInput }) &&
+		!b.EnsureLatLonTypes() {
+		b.Options.Logger.Warn("contrib: type name already taken, earthdistance ordering skipped", "type", contribtype.LatLonInput)
+		latLon = false
 	}
-	if arg == contribtype.NearPointArg && slices.ContainsFunc(cols, func(vc vectorColumn) bool { return vc.scored }) && !b.EnsureLatLonTypes() {
-		b.Options.Logger.Warn("contrib: type name already taken, distance ordering skipped", "type", contribtype.LatLonInput)
-		return
-	}
-	desc := "Reference vectors for the pgvector distance orderBy values and distance fields of " + typeName + ", per column."
-	if arg == contribtype.NearPointArg {
-		desc = "Reference locations for the earthdistance distance orderBy values and distance fields of " + typeName + ", per column."
-	} else if slices.ContainsFunc(cols, func(vc vectorColumn) bool { return vc.ci.Kind == contribtype.Cube }) {
-		desc = "Reference vectors and cubes for the pgvector and cube distance orderBy values and distance fields of " + typeName + ", per column."
-	}
-	input := &schema.Input{Name: inputName, Description: desc}
 	for _, vc := range cols {
+		if !latLon && vc.ci.DistanceInput() == contribtype.LatLonInput {
+			continue
+		}
 		kind := referenceKinds[vc.vocab.Name]
 		added := false
 		for _, do := range contribtype.DistanceOrders {
@@ -988,18 +972,18 @@ func (st *build) addReferenceOrdering(t *introspect.Table, enumName string, en *
 				continue
 			}
 			base := coreinflect.EnumValue(vc.col.Name) + do.Infix
-			desc := "Order by " + kind.family + " " + do.Label + " from the " + arg + ": " + kind.reference + " for this column"
+			desc := "Order by " + kind.family + " " + do.Label + " from the near: " + kind.reference + " for this column"
 			addValue(en, base+"_ASC", schema.EnumValue{
-				Column: vc.col.Name, Vector: do.Expr, Reference: arg,
-				Description: desc + " (nearest first; " + kind.index + "). Requires " + arg + ":.",
+				Column: vc.col.Name, Vector: do.Expr,
+				Description: desc + " (nearest first; " + kind.index + "). Requires that reference.",
 			})
 			addValue(en, base+"_DESC", schema.EnumValue{
-				Column: vc.col.Name, Vector: do.Expr, Reference: arg, Desc: true,
-				Description: desc + " (farthest first). Requires " + arg + ":.",
+				Column: vc.col.Name, Vector: do.Expr, Desc: true,
+				Description: desc + " (farthest first). Requires that reference.",
 			})
 			added = true
 		}
-		if vc.scored && st.addScores(t, vc.col, vc.vocab, arg) {
+		if vc.scored && st.addScores(t, vc.col, vc.vocab) {
 			added = true
 		}
 		if !added {
@@ -1009,24 +993,15 @@ func (st *build) addReferenceOrdering(t *introspect.Table, enumName string, en *
 		switch {
 		case vc.ci.Kind == contribtype.Cube:
 			fieldDesc = "Reference cube for the " + vc.col.Name + " distance orderBy values and distance fields."
-		case arg == contribtype.NearPointArg:
+		case vc.ci.DistanceInput() == contribtype.LatLonInput:
 			fieldDesc = "Reference location for the " + vc.col.Name + " distance orderBy values and distance fields."
 		}
-		input.AddField(&schema.InputField{
-			Name:        b.Inflect(inflect.KindFieldName, inflect.Input{Schema: t.Schema, Table: t.Name, Column: vc.col.Name}),
+		near.AddField(&schema.InputField{
+			Name:        st.fieldName(t, vc.col),
 			Type:        vc.ci.DistanceInput(),
 			Description: fieldDesc,
 			Column:      vc.col.Name,
 		})
-	}
-	if len(input.Fields) == 0 {
-		return
-	}
-	b.Inputs[inputName] = input
-	for _, f := range st.orderBy[enumName] {
-		if !hasArg(f, arg) {
-			f.Args = append(f.Args, schema.Arg{Name: arg, Type: inputName})
-		}
 	}
 }
 
@@ -1048,61 +1023,4 @@ func addValue(en *schema.Enum, name string, v schema.EnumValue) {
 	}
 	v.Name = name
 	en.Values = append(en.Values, v)
-}
-
-// addSimilarToArg declares <Type>SimilarToInput (one String per column with
-// similarity or Levenshtein distance ordering or scores, the latter marked
-// in levenshtein) and adds similarTo: to every field taking
-// the table's orderBy enum, reporting false when the input's name is taken.
-func (st *build) addSimilarToArg(t *introspect.Table, enumName string, cols []*introspect.Column, levenshtein map[string]bool) bool {
-	b := st.b
-	typeName := b.TypeForTable[t.Schema+"."+t.Name]
-	inputName := typeName + "SimilarToInput"
-	_, obj := b.Objects[inputName]
-	_, in := b.Inputs[inputName]
-	_, en := b.Enums[inputName]
-	if obj || in || en {
-		b.Options.Logger.Warn("contrib: type name already taken, similarTo: argument skipped", "type", inputName)
-		return false
-	}
-	input := &schema.Input{
-		Name:        inputName,
-		Description: "Reference texts for the pg_trgm similarity orderBy values and similarity fields of " + typeName + ", per column.",
-	}
-	fuzzy := false
-	for _, c := range cols {
-		fuzzy = fuzzy || levenshtein[c.Name]
-	}
-	if fuzzy {
-		input.Description = "Reference texts for the pg_trgm similarity and fuzzystrmatch Levenshtein distance orderBy values and fields of " +
-			typeName + ", per column."
-	}
-	for _, c := range cols {
-		desc := "Reference text for the " + c.Name + " similarity orderBy values and similarity fields."
-		if levenshtein[c.Name] {
-			desc = "Reference text for the " + c.Name + " similarity and Levenshtein distance orderBy values and fields."
-		}
-		input.AddField(&schema.InputField{
-			Name:        b.Inflect(inflect.KindFieldName, inflect.Input{Schema: t.Schema, Table: t.Name, Column: c.Name}),
-			Type:        "String",
-			Description: desc,
-			Column:      c.Name,
-		})
-	}
-	b.Inputs[inputName] = input
-	for _, f := range st.orderBy[enumName] {
-		if !hasArg(f, "similarTo") {
-			f.Args = append(f.Args, schema.Arg{Name: "similarTo", Type: inputName})
-		}
-	}
-	return true
-}
-
-func hasArg(f *schema.Field, name string) bool {
-	for _, a := range f.Args {
-		if a.Name == name {
-			return true
-		}
-	}
-	return false
 }

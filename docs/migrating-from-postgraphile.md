@@ -56,12 +56,21 @@ noise.
   with `@fieldName` / `@foreignFieldName` on the constraint. A payload's
   forward relation named like a payload field (`query`, the row, the edge)
   is left out of that payload.
-- **Filter types** are `<Type>Filter` with `<Scalar>FilterOps` operator types
-  (`StringFilterOps`), and order-by enums are `<Types>OrderBy` with
+- **Filter types** are `<Type>Filter` with `<Scalar>Filter` operator types
+  (`StringFilter`), and order-by enums are `<Types>OrderBy` with
   `<COLUMN>_ASC|_DESC` values. There is no `PRIMARY_KEY_ASC` and no
   `NATURAL`: the primary key is appended to every `orderBy` as the tiebreaker.
   Related-column ordering uses `USER_BY_AUTHOR_ID__EMAIL_ASC` (forward) and
-  `POSTS_BY_AUTHOR_ID__TITLE_DESC` (backward).
+  `POSTS_BY_AUTHOR_ID__TITLE_DESC` (backward); aggregate ordering
+  `POSTS_BY_AUTHOR_ID__COUNT_DESC` (pg-aggregates uses a single underscore).
+- **Existence filters** are `<relation>Exists` in both directions
+  (`userByAuthorIdExists`, `postsByAuthorIdExists`), where connection-filter
+  uses `…Exist` on backward relations.
+- **Reference arguments** live in one argument, `near: <Type>NearInput`, one
+  field per column: `near: {location: "POINT(-0.12 51.5)"}` for PostGIS
+  distance ordering and `<field>Distance`, and the same argument for trigram,
+  pgvector, cube and earthdistance references. A distance or similarity
+  ordering without its reference is an error.
 - Enum types, composite types, domains, ranges, intervals and PostGIS
   `GeoJSON` follow PostGraphile's shapes (`IntRange`, `Interval`, a scalar named
   after the domain). See [domains.md](domains.md), [interval.md](interval.md),
@@ -97,7 +106,7 @@ Differences:
   `in`, `likeInsensitive`, `startsWith`, plus `and` / `or` / `not`) and
   `postgraphile-plugin-connection-filter-postgis`; the `advanced_filters` plugin,
   on by default, adds relation and computed-column filters. Check the operator
-  names your clients use against the generated `*FilterOps` types.
+  names your clients use against the generated `*Filter` types.
 - Depth and cost are limited per operation (`limits.max_depth`,
   `limits.max_cost`), so you do not need a complexity-limit plugin.
 - Aggregates are the `@graphile/pg-aggregates` shapes, **opt-in** with
@@ -137,9 +146,9 @@ The table mutations take v4's shapes: one `input` argument with
 
 The `smart_comments` plugin reads the same `COMMENT` syntax. Supported tags:
 `@omit` (with actions `read`, `create`, `update`, `delete`, `all`, `many`,
-`filter`, `order`), `@name`, `@fieldName`, `@resultFieldName`, `@deprecated`,
+`filter`, `order`, `aggregates`), `@name`, `@fieldName`, `@resultFieldName`, `@deprecated`,
 `@primaryKey`, `@unique`, `@foreignKey`, `@enum`, `@notNull`, `@nullable`,
-`@filterable` (alias `@sortable`), plus pdbq's own `@aggregates`, `@contract`,
+`@filterable`, `@sortable`, plus pdbq's own `@aggregates`, `@contract`,
 `@anyelement` and `@anycompatible`. The full list is in
 [smart-comments.md](smart-comments.md).
 
@@ -148,13 +157,18 @@ The `smart_comments` plugin reads the same `COMMENT` syntax. Supported tags:
   no longer generates lookups, by-key mutations, cursors or `nodeId`. In
   PostGraphile the column stays filterable, which lets a client bisect hidden
   values. This is deliberate.
-- **`@filterable` and `@sortable` are one tag** here: both admit a column past
-  the indexed-only policy for filtering and ordering together.
-- **`@behavior` is a small subset.** pdbq reads the negative tokens `-select`,
-  `-insert`, `-update`, `-delete`, `-filter` and `-order` (mapped to the `@omit`
-  actions), `±contract:<name>` and `±aggregates`. Other V5 behaviors, and any tag
-  not listed above (`@simpleCollections`, `@hasDefault`, `@arg0variant`, ...),
-  have no effect.
+- **On a column, `@filterable` and `@sortable` are one tag**: either admits
+  the column past the indexed-only policy for filtering and ordering
+  together. On foreign keys and computed columns, in `advanced_filters`'
+  opt-in modes, `@filterable` admits the filter surface and `@sortable` the
+  orderBy surface.
+- **`@behavior` is a small subset.** pdbq reads the V5 tokens `-select`,
+  `-insert`, `-update`, `-delete`, `-filterBy` and `-orderBy` (mapped to the
+  `@omit` actions), `±contract:<name>` and the aggregates tokens
+  (`±aggregates`, ...); the pre-V5 `-filter` / `-order` still work with a
+  deprecation warning. Other V5 behaviors are ignored with a build-time
+  warning, as are unknown `@omit` actions. Tags not listed above
+  (`@simpleCollections`, `@hasDefault`, `@arg0variant`, ...) have no effect.
 
 ## Authentication and authorization
 

@@ -364,3 +364,29 @@ messages are unchanged except where the table says so.
 | a dropped database connection: `internal error` | `database unavailable`, code `unavailable` |
 | a `RequestHook` error: its message, no code | its message, code `operation_rejected` (a `*gqlerror.Error` that carries a code keeps it) |
 | WebSocket subscription caps, topic and stream errors without a code | `subscription_limit_exceeded`, `unavailable`, `invalid_argument` |
+### Filter, orderBy and smart-tag names
+
+The filter, orderBy and reference-argument names follow one pattern each.
+Clients rename the types they declare in variables and the arguments and
+values they send; databases rename deprecated behavior tokens.
+
+| Before | After | Notes |
+|---|---|---|
+| `StringFilterOps`, `IntFilterOps`, `BigIntFilterOps`, `JSONFilterOps`, `StringListFilterOps`, `<Enum>FilterOps`, `<Domain>FilterOps`, … | `StringFilter`, `IntFilter`, `BigIntFilter`, `JSONFilter`, `StringListFilter`, `<Enum>Filter`, `<Domain>Filter`, … | every scalar operator input, as in `postgraphile-plugin-connection-filter`; only variable declarations (`$f: StringFilterOps`) change |
+| `GeometryFilterOps`, `RasterFilterOps` | `GeoJSONFilter`, `RasterFilter` | PostGIS |
+| `FullTextFilterOps`, `KeyValueHashFilterOps`, `LtreeFilterOps`, `<X>RangeFilterOps`, `<X>MultirangeFilterOps`, `InternetAddressFilterOps`, `StringTrgmFilterOps`, `String[Trgm][Unaccent][Fuzzy]FilterOps`, `IntListIntarrayFilterOps`, `VectorFilterOps`, `VectorDistanceFilterOps`, `CubeFilterOps`, `LatLonFilterOps`, `IntervalFilterOps`, … | the same names ending in `Filter` (`FullTextFilter`, `StringTrgmFilter`, `VectorDistanceFilter`, …) | contrib, interval and domain inputs |
+| a table whose `<Type>Filter` equals an operator input name (`strings` → `StringFilter`) shared one GraphQL type | schema build error naming the table and the type | rename the table with `@name` |
+| `HavingBigintFilter`, `HavingBigfloatFilter` | `HavingBigIntFilter`, `HavingBigFloatFilter` | aggregates `having` comparisons |
+| `having: {AND: […], OR: […]}` | `having: {and: […], or: […], not: {…}}` | lowercase like table filters; `not` is new |
+| `postsByAuthorIdExist: Boolean` (backward relations) | `postsByAuthorIdExists: Boolean` | `<relation>Exists` in both directions (forward was already `userByAuthorIdExists`) |
+| `POSTS_BY_AUTHOR_ID_COUNT_DESC`, `POSTS_BY_AUTHOR_ID_SUM_ID_DESC` | `POSTS_BY_AUTHOR_ID__COUNT_DESC`, `POSTS_BY_AUTHOR_ID__SUM_ID_DESC` | aggregates relation ordering uses `__` between relation and value, like `USER_BY_AUTHOR_ID__EMAIL_ASC`; with `simple_names`, `POSTS__COUNT_DESC` |
+| `near: {geometry: …}` (`NearInput`, one geometry for every spatial column) | `near: {location: …, area: …}` (`<Type>NearInput`, one field per spatial column) | PostGIS distance ordering and `<field>Distance` |
+| `nearVector: {embedding: […]}` (`<Type>NearVectorInput`) | `near: {embedding: […]}` | pgvector, bit and cube references |
+| `nearPoint: {spot: {lat, lon}}` (`<Type>NearPointInput`) | `near: {spot: {lat, lon}}` | earthdistance references |
+| `similarTo: {title: "…"}` argument (`<Type>SimilarToInput`) | `near: {title: "…"}` | trigram and Levenshtein references; the `similarTo` filter operator is unchanged |
+| `hstoreKey: {attrs: "size"}` (`<Type>HstoreKeyInput`) | `near: {attrs: "size"}` | key of `<COLUMN>_VALUE_*` ordering; the `<field>Value(key:)` field argument is unchanged |
+| PostGIS distance ordering without `near:` was dropped (primary-key order) | an error: `orderBy LOCATION_DISTANCE_ASC requires near: {location: …}` | the same error for every distance, similarity and hstore value ordering |
+| a score field (`locationDistance`, `titleSimilarity`, `embeddingCosineDistance`, …) read through a list without its reference was `null` | an error: `field locationDistance requires near: {location: …}` | still `null` on rows read outside a list taking `near:` (lookups, forward relations, payloads) |
+| `@behavior -filter` / `-order` | `@behavior -filterBy` / `-orderBy` (PostGraphile V5) | the old tokens still work with a build-time deprecation warning |
+| `@filterable` (alias `@sortable`) on foreign keys and computed columns under `relations_opt_in` / `computed_opt_in` admitted both filters and orderings | `@filterable` admits the filter surface, `@sortable` the orderBy surface | tag both to keep both; on columns either tag still admits both past `filters.indexed_only` |
+| unknown `@omit` actions and `@behavior` tokens were ignored silently | ignored with a build-time warning naming the object and the token | `@omit reed` no longer goes unnoticed |

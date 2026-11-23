@@ -127,8 +127,8 @@ func TestExtensionTypesNeedTheExtension(t *testing.T) {
 	if got := obj.Field("paths").Type; got != "[String!]" {
 		t.Errorf("Document.paths = %s", got)
 	}
-	if got := fieldType(t, b, "DocumentFilter", "title"); got != "StringFilterOps" {
-		t.Errorf("title without pg_trgm = %s, want StringFilterOps", got)
+	if got := fieldType(t, b, "DocumentFilter", "title"); got != "StringFilter" {
+		t.Errorf("title without pg_trgm = %s, want StringFilter", got)
 	}
 	if strings.Contains(b.SDL(), "KeyValueHash") {
 		t.Error("KeyValueHash declared without hstore")
@@ -141,11 +141,11 @@ func TestExtensionTypesNeedTheExtension(t *testing.T) {
 func TestFilterSurface(t *testing.T) {
 	b := buildWith(t, contribfixture.Catalog(), nil, true, true)
 	for field, want := range map[string]string{
-		"title": "StringTrgmFilterOps", "label": "StringTrgmFilterOps",
-		"notes": "StringFilterOps", "slug": "StringFilterOps",
-		"search": "FullTextFilterOps", "attrs": "KeyValueHashFilterOps", "path": "LtreeFilterOps",
-		"paths": "LtreeListFilterOps", "span": "IntRangeFilterOps", "avail": "IntMultirangeFilterOps",
-		"during": "DatetimeRangeFilterOps", "ip": "InternetAddressFilterOps", "net": "CidrAddressFilterOps",
+		"title": "StringTrgmFilter", "label": "StringTrgmFilter",
+		"notes": "StringFilter", "slug": "StringFilter",
+		"search": "FullTextFilter", "attrs": "KeyValueHashFilter", "path": "LtreeFilter",
+		"paths": "LtreeListFilter", "span": "IntRangeFilter", "avail": "IntMultirangeFilter",
+		"during": "DatetimeRangeFilter", "ip": "InternetAddressFilter", "net": "CidrAddressFilter",
 		"price": "",
 	} {
 		if got := fieldType(t, b, "DocumentFilter", field); got != want {
@@ -153,12 +153,12 @@ func TestFilterSurface(t *testing.T) {
 		}
 	}
 	for input, ops := range map[string][]string{
-		"FullTextFilterOps":        {"isNull", "matches", "matchesPlain", "matchesPhrase", "matchesWebsearch", "config"},
-		"KeyValueHashFilterOps":    {"equalTo", "containsKey", "containsAllKeys", "containsAnyKeys", "contains"},
-		"LtreeFilterOps":           {"in", "lessThan", "ancestorOf", "descendantOf", "matchesLquery", "matchesAnyLquery", "matchesLtxtquery"},
-		"IntRangeFilterOps":        {"equalTo", "overlaps", "contains", "containsElement", "containedBy", "adjacentTo"},
-		"InternetAddressFilterOps": {"in", "contains", "containsOrEqualTo", "containedBy", "containedByOrEqualTo", "containsOrContainedBy"},
-		"StringTrgmFilterOps":      {"equalTo", "like", "startsWith", "similarTo", "wordSimilarTo", "strictWordSimilarTo"},
+		"FullTextFilter":        {"isNull", "matches", "matchesPlain", "matchesPhrase", "matchesWebsearch", "config"},
+		"KeyValueHashFilter":    {"equalTo", "containsKey", "containsAllKeys", "containsAnyKeys", "contains"},
+		"LtreeFilter":           {"in", "lessThan", "ancestorOf", "descendantOf", "matchesLquery", "matchesAnyLquery", "matchesLtxtquery"},
+		"IntRangeFilter":        {"equalTo", "overlaps", "contains", "containsElement", "containedBy", "adjacentTo"},
+		"InternetAddressFilter": {"in", "contains", "containsOrEqualTo", "containedBy", "containedByOrEqualTo", "containsOrContainedBy"},
+		"StringTrgmFilter":      {"equalTo", "like", "startsWith", "similarTo", "wordSimilarTo", "strictWordSimilarTo"},
 	} {
 		for _, op := range ops {
 			if fieldType(t, b, input, op) == "" {
@@ -166,12 +166,12 @@ func TestFilterSurface(t *testing.T) {
 			}
 		}
 	}
-	if got := fieldType(t, b, "IntRangeFilterOps", "containsElement"); got != "Int" {
+	if got := fieldType(t, b, "IntRangeFilter", "containsElement"); got != "Int" {
 		t.Errorf("containsElement operand = %s, want Int", got)
 	}
 	// Under indexed_only, operators no index serves are left out.
 	for input, op := range map[string]string{
-		"KeyValueHashFilterOps": "containedBy", "LtreeFilterOps": "ancestorOfAny", "LtreeListFilterOps": "ancestorOf",
+		"KeyValueHashFilter": "containedBy", "LtreeFilter": "ancestorOfAny", "LtreeListFilter": "ancestorOf",
 	} {
 		if fieldType(t, b, input, op) != "" {
 			t.Errorf("%s.%s exposed under indexed_only", input, op)
@@ -179,7 +179,7 @@ func TestFilterSurface(t *testing.T) {
 	}
 	all := buildWith(t, contribfixture.Catalog(), nil, false, true)
 	for input, op := range map[string]string{
-		"KeyValueHashFilterOps": "containedBy", "LtreeFilterOps": "descendantOfAny", "LtreeListFilterOps": "ancestorOf",
+		"KeyValueHashFilter": "containedBy", "LtreeFilter": "descendantOfAny", "LtreeListFilter": "ancestorOf",
 	} {
 		if fieldType(t, all, input, op) == "" {
 			t.Errorf("%s.%s missing without indexed_only", input, op)
@@ -190,8 +190,8 @@ func TestFilterSurface(t *testing.T) {
 		if field == "email" {
 			input = "UserFilter"
 		}
-		if got := fieldType(t, all, input, field); got != "StringTrgmUnaccentFuzzyFilterOps" {
-			t.Errorf("%s.%s without indexed_only = %s, want StringTrgmUnaccentFuzzyFilterOps", input, field, got)
+		if got := fieldType(t, all, input, field); got != "StringTrgmUnaccentFuzzyFilter" {
+			t.Errorf("%s.%s without indexed_only = %s, want StringTrgmUnaccentFuzzyFilter", input, field, got)
 		}
 	}
 }
@@ -205,8 +205,8 @@ func TestAllowColumnsGetEverything(t *testing.T) {
 	if err := New(DefaultSettings()).TransformSchema(context.Background(), b); err != nil {
 		t.Fatal(err)
 	}
-	if got := fieldType(t, b, "DocumentFilter", "notes"); got != "StringTrgmUnaccentFuzzyFilterOps" {
-		t.Errorf("allowlisted notes = %s, want StringTrgmUnaccentFuzzyFilterOps", got)
+	if got := fieldType(t, b, "DocumentFilter", "notes"); got != "StringTrgmUnaccentFuzzyFilter" {
+		t.Errorf("allowlisted notes = %s, want StringTrgmUnaccentFuzzyFilter", got)
 	}
 	if !hasEnumValue(b, "DocumentsOrderBy", "NOTES_SIMILARITY_DESC") {
 		t.Error("allowlisted notes lacks similarity ordering")
@@ -227,14 +227,14 @@ func TestOrderingSurface(t *testing.T) {
 	if hasEnumValue(b, "DocumentsOrderBy", "TITLE_SIMILARITY_DESC") {
 		t.Error("similarity ordering offered without a GiST index")
 	}
-	if got := fieldType(t, b, "DocumentSimilarToInput", "label"); got != "String" {
-		t.Errorf("DocumentSimilarToInput.label = %q", got)
+	if got := fieldType(t, b, "DocumentNearInput", "label"); got != "String" {
+		t.Errorf("DocumentNearInput.label = %q", got)
 	}
 	f := b.Query.Field("allDocuments")
-	if !hasArg(f, "similarTo") {
+	if !hasArg(f, "near") {
 		t.Error("allDocuments lacks similarTo:")
 	}
-	if hasArg(b.Query.Field("allUsers"), "similarTo") {
+	if hasArg(b.Query.Field("allUsers"), "near") {
 		t.Error("similarTo: added to an unrelated table")
 	}
 }
@@ -247,10 +247,10 @@ func TestOldTrgmVersionLimitsOperators(t *testing.T) {
 		}
 	}
 	b := buildWith(t, cat, nil, true, true)
-	if fieldType(t, b, "StringTrgmFilterOps", "similarTo") == "" {
+	if fieldType(t, b, "StringTrgmFilter", "similarTo") == "" {
 		t.Error("similarTo missing")
 	}
-	if fieldType(t, b, "StringTrgmFilterOps", "wordSimilarTo") != "" {
+	if fieldType(t, b, "StringTrgmFilter", "wordSimilarTo") != "" {
 		t.Error("wordSimilarTo exposed for pg_trgm 1.1")
 	}
 	if hasEnumValue(b, "DocumentsOrderBy", "LABEL_WORD_SIMILARITY_DESC") {
@@ -260,10 +260,10 @@ func TestOldTrgmVersionLimitsOperators(t *testing.T) {
 
 func TestSettingsToggleEachHalf(t *testing.T) {
 	noFilters := buildWith(t, contribfixture.Catalog(), func(s *Settings) { s.Filters = false }, true, true)
-	if fieldType(t, noFilters, "KeyValueHashFilterOps", "containsKey") != "" {
+	if fieldType(t, noFilters, "KeyValueHashFilter", "containsKey") != "" {
 		t.Error("filters: false kept vocabulary operators")
 	}
-	if fieldType(t, noFilters, "KeyValueHashFilterOps", "equalTo") == "" {
+	if fieldType(t, noFilters, "KeyValueHashFilter", "equalTo") == "" {
 		t.Error("filters: false removed the generic comparisons")
 	}
 	if noFilters.Objects["Document"].Field("searchRank") != nil || hasEnumValue(noFilters, "DocumentsOrderBy", "SEARCH_RANK_DESC") {
@@ -276,7 +276,7 @@ func TestSettingsToggleEachHalf(t *testing.T) {
 	if hasEnumValue(noOrder, "DocumentsOrderBy", "SEARCH_RANK_DESC") || hasEnumValue(noOrder, "DocumentsOrderBy", "LABEL_SIMILARITY_DESC") {
 		t.Error("ordering: false kept contrib orderBy values")
 	}
-	if hasArg(noOrder.Query.Field("allDocuments"), "similarTo") {
+	if hasArg(noOrder.Query.Field("allDocuments"), "near") {
 		t.Error("ordering: false kept similarTo:")
 	}
 	if noOrder.Objects["Document"].Field("searchRank") == nil {
@@ -297,7 +297,7 @@ func TestSmartCommentOmitsSurface(t *testing.T) {
 	if b.Objects["Document"].Field("searchRank") != nil {
 		t.Error("@omit filter kept the rank field")
 	}
-	if fieldType(t, b, "DocumentFilter", "label") != "StringTrgmFilterOps" {
+	if fieldType(t, b, "DocumentFilter", "label") != "StringTrgmFilter" {
 		t.Error("@omit order removed trigram filters")
 	}
 	if hasEnumValue(b, "DocumentsOrderBy", "LABEL_SIMILARITY_DESC") {
@@ -320,8 +320,8 @@ func TestTypeNameClashFallsBackToString(t *testing.T) {
 	if got := b.Objects["Document"].Field("attrs").Type; got != "String" {
 		t.Errorf("attrs with KeyValueHash taken = %s, want String", got)
 	}
-	if got := fieldType(t, b, "DocumentFilter", "attrs"); got != "StringFilterOps" {
-		t.Errorf("attrs filter = %s, want StringFilterOps", got)
+	if got := fieldType(t, b, "DocumentFilter", "attrs"); got != "StringFilter" {
+		t.Errorf("attrs filter = %s, want StringFilter", got)
 	}
 	// Declared first (by a composite attribute), the scalar wins and the
 	// table type takes the suffix.
@@ -336,4 +336,13 @@ func TestTypeNameClashFallsBackToString(t *testing.T) {
 	if b.Objects["KeyValueHash_"] == nil {
 		t.Error("clashing table type not suffixed")
 	}
+}
+
+func hasArg(f *schema.Field, name string) bool {
+	for _, a := range f.Args {
+		if a.Name == name {
+			return true
+		}
+	}
+	return false
 }

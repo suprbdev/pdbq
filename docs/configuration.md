@@ -134,22 +134,22 @@ same names: `limits.*` (`max_body_bytes`, `max_depth`, `max_cost`,
 | `plugins.settings.advanced_filters.relations` | `true` | relation filters (forward, reverse `some`/`none`/`every`, `<rel>Exists`); see [Filtering](filtering.md) |
 | `plugins.settings.advanced_filters.computed` | `true` | filtering and ordering by computed columns (not index-backed: bypasses `filters.indexed_only`) |
 | `plugins.settings.advanced_filters.relation_order` | `true` | one-level relational orderBy values (`REL__COLUMN_ASC`); off too when `relations` is off |
-| `plugins.settings.advanced_filters.relations_opt_in` | `false` | only foreign keys tagged `@filterable` get relation filters and orderings |
-| `plugins.settings.advanced_filters.computed_opt_in` | `false` | only computed-column functions tagged `@filterable` get filter and orderBy surface |
+| `plugins.settings.advanced_filters.relations_opt_in` | `false` | only foreign keys tagged `@filterable` get relation filters, and only those tagged `@sortable` relational orderBy values |
+| `plugins.settings.advanced_filters.computed_opt_in` | `false` | only computed-column functions tagged `@filterable` get filter fields, and only those tagged `@sortable` orderBy values |
 | `aggregates.enabled` | `false` | aggregates on every table's connections; when false only `@aggregates`-tagged tables get them; the `aggregates` section configures the `aggregates` plugin (disable it with `plugins.disabled`). Same gate name as pdbr; see [Aggregates](aggregates.md) |
 | `aggregates.grouped` | `true` | `groupedAggregates(groupBy:, having:)` with its `<Type>GroupBy` enum and `<Type>HavingInput` |
-| `aggregates.order` | `true` | `<REL>_COUNT_*` and `<REL>_<AGGREGATE>_<COLUMN>_*` orderBy values over reverse relations |
+| `aggregates.order` | `true` | `<REL>__COUNT_*` and `<REL>__<AGGREGATE>_<COLUMN>_*` orderBy values over reverse relations |
 | `aggregates.filters` | `true` | `aggregates` field in `advanced_filters` to-many relation filters |
 | `aggregates.spatial` | `true` | `stExtent`/`stCentroid` over geometry and geography columns (false also drops the next row) |
 | `aggregates.spatial_union_collect` | `false` | `stUnion`/`stCollect`, whose results grow with the row set (10 × `scan_cost` each) |
 | `aggregates.scan_cost` | `10` | cost-estimate surcharge per aggregate field, aggregate orderBy value and relation-aggregate comparison; must be `>= 0` |
 | `plugins.settings.contrib.filters` | `true` | full-text, trigram, unaccent, hstore, ltree, range, inet and cube filter operators, the vector, cube and earthdistance distance thresholds, plus `<field>Rank` fields; see [Contrib types](contrib.md) |
-| `plugins.settings.contrib.ordering` | `true` | `_RANK_`/`_SIMILARITY_`/pgvector, cube and earthdistance distance orderBy values, the distance fields and the `similarTo:`/`nearVector:`/`nearPoint:` arguments; see [Contrib types](contrib.md) |
+| `plugins.settings.contrib.ordering` | `true` | `_RANK_`/`_SIMILARITY_`/pgvector, cube and earthdistance distance orderBy values, the distance fields and their `near:` references; see [Contrib types](contrib.md) |
 | `plugins.settings.nested_mutations.max_depth` | `3` | nesting levels of nested mutation fields per root field; must be `>= 1` |
 | `plugins.settings.nested_mutations.max_operations` | `50` | nested operations per root field (each list item counts once); more is a client error; must be `>= 1` |
-| `plugins.settings.postgis.filters` | `true` | `GeometryFilterOps` on spatial columns and `RasterFilterOps` on raster columns; see [PostGIS](postgis.md) |
+| `plugins.settings.postgis.filters` | `true` | `GeoJSONFilter` on spatial columns and `RasterFilter` on raster columns; see [PostGIS](postgis.md) |
 | `plugins.settings.postgis.derived` | `true` | derived accessors (`<field>Area`, `<field>Centroid`, …) and the raster accessors |
-| `plugins.settings.postgis.ordering` | `true` | distance ordering, `<field>Distance` fields and the `near:` argument |
+| `plugins.settings.postgis.ordering` | `true` | distance ordering, `<field>Distance` fields and their `near:` references |
 | `plugins.settings.postgis.projection` | `true` | the `buffer:`, `simplify:`, `transform:` and `precision:` projection arguments |
 | `plugins.settings.postgis.typed_geometry` | `false` | spatial columns, computed columns, function results and composite attributes read as typed geometry objects (`GeometryPoint { x y }`, …) instead of the `GeoJSON` scalar; see [PostGIS](postgis.md#typed-geometry) |
 | `log.level` | `info` | `debug`, `info`, `warn`, `error` |

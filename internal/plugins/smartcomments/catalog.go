@@ -30,16 +30,19 @@ type notice struct {
 //   - columns typed as an omitted table's row type, for the same reason.
 //
 // It also copies the tags of @foreignKey constraints into their Comment,
-// so per-constraint decisions read them like those of real constraints.
+// so per-constraint decisions read them like those of real constraints,
+// and first notes a warning for every unknown @omit action and unknown or
+// deprecated @behavior token (see validateTags).
 func (p *Plugin) TransformCatalog(ctx context.Context, c *introspect.Catalog) error {
 	before := make(map[string]bool, len(c.Tables))
 	for _, t := range c.Tables {
 		before[tableKey(t.Schema, t.Name)] = true
 	}
+	p.notices = nil
+	p.validateTags(c)
 	if err := p.Hook.TransformCatalog(ctx, c); err != nil {
 		return err
 	}
-	p.notices = nil
 	removed := before
 	for _, t := range c.Tables {
 		delete(removed, tableKey(t.Schema, t.Name))

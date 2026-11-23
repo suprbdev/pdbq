@@ -53,7 +53,7 @@ type Person implements Node {
   (`[Email!]`), condition and mutation inputs, function arguments and results,
   computed columns and OUT/TABLE record fields. A domain over a domain gets its
   own scalar.
-- **Filters** use the base type's operator input (`StringFilterOps` for
+- **Filters** use the base type's operator input (`StringFilter` for
   `email`, with `like`/`startsWith`/…), so a domain column filters exactly like
   a column of its base type.
 

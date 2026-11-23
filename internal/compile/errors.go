@@ -58,3 +58,11 @@ func errDepth(limit int) error {
 func errPageSize(arg string, got, max int) error {
 	return errUserCode(errcode.PageSizeExceeded, "%s %d exceeds the maximum page size of %d", arg, got, max)
 }
+
+// errNoReference rejects an orderBy value or score field (what: "orderBy
+// LOCATION_DISTANCE_ASC", "field locationDistance") measured against a
+// reference the list field's near: argument does not hold for its column,
+// whose near: field is field.
+func errNoReference(what, field string) error {
+	return errUser("%s requires near: {%s: …}", what, field)
+}

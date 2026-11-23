@@ -632,11 +632,11 @@ func TestAdvancedFilters(t *testing.T) {
 	})
 
 	t.Run("relation existence filter", func(t *testing.T) {
-		got := emails(t, hs.URL, `{allUsers(filter: {postsByAuthorIdExist: true}, orderBy: [EMAIL_ASC]) { nodes { email } }}`, "allUsers", "email")
+		got := emails(t, hs.URL, `{allUsers(filter: {postsByAuthorIdExists: true}, orderBy: [EMAIL_ASC]) { nodes { email } }}`, "allUsers", "email")
 		if len(got) != 3 {
 			t.Errorf("exist true: got %v", got)
 		}
-		got = emails(t, hs.URL, `{allUsers(filter: {postsByAuthorIdExist: false}) { nodes { email } }}`, "allUsers", "email")
+		got = emails(t, hs.URL, `{allUsers(filter: {postsByAuthorIdExists: false}) { nodes { email } }}`, "allUsers", "email")
 		if len(got) != 0 {
 			t.Errorf("exist false: got %v", got)
 		}
@@ -801,7 +801,7 @@ func TestAdvancedFilters(t *testing.T) {
 
 	t.Run("postgis distance ordering", func(t *testing.T) {
 		res := post(t, hs.URL, `{
-			allPlaces(near: {geometry: "SRID=4326;POINT(-0.1281 51.5080)"}, orderBy: [LOCATION_DISTANCE_ASC]) {
+			allPlaces(near: {location: "SRID=4326;POINT(-0.1281 51.5080)", area: "SRID=4326;POINT(-0.1281 51.5080)"}, orderBy: [LOCATION_DISTANCE_ASC]) {
 				nodes { name }
 			}
 		}`, nil)
@@ -948,7 +948,7 @@ func TestAdvancedFilters(t *testing.T) {
 
 	t.Run("postgis geography ordering and accessors", func(t *testing.T) {
 		res := post(t, hs.URL, `{
-			allPlaces(near: {geometry: "SRID=4326;POINT(-0.1281 51.5080)"}, orderBy: [AREA_DISTANCE_ASC]) {
+			allPlaces(near: {location: "SRID=4326;POINT(-0.1281 51.5080)", area: "SRID=4326;POINT(-0.1281 51.5080)"}, orderBy: [AREA_DISTANCE_ASC]) {
 				nodes { name areaArea areaLength areaPerimeter areaCentroid areaEnvelope areaSrid areaGeometryType areaIsValid }
 			}
 		}`, nil)

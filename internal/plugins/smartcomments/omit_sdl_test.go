@@ -164,7 +164,7 @@ const (
 	sAggFilter = "agg-filter" // a having or relation-aggregate filter field
 	sOrder     = "order"      // a plain or relational orderBy value
 	sRefOrder  = "ref-order"  // a distance or similarity orderBy value
-	sRef       = "ref"        // a reference input field (similarTo:, nearVector:), read by ref-orders and scores
+	sRef       = "ref"        // a reference input field (near:), read by ref-orders and scores
 	sScore     = "score"      // a similarity or distance field, scored against a reference input
 	sRank      = "rank"       // a full-text rank field, scored against the column's filter
 	sRankOrder = "rank-order" // a full-text rank orderBy value
@@ -234,7 +234,7 @@ func occurrences(t *testing.T, s *ast.Schema, column string) map[string]bool {
 					add(sAggFilter, loc)
 				case strings.HasSuffix(name, "Filter") || strings.HasSuffix(name, "Condition"):
 					add(sFilter, loc)
-				case strings.HasSuffix(name, "SimilarToInput") || strings.HasSuffix(name, "NearVectorInput"):
+				case strings.HasSuffix(name, "NearInput"):
 					add(sRef, loc)
 				case strings.HasSuffix(name, "Patch"):
 					add(sUpdate, loc)
@@ -307,13 +307,16 @@ func TestOmitColumnEverywhere(t *testing.T) {
 		{"@behavior -select", read},
 		{"@omit filter", []string{sFilter, sAggFilter, sRank, sRankOrder, sDistinct}},
 		{"@omit order", []string{sOrder, sRefOrder, sAggOrder, sRankOrder, sDistinct, sGroupBy}},
+		{"@behavior -filterBy", []string{sFilter, sAggFilter, sRank, sRankOrder, sDistinct}},
+		{"@behavior -orderBy", []string{sOrder, sRefOrder, sAggOrder, sRankOrder, sDistinct, sGroupBy}},
+		{"@behavior -filter", []string{sFilter, sAggFilter, sRank, sRankOrder, sDistinct}},
 		{"@omit create", []string{sCreate, sUpsert}},
 		{"@omit update", []string{sUpdate}},
 		{"@omit filter,order", []string{sFilter, sAggFilter, sOrder, sRefOrder, sAggOrder, sRank, sRankOrder, sDistinct, sGroupBy}},
 	}
 	columns := map[string][]string{
 		"secret_code":   {sOutput, sKey, sUpsert, sFilter, sAggFilter, sOrder, sRefOrder, sRef, sScore, sAggOrder, sDocument, sDistinct, sCreate, sUpdate},
-		"secret_spot":   {sOutput, sFilter, sAggFilter, sRefOrder, sScore, sCreate, sUpdate},
+		"secret_spot":   {sOutput, sFilter, sAggFilter, sRef, sRefOrder, sScore, sCreate, sUpdate},
 		"secret_doc":    {sOutput, sFilter, sAggFilter, sOrder, sAggOrder, sRank, sRankOrder, sDistinct, sGroupBy, sCreate, sUpdate},
 		"secret_amount": {sOutput, sFilter, sAggFilter, sOrder, sAggOrder, sDistinct, sGroupBy, sCreate, sUpdate},
 	}

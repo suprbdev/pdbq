@@ -45,16 +45,16 @@ func TestSpatialFilterFields(t *testing.T) {
 		if f == nil {
 			t.Fatalf("filter field %q missing", name)
 		}
-		if f.Type != "GeometryFilterOps" {
-			t.Errorf("%s type = %q, want GeometryFilterOps", name, f.Type)
+		if f.Type != "GeoJSONFilter" {
+			t.Errorf("%s type = %q, want GeoJSONFilter", name, f.Type)
 		}
 		if f.Column != name {
 			t.Errorf("%s column binding = %q, want %q", name, f.Column, name)
 		}
 	}
-	ops, ok := b.Inputs["GeometryFilterOps"]
+	ops, ok := b.Inputs["GeoJSONFilter"]
 	if !ok {
-		t.Fatal("GeometryFilterOps not generated")
+		t.Fatal("GeoJSONFilter not generated")
 	}
 	for _, name := range []string{
 		"bboxIntersects", "intersects", "within", "dwithin", "beyond", "isNull",
@@ -63,7 +63,7 @@ func TestSpatialFilterFields(t *testing.T) {
 		"bboxEquals", "exactlyEquals", "orderingEquals", "intersects3D", "bboxIntersectsND",
 	} {
 		if ops.Field(name) == nil {
-			t.Errorf("operator %q missing from GeometryFilterOps", name)
+			t.Errorf("operator %q missing from GeoJSONFilter", name)
 		}
 	}
 	if got := ops.Field("bboxIntersects").Type; got != "BBoxInput" {
@@ -81,7 +81,7 @@ func TestSpatialFilterFields(t *testing.T) {
 
 func TestNoScalarOpsOnSpatialColumns(t *testing.T) {
 	b := buildWith(t, nil, nil)
-	ops := b.Inputs["GeometryFilterOps"]
+	ops := b.Inputs["GeoJSONFilter"]
 	// Scalar comparisons are meaningless for PostGIS types and mostly rejected
 	// by Postgres; they must not be offered.
 	for _, name := range []string{"equalTo", "lessThan", "greaterThan", "in", "like"} {
@@ -256,13 +256,27 @@ func TestDistanceOrdering(t *testing.T) {
 	}
 	var hasNear bool
 	for _, a := range f.Args {
-		if a.Name == "near" && a.Type == "NearInput" {
+		if a.Name == "near" && a.Type == "PlaceNearInput" {
 			hasNear = true
 		}
 	}
 	if !hasNear {
-		t.Error("near: NearInput argument missing from allPlaces")
+		t.Error("near: PlaceNearInput argument missing from allPlaces")
 	}
+	near := b.Inputs["PlaceNearInput"]
+	if near == nil || near.Field("location") == nil || near.Field("location").Type != "GeoJSON" || near.Field("location").Column != "location" ||
+		near.Field("area") == nil {
+		t.Errorf("PlaceNearInput = %+v", near)
+	}
+}
+
+func hasArg(f *schema.Field, name string) bool {
+	for _, a := range f.Args {
+		if a.Name == name {
+			return true
+		}
+	}
+	return false
 }
 
 func TestSettingsToggleEachHalf(t *testing.T) {
@@ -272,8 +286,8 @@ func TestSettingsToggleEachHalf(t *testing.T) {
 		check   func(*testing.T, *schema.Builder)
 	}{
 		{"filters", func(s *Settings) { s.Filters = false }, func(t *testing.T, b *schema.Builder) {
-			if _, ok := b.Inputs["GeometryFilterOps"]; ok {
-				t.Error("GeometryFilterOps generated with filters disabled")
+			if _, ok := b.Inputs["GeoJSONFilter"]; ok {
+				t.Error("GeoJSONFilter generated with filters disabled")
 			}
 		}},
 		{"derived", func(s *Settings) { s.Derived = false }, func(t *testing.T, b *schema.Builder) {
@@ -457,7 +471,7 @@ func TestDistanceFields(t *testing.T) {
 		t.Fatalf("distance fields missing: location %v, area %v", loc != nil, area != nil)
 	}
 	for _, f := range []*schema.Field{loc, area} {
-		if f.Type != "Float" || f.Meta == nil || f.Meta.Kind != schema.KindScore || f.Meta.Score == nil || f.Meta.Score.Arg != "near" || f.Meta.Score.Expr != "" {
+		if f.Type != "Float" || f.Meta == nil || f.Meta.Kind != schema.KindScore || f.Meta.Score == nil || f.Meta.Score.Expr != "" {
 			t.Errorf("%s: %+v / %+v", f.Name, f, f.Meta)
 		}
 	}

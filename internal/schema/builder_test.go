@@ -75,9 +75,9 @@ func TestTableBackedEnum(t *testing.T) {
 	for _, want := range []string{
 		"enum EventType ", "CONFERENCE", "HACKATHON", "MEETUP",
 		`"""A large formal gathering"""`,
-		"typeCode: EventType!",         // output field + create input
-		"typeCode: EventTypeFilterOps", // filter
-		"TYPE_CODE_ASC",                // orderBy
+		"typeCode: EventType!",      // output field + create input
+		"typeCode: EventTypeFilter", // filter
+		"TYPE_CODE_ASC",             // orderBy
 		"allEvents(", "createEvent(",
 	} {
 		if !strings.Contains(built.SDL, want) {
@@ -578,5 +578,34 @@ func TestDeletedNodeIDField(t *testing.T) {
 	cat.Table("public", "users").PrimaryKey = nil
 	if body := sdlType(build(cat), "type DeleteUserPayload"); strings.Contains(body, "deletedUserNodeId") {
 		t.Errorf("table without a nodeId must not get deletedUserNodeId:\n%s", body)
+	}
+}
+
+func TestOperatorInputCollidesWithTableFilter(t *testing.T) {
+	cat := testutil.FixtureCatalog()
+	cat.Tables = append(cat.Tables, &introspect.Table{
+		Schema: "public", Name: "strings", Kind: introspect.RelTable,
+		Privileges: introspect.Privileges{Select: true},
+		Columns:    []*introspect.Column{{Name: "id", Position: 1, PGType: "int4", TypeSchema: "pg_catalog", NotNull: true}},
+		PrimaryKey: &introspect.Constraint{Name: "strings_pkey", Columns: []string{"id"}},
+	})
+	_, err := schema.New(cat, inflect.Default, schema.Options{FilterIndexedOnly: true}).Build()
+	if err == nil || !strings.Contains(err.Error(), "public.strings") || !strings.Contains(err.Error(), "StringFilter") {
+		t.Fatalf("Build error = %v, want the StringFilter collision", err)
+	}
+}
+
+func TestScalarOperatorInputNames(t *testing.T) {
+	built, err := schema.New(testutil.FixtureCatalog(), inflect.Default, schema.Options{FilterIndexedOnly: true}).Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"input StringFilter {", "input IntFilter {", "email: StringFilter", "id: IntFilter"} {
+		if !strings.Contains(built.SDL, want) {
+			t.Errorf("SDL missing %q", want)
+		}
+	}
+	if strings.Contains(built.SDL, "FilterOps") {
+		t.Error("SDL still names a FilterOps input")
 	}
 }

@@ -91,7 +91,7 @@ func TestDomainScalars(t *testing.T) {
 			t.Errorf("SDL contains %q", absent)
 		}
 	}
-	if f := sdlType(built.SDL, "input UserFilter "); !strings.Contains(f, "workEmail: StringFilterOps") {
+	if f := sdlType(built.SDL, "input UserFilter "); !strings.Contains(f, "workEmail: StringFilter") {
 		t.Errorf("domain column filter must use the base type's operators:\n%s", f)
 	}
 	if c := sdlType(built.SDL, "input UserCondition "); !strings.Contains(c, "workEmail: Email") {

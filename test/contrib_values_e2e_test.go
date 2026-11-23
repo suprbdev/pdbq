@@ -125,9 +125,9 @@ func TestContribValues(t *testing.T) {
 		{"levenshtein", `filter: {name: {levenshteinDistanceLessThan: {text: "Robert", distance: 3}}}`, []int{1, 2}},
 		{"levenshtein negated skips long values", `filter: {not: {name: {levenshteinDistanceLessThan: {text: "Robert", distance: 3}}}}`, []int{3}},
 		{"nlevel order", `orderBy: [PATH_NLEVEL_DESC]`, []int{1, 5, 2, 3, 4}},
-		{"value order", `hstoreKey: {attrs: "color"}, orderBy: [ATTRS_VALUE_ASC]`, []int{2, 5, 1, 3, 4}},
-		{"value order desc", `hstoreKey: {attrs: "color"}, orderBy: [ATTRS_VALUE_DESC]`, []int{1, 5, 2, 3, 4}},
-		{"levenshtein order", `similarTo: {name: "Robert"}, orderBy: [NAME_LEVENSHTEIN_DISTANCE_ASC]`, []int{1, 2, 3, 4, 5}},
+		{"value order", `near: {attrs: "color"}, orderBy: [ATTRS_VALUE_ASC]`, []int{2, 5, 1, 3, 4}},
+		{"value order desc", `near: {attrs: "color"}, orderBy: [ATTRS_VALUE_DESC]`, []int{1, 5, 2, 3, 4}},
+		{"levenshtein order", `near: {name: "Robert"}, orderBy: [NAME_LEVENSHTEIN_DISTANCE_ASC]`, []int{1, 2, 3, 4, 5}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			args := tc.args
@@ -143,7 +143,7 @@ func TestContribValues(t *testing.T) {
 	}
 
 	t.Run("levenshtein distance field", func(t *testing.T) {
-		res := post(t, url, `{allItems(similarTo: {name: "Robert"}, orderBy: [ID_ASC]) { nodes { id nameLevenshteinDistance } }}`, nil)
+		res := post(t, url, `{allItems(near: {name: "Robert"}, orderBy: [ID_ASC]) { nodes { id nameLevenshteinDistance } }}`, nil)
 		requireNoErrors(t, res)
 		var conn struct {
 			Nodes []struct {
@@ -164,7 +164,7 @@ func TestContribValues(t *testing.T) {
 	})
 
 	t.Run("keyset over value order", func(t *testing.T) {
-		q := `query ($after: Cursor) { allItems(hstoreKey: {attrs: "color"}, orderBy: [ATTRS_VALUE_ASC], first: 2, after: $after) {
+		q := `query ($after: Cursor) { allItems(near: {attrs: "color"}, orderBy: [ATTRS_VALUE_ASC], first: 2, after: $after) {
 			nodes { id } pageInfo { endCursor hasNextPage } } }`
 		var got []int
 		var after any
@@ -224,7 +224,7 @@ func TestContribValuesPolicy(t *testing.T) {
 			t.Errorf("indexed_only without allowlist exposes %s: %s", absent, raw)
 		}
 	}
-	if !strings.Contains(raw, `"name":"tagIds","type":{"name":"IntListIntarrayFilterOps"}`) {
+	if !strings.Contains(raw, `"name":"tagIds","type":{"name":"IntListIntarrayFilter"}`) {
 		t.Errorf("GIN-indexed tag_ids lacks query_int: %s", raw)
 	}
 

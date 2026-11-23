@@ -146,7 +146,7 @@ func TestTemporal(t *testing.T) {
 			someGrace: allBookingNotes(filter: {roomBookingsByRoomIdAndValidAt: {some: {guest: {equalTo: "Grace"}}}}) { nodes { note } }
 			everyAda: allBookingNotes(filter: {roomBookingsByRoomIdAndValidAt: {every: {guest: {equalTo: "Ada"}}}}) { nodes { note } }
 			dangling: allBookingNotes(filter: {userByAuthorIdExists: false}) { nodes { note } }
-			noteless: allRoomBookings(filter: {bookingNotesByRoomIdAndValidAtExist: false}) { nodes { guest } }
+			noteless: allRoomBookings(filter: {bookingNotesByRoomIdAndValidAtExists: false}) { nodes { guest } }
 			byParent: allBookingNotes(orderBy: [ROOM_BOOKINGS_BY_ROOM_ID_AND_VALID_AT__GUEST_DESC]) { nodes { note } }
 		}`, `{"byParent":{"nodes":[{"note":"Spans both"},{"note":"Short"}]},`+
 			`"dangling":{"nodes":[{"note":"Short"}]},`+

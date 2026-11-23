@@ -120,11 +120,11 @@ func TestScaleSDLStable(t *testing.T) {
 		hub, indexedOnly, aggregates, simple bool
 		want                                 string
 	}{
-		{"random-indexed", false, true, false, false, "ee0149ace7744f4a1a9c5da865691616932a4e196aedb5d1047f97261ea5c8c7"},
-		{"random-all", false, false, false, false, "5a59bff124c142c2b9d8d6c39f88d008a60f7611222e9ea0d453b9f7299c8c99"},
-		{"hub-all", true, false, false, false, "99f46244b57d7500387a25dda20522a6c0dcb02affb29d951592a98470c769f8"},
-		{"hub-aggregates", true, true, true, false, "3d687aa5169a69a25074043b515db369a17503779b577d8272fbe7c983af0414"},
-		{"hub-simple-names", true, false, false, true, "012e2d7f3ffa9d9b56c0a4760a2f4873dcdf24956dc6b32df4c6a0177d01c141"},
+		{"random-indexed", false, true, false, false, "8465467034e3693358d992274981403f97f02c4e861338a05eb18fbdd167fcf3"},
+		{"random-all", false, false, false, false, "0ce6ec457614b00283133cabe20b5c0d7b26c4b6042236aba06c94e85eb577c7"},
+		{"hub-all", true, false, false, false, "f4e22de7a1963ed412b517a72cc1af099828a2626801153a96ebffa84c8b10dd"},
+		{"hub-aggregates", true, true, true, false, "74594b5807185566fea18a7e1f7d66808b2c99c2216ed4080f78b2de9c72a32d"},
+		{"hub-simple-names", true, false, false, true, "ffde13f7124aaf66cafec6fb03c639b758bba9700e772827f95b6f90b19159f2"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

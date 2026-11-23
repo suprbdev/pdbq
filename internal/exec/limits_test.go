@@ -276,8 +276,8 @@ func TestCostAggregates(t *testing.T) {
 		{`{ allPosts(first: 1) { totalCount } }`, 2},
 		{`{ allPosts(first: 1) { aggregates { sum { id } } } }`, 14},
 		{`{ allPosts(first: 1) { groupedAggregates(groupBy: [AUTHOR_ID]) { keys } } }`, 112},
-		{`{ allUsers(first: 1, orderBy: [POSTS_BY_AUTHOR_ID_COUNT_DESC]) { totalCount } }`, 12},
-		{`{ allUsers(first: 1, after: "x", orderBy: [POSTS_BY_AUTHOR_ID_COUNT_DESC]) { totalCount } }`, 32},
+		{`{ allUsers(first: 1, orderBy: [POSTS_BY_AUTHOR_ID__COUNT_DESC]) { totalCount } }`, 12},
+		{`{ allUsers(first: 1, after: "x", orderBy: [POSTS_BY_AUTHOR_ID__COUNT_DESC]) { totalCount } }`, 32},
 		{`{ allUsers(first: 1, filter: {not: {postsByAuthorId: {aggregates: {
 			filter: {title: {startsWith: "a"}}
 			sum: {id: {greaterThan: "1"}}
@@ -295,7 +295,7 @@ func TestCostAggregates(t *testing.T) {
 func TestCostScoreFields(t *testing.T) {
 	cols := costFor(t, testutil.FixtureCatalog(), defaultPostgis(), `{ allPlaces(first: 20) { nodes { id name } } }`, nil)
 	scores := costFor(t, testutil.FixtureCatalog(), defaultPostgis(),
-		`{ allPlaces(first: 20, near: {geometry: "POINT(0 0)"}) { nodes { locationDistance(useSpheroid: true) areaDistance } } }`, nil)
+		`{ allPlaces(first: 20, near: {location: "POINT(0 0)", area: "POINT(0 0)"}) { nodes { locationDistance(useSpheroid: true) areaDistance } } }`, nil)
 	if cols != scores {
 		t.Errorf("score fields cost %d, columns %d", scores, cols)
 	}
