@@ -92,7 +92,7 @@ func builtinPlugins(cfg config.Config) []plugin.Plugin {
 		advancedfilters.New(cfg.Plugins.Settings["advanced-filters"]),
 		postgisplugin.New(cfg.Plugins.Settings["postgis"]),
 		contribplugin.New(cfg.Plugins.Settings["contrib"]),
-		aggregates.New(cfg.Plugins.Settings["aggregates"]),
+		aggregates.New(cfg.Plugins.Settings["aggregates"], cfg.Plugins.Settings["advanced-filters"]),
 		nestedmutations.New(cfg.Plugins.Settings["nested-mutations"]),
 	}
 }

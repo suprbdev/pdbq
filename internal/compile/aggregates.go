@@ -66,7 +66,7 @@ func (s *stmt) groupedAggregates(t *introspect.Table, f *ast.Field, alias, where
 		}
 		key := "__k" + strconv.Itoa(i+1)
 		exprs[i] = expr
-		keys[i] = s.groupKeyJSON(expr, gb.Column) + " #>> '{}'"
+		keys[i] = "min((" + s.groupKeyText(expr, gb.Column) + `) COLLATE "C")`
 		cols[i] = expr + " AS " + key
 		inOrder[i] = key
 		order[i] = g + "." + key
@@ -92,15 +92,24 @@ func (s *stmt) groupedAggregates(t *introspect.Table, f *ast.Field, alias, where
 		g, strings.Join(order, ", "), indent(inner), g), nil
 }
 
-// groupKeyJSON renders a group key like the column's own output, as jsonb.
-func (s *stmt) groupKeyJSON(expr string, c *introspect.Column) string {
-	if !c.IsArray {
-		return "to_jsonb(" + s.exprJSON(expr, c) + ")"
+// groupKeyText renders one row's group key as text, like the column's own
+// output: scalars by their JSON string or number text, json/jsonb values
+// (and arrays) as JSON text, so a JSON null, a JSON string "1" and a number
+// 1 stay distinct from each other and from SQL NULL. The caller takes the
+// group's min under the C collation: values that compare equal without
+// being identical (citext case variants, numeric scales, nondeterministic
+// collations) then yield the same representative on every run.
+func (s *stmt) groupKeyText(expr string, c *introspect.Column) string {
+	if c.IsArray {
+		if mapped, ok := s.enumArrayJSON(expr, c); ok {
+			return mapped + "::text"
+		}
+		return "to_jsonb(" + expr + ")::text"
 	}
-	if mapped, ok := s.enumArrayJSON(expr, c); ok {
-		return mapped
+	if base := strings.TrimPrefix(c.PGType, "_"); base == "json" || base == "jsonb" {
+		return "to_jsonb(" + expr + ")::text"
 	}
-	return "to_jsonb(" + expr + ")"
+	return "to_jsonb(" + s.exprJSON(expr, c) + ") #>> '{}'"
 }
 
 // aggregatesJSON renders the selection of an aggregates object (the
@@ -159,8 +168,9 @@ func aggregateExpr(a *schema.Aggregate, alias string) string {
 
 // havingCond compiles a <Type>HavingInput value into a boolean expression
 // over the aggregates of the group at alias: AND/OR lists combine nested
-// having inputs, every other field is an aggregate group of column
-// operator objects.
+// having inputs (an empty one matches every group, so it makes an OR
+// true), every other field is an aggregate group of column operator
+// objects.
 func (s *stmt) havingCond(typeName string, v any, alias string) (string, error) {
 	m, ok := v.(map[string]any)
 	if !ok {
@@ -179,6 +189,7 @@ func (s *stmt) havingCond(typeName string, v any, alias string) (string, error) 
 				return "", errUser("having %s must be a list", key)
 			}
 			var subs []string
+			mark := len(s.args)
 			for _, item := range items {
 				sub, err := s.havingCond(typeName, item, alias)
 				if err != nil {
@@ -187,6 +198,10 @@ func (s *stmt) havingCond(typeName string, v any, alias string) (string, error) 
 				if sub != "" {
 					subs = append(subs, sub)
 				}
+			}
+			if key == "OR" && len(subs) < len(items) {
+				s.args = s.args[:mark]
+				continue
 			}
 			if len(subs) > 0 {
 				conds = append(conds, "("+strings.Join(subs, " "+key+" ")+")")
@@ -235,7 +250,8 @@ func (s *stmt) aggregateGroupConds(groupType string, v any, alias string) ([]str
 // filter ({aggregates: {filter: {...}, sum: {id: {greaterThan: 5}}}}): a
 // scalar subquery over the related rows (narrowed by filter) whose boolean
 // result ANDs the aggregate comparisons. An empty set of related rows
-// aggregates to NULL (0 for sum), so comparisons other than on sum fail.
+// aggregates to NULL (0 for sum), so comparisons other than on sum fail; a
+// NULL comparison counts as false, keeping not: {...} an exact complement.
 func (s *stmt) relationAggregateCond(rel *schema.FilterRelation, filterType string, v any, alias string) (string, error) {
 	m, ok := v.(map[string]any)
 	if !ok {
@@ -276,7 +292,7 @@ func (s *stmt) relationAggregateCond(rel *schema.FilterRelation, filterType stri
 	if len(conds) == 0 {
 		return "", nil
 	}
-	return fmt.Sprintf("(SELECT %s FROM %s AS %s WHERE %s)",
+	return fmt.Sprintf("coalesce((SELECT %s FROM %s AS %s WHERE %s), false)",
 		strings.Join(conds, " AND "), s.sourceRef(rel.Table), sub, where), nil
 }
 

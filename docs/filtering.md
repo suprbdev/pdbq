@@ -48,6 +48,10 @@ operator set.
 }
 ```
 
+An empty filter object (`{}`, or one whose fields are all `null`) matches
+every row. An `or` list containing one therefore matches every row too, and
+an `and` list ignores it.
+
 ## The condition shorthand
 
 Every table also gets a `<Type>Condition` input — the zero-ceremony

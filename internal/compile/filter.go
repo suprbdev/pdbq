@@ -48,7 +48,8 @@ func (s *stmt) spatialValueExpr(col *introspect.Column, v any) (string, error) {
 }
 
 // filterCond compiles a <Type>Filter input value into a boolean SQL
-// expression over alias, or "" when the filter is empty.
+// expression over alias, or "" when the filter is empty. An empty filter
+// matches every row, so an or list holding one matches every row too.
 func (s *stmt) filterCond(t *introspect.Table, filterType string, v any, alias string) (string, error) {
 	m, ok := v.(map[string]any)
 	if !ok {
@@ -68,6 +69,7 @@ func (s *stmt) filterCond(t *introspect.Table, filterType string, v any, alias s
 				return "", errUser("filter %s must be a list", key)
 			}
 			var subs []string
+			mark := len(s.args)
 			scope := s.rankScope
 			s.rankScope = scope && key == "and"
 			for _, item := range items {
@@ -80,6 +82,10 @@ func (s *stmt) filterCond(t *introspect.Table, filterType string, v any, alias s
 				}
 			}
 			s.rankScope = scope
+			if key == "or" && len(subs) < len(items) {
+				s.args = s.args[:mark]
+				continue
+			}
 			if len(subs) == 0 {
 				continue
 			}

@@ -12,6 +12,7 @@ import (
 	"github.com/suprbdev/pdbq/internal/plugins/advancedfilters"
 	"github.com/suprbdev/pdbq/internal/plugins/aggregates"
 	postgisplugin "github.com/suprbdev/pdbq/internal/plugins/postgis"
+	"github.com/suprbdev/pdbq/internal/plugins/smartcomments"
 	"github.com/suprbdev/pdbq/internal/schema"
 )
 
@@ -22,7 +23,7 @@ func build(t *testing.T, cat *introspect.Catalog, withPlugin bool, disabled map[
 	b := schema.New(cat, inflect.Default, schema.Options{FilterIndexedOnly: true, Functions: true})
 	plugins := []plugin.Plugin{advancedfilters.New(nil), postgisplugin.New(nil)}
 	if withPlugin {
-		plugins = append(plugins, aggregates.New(settings))
+		plugins = append(plugins, aggregates.New(settings, nil))
 	}
 	if err := plugin.NewRegistry(plugins...).TransformSchema(context.Background(), disabled, b); err != nil {
 		t.Fatal(err)
@@ -105,11 +106,12 @@ func TestSchemaSurface(t *testing.T) {
 		"input PostSumAggregateFilter {\n  id: BigIntFilterOps",
 		"stExtent: PlaceStExtentAggregates",
 		"stCentroid: PlaceStCentroidAggregates",
-		"type PlaceStUnionAggregates {",
+		"type PlaceStCentroidAggregates {",
 		"location: GeoJSON",
 	}, []string{
 		"PostSumAggregates {\n  \"\"\"Sum of title",
 		"_ST_EXTENT_", "PlaceStExtentAggregateFilter", "PlaceHavingStExtentInput",
+		"PlaceStUnionAggregates", "PlaceStCollectAggregates",
 		"POSTS_BY_AUTHOR_ID_DISTINCT_COUNT_BODY_ASC",
 	})
 	requireSDL(t, sdl, []string{"enum UserGroupBy {\n  MOOD\n  SETTINGS\n  TAGS\n  MOODS\n}"}, nil)
@@ -120,7 +122,7 @@ func TestTimestampDerivatives(t *testing.T) {
 		FilterIndexedOnly: true,
 		AllowColumns:      map[string][]string{"public.users": {"created_at"}},
 	})
-	if err := aggregates.New(map[string]any{"enabled": true}).TransformSchema(context.Background(), b); err != nil {
+	if err := aggregates.New(map[string]any{"enabled": true}, nil).TransformSchema(context.Background(), b); err != nil {
 		t.Fatal(err)
 	}
 	built, err := b.Build()
@@ -193,8 +195,14 @@ func TestBindings(t *testing.T) {
 		t.Errorf("count order binding: %+v", spec)
 	}
 	extent := built.Meta["PlaceStExtentAggregates"]["area"]
-	if extent == nil || extent.Aggregate.SQL(`t."area"`) != `ST_Extent(t."area"::geometry)::geometry` {
-		t.Errorf("geography extent must cast to geometry: %+v", extent)
+	if extent == nil || extent.Aggregate.SQL(`t."area"`) != `ST_SetSRID(ST_Extent(t."area"::geometry)::geometry, min(ST_SRID(t."area")))` {
+		t.Errorf("unconstrained geography extent: %s", extent.Aggregate.SQL(`t."area"`))
+	}
+	if loc := built.Meta["PlaceStExtentAggregates"]["location"]; loc.Aggregate.SQL(`t."location"`) != `ST_SetSRID(ST_Extent(t."location")::geometry, 4326)` {
+		t.Errorf("typmod SRID extent: %s", loc.Aggregate.SQL(`t."location"`))
+	}
+	if order := built.OrderBy["UsersOrderBy"]["POSTS_BY_AUTHOR_ID_SUM_ID_ASC"]; order.Relation == nil || order.Relation.Aggregate.Cost != 7 {
+		t.Errorf("relational aggregate order cost: %+v", order.Relation)
 	}
 }
 
@@ -207,7 +215,7 @@ func tagTable(cat *introspect.Catalog, table, comment string) *introspect.Catalo
 // when spatial columns read as typed geometry objects.
 func TestTypedGeometry(t *testing.T) {
 	b := schema.New(testutil.FixtureCatalog(), inflect.Default, schema.Options{FilterIndexedOnly: true})
-	reg := plugin.NewRegistry(postgisplugin.New(map[string]any{"typed_geometry": true}), aggregates.New(map[string]any{"enabled": true}))
+	reg := plugin.NewRegistry(postgisplugin.New(map[string]any{"typed_geometry": true}), aggregates.New(map[string]any{"enabled": true}, nil))
 	if err := reg.TransformSchema(context.Background(), nil, b); err != nil {
 		t.Fatal(err)
 	}
@@ -216,4 +224,92 @@ func TestTypedGeometry(t *testing.T) {
 		t.Fatal(err)
 	}
 	requireSDL(t, built.SDL, []string{"type PlaceStExtentAggregates {\n  \"\"\"Bounding box (ST_Extent) of location across the matching connection.\"\"\"\n  location: GeoJSON"}, nil)
+}
+
+func TestUnionCollect(t *testing.T) {
+	built := build(t, testutil.FixtureCatalog(), true, nil, map[string]any{"enabled": true, "spatial_union_collect": true, "scan_cost": 3})
+	requireSDL(t, built.SDL, []string{"stUnion: PlaceStUnionAggregates", "stCollect: PlaceStCollectAggregates"}, nil)
+	if m := built.Meta["PlaceStUnionAggregates"]["location"]; m == nil || m.ScanCost != 30 {
+		t.Errorf("stUnion must carry 10x the scan cost: %+v", m)
+	}
+}
+
+// TestColumnPolicies covers the column sets behind having, relational
+// ordering/filtering and grouping: @omit filter / @omit order, money as
+// numeric, the btree allowlist and derivative name collisions.
+func TestColumnPolicies(t *testing.T) {
+	cat := testutil.FixtureCatalog()
+	posts := cat.Table("public", "posts")
+	posts.Column("author_id").Comment = "@omit filter"
+	posts.Column("title").Comment = "@omit order"
+	users := cat.Table("public", "users")
+	users.Columns = append(users.Columns,
+		&introspect.Column{Name: "doc", Position: 20, PGType: "json", TypeSchema: "pg_catalog"},
+		&introspect.Column{Name: "fee", Position: 21, PGType: "money", TypeSchema: "pg_catalog"},
+		&introspect.Column{Name: "created_at_truncated_to_day", Position: 22, PGType: "text", TypeSchema: "pg_catalog"},
+	)
+	reg := plugin.NewRegistry(smartcomments.New(), advancedfilters.New(nil), aggregates.New(map[string]any{"enabled": true}, nil))
+	if err := reg.TransformCatalog(context.Background(), nil, cat); err != nil {
+		t.Fatal(err)
+	}
+	b := schema.New(cat, reg.Inflector(nil), schema.Options{
+		FilterIndexedOnly: true,
+		AllowColumns:      map[string][]string{"public.users": {"created_at", "doc", "fee", "created_at_truncated_to_day"}},
+	})
+	if err := reg.TransformSchema(context.Background(), nil, b); err != nil {
+		t.Fatal(err)
+	}
+	built, err := b.Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	requireSDL(t, built.SDL, []string{
+		"POSTS_BY_AUTHOR_ID_SUM_AUTHOR_ID_ASC",
+		"input PostSumAggregateFilter {\n  id: BigIntFilterOps\n}",
+		"input PostHavingSumInput {\n  id: HavingBigintFilter\n}",
+		"input PostDistinctCountAggregateFilter {\n  id: BigIntFilterOps\n  title: BigIntFilterOps",
+		"fee: BigFloat!",
+		"enum UserGroupBy {\n  MOOD\n  SETTINGS\n  TAGS\n  CREATED_AT\n  CREATED_AT_TRUNCATED_TO_HOUR\n  MOODS\n  FEE\n  CREATED_AT_TRUNCATED_TO_DAY\n}",
+	}, []string{
+		"POSTS_BY_AUTHOR_ID_DISTINCT_COUNT_TITLE", "AUTHOR__TITLE_ASC",
+		"Distinct count of doc",
+	})
+	if gb := built.GroupBy["UserGroupBy"]["CREATED_AT_TRUNCATED_TO_DAY"]; gb == nil || gb.SQL != nil {
+		t.Error("the created_at_truncated_to_day column must keep its value over the derivative")
+	}
+	if a := built.Meta["UserSumAggregates"]["fee"].Aggregate; a.ResultType != "numeric" || a.SQL("x") != "(coalesce(sum(x), '0'))::numeric" {
+		t.Errorf("money sum: %s %s", a.ResultType, a.SQL("x"))
+	}
+}
+
+func TestRelationsOptIn(t *testing.T) {
+	cat := testutil.FixtureCatalog()
+	for _, fk := range cat.Table("public", "places").ForeignKeys {
+		fk.Comment = "@sortable"
+	}
+	for _, fk := range cat.Table("public", "comments").ForeignKeys {
+		if fk.Name == "comments_post_id_fkey" {
+			fk.Comment = "@omit many"
+		}
+	}
+	b := schema.New(cat, inflect.Default, schema.Options{FilterIndexedOnly: true})
+	if err := aggregates.New(map[string]any{"enabled": true}, map[string]any{"relations_opt_in": true}).TransformSchema(context.Background(), b); err != nil {
+		t.Fatal(err)
+	}
+	built, err := b.Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	requireSDL(t, built.SDL, []string{"PLACES_BY_OWNER_ID_COUNT_ASC"}, []string{"POSTS_BY_AUTHOR_ID_COUNT_ASC", "COMMENTS_BY_POST_ID_COUNT_ASC"})
+}
+
+func TestHavingFilterNameClash(t *testing.T) {
+	cat := testutil.FixtureCatalog()
+	cat.Tables = append(cat.Tables, &introspect.Table{
+		Schema: "public", Name: "having_bigint_filters", Kind: "r",
+		Columns: []*introspect.Column{{Name: "id", Position: 1, PGType: "int4", TypeSchema: "pg_catalog", NotNull: true}},
+	})
+	sdl := enabled(t, cat, nil)
+	requireSDL(t, sdl, []string{"type HavingBigintFilter {", "input PostHavingMaxInput {\n  id: HavingIntFilter"},
+		[]string{"input HavingBigintFilter", "PostHavingSumInput"})
 }

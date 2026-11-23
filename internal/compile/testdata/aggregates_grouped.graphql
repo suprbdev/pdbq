@@ -13,6 +13,7 @@
   allUsers {
     byDay: groupedAggregates(groupBy: [CREATED_AT_TRUNCATED_TO_DAY, MOOD]) { keys sum { balance } }
     byMoods: groupedAggregates(groupBy: [MOODS, TAGS]) { keys }
-    byHour: groupedAggregates(groupBy: [CREATED_AT_TRUNCATED_TO_HOUR], having: {average: {balance: {greaterThanOrEqualTo: "1.5"}}}) { keys }
+    byHour: groupedAggregates(groupBy: [CREATED_AT_TRUNCATED_TO_HOUR], having: {average: {id: {greaterThanOrEqualTo: "1.5"}}, OR: [{}, {max: {id: {equalTo: 1}}}]}) { keys }
+    bySettings: groupedAggregates(groupBy: [SETTINGS]) { keys }
   }
 }

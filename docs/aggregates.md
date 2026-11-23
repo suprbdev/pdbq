@@ -68,7 +68,7 @@ suitable column, named like the column's own field:
 | Field | SQL | Applies to | Result type |
 |---|---|---|---|
 | `sum` | `coalesce(sum(x), 0)` | numbers, `interval` | `int2`/`int4` → `BigInt!`, `int8`/`numeric`/`money` → `BigFloat!`, `float4`/`float8` → `Float!`, `interval` → `String!` |
-| `distinctCount` | `count(DISTINCT x)` | every type with equality (not `json`, `xml`, geometric types or composites) | `BigInt` |
+| `distinctCount` | `count(DISTINCT x)` | types with a default btree operator class: built-in scalars and ranges, enums, `citext`/`ltree`/`hstore`, PostGIS types, arrays of these, domains over them (not `json`, `xml`, geometric types, composites or unknown extension types) | `BigInt` |
 | `min`, `max` | `min(x)`, `max(x)` | numbers, `interval`, `date`, `timestamp`, `timestamptz` | the column's type |
 | `average` | `avg(x)` | numbers except `money`, `interval` | integers/`numeric` → `BigFloat`, floats → `Float` |
 | `stddevSample`, `stddevPopulation` | `stddev_samp(x)`, `stddev_pop(x)` | numbers except `money` | floats → `Float`, the rest → `BigFloat` |
@@ -77,6 +77,8 @@ suitable column, named like the column's own field:
 The result types follow PostgreSQL's, as in PostGraphile: the sum of an
 `integer` column is a `bigint` (`BigInt`, serialized as a string). Only `sum`
 is non-null: it reads `0` over no rows. The other aggregates read `null`.
+`money` results (sum, min, max) are converted to `numeric`, because money's
+text form depends on `lc_monetary`.
 
 Compared with pg-aggregates, `min`/`max` also cover dates and timestamps. A
 group type whose table has no suitable column is left out.
@@ -89,10 +91,20 @@ also gets the PostGIS aggregates. They are a pdbq extension, so they carry an
 
 | Field | SQL | Result |
 |---|---|---|
-| `stExtent` | `ST_Extent(x)::geometry` | the bounding box as a GeoJSON `Polygon` (a `Point` or `LineString` when degenerate) |
-| `stUnion` | `ST_Union(x)` | the dissolved union |
-| `stCollect` | `ST_Collect(x)` | a GeoJSON multi-geometry or `GeometryCollection` |
+| `stExtent` | `ST_SetSRID(ST_Extent(x)::geometry, srid)` | the bounding box as a GeoJSON `Polygon` (a `Point` or `LineString` when degenerate) |
 | `stCentroid` | `ST_Centroid(ST_Collect(x))` | the centroid of all values |
+| `stUnion` | `ST_Union(x)` | the dissolved union (opt-in) |
+| `stCollect` | `ST_Collect(x)` | a GeoJSON multi-geometry or `GeometryCollection` (opt-in) |
+
+`ST_Extent` returns a `box2d` without an SRID. pdbq restores it from the
+column's typmod (`geometry(Point, 4326)`), or with `min(ST_SRID(x))` on an
+unconstrained column, so the GeoJSON names the right CRS.
+
+`stUnion` and `stCollect` return a value that grows with the row set, so they
+are off unless `plugins.settings.aggregates.spatial_union_collect` is true,
+and each of their fields costs 10 × `scan_cost`. On an unconstrained column
+holding several SRIDs, `ST_Union`, `ST_Collect` and `ST_Centroid` fail with
+PostGIS's mixed-SRID error. Filter to one SRID first.
 
 ```graphql
 {
@@ -108,7 +120,7 @@ also gets the PostGIS aggregates. They are a pdbq extension, so they carry an
 The results use the `GeoJSON` scalar even with `typed_geometry` on.
 `geography` values are cast to `geometry` first, because PostGIS defines these
 aggregates for `geometry` only, so `stCentroid` is planar. Spatial aggregates
-take no part in `having`, ordering or filtering. Turn them off with
+take no part in `having`, ordering or filtering. Turn them all off with
 `plugins.settings.aggregates.spatial: false`.
 
 ## Grouped aggregates
@@ -134,14 +146,21 @@ values as strings (`null` outside grouped aggregates), in `groupBy` order:
 }
 ```
 
-- The `<Type>GroupBy` enum lists the table's orderable columns: the same set as
-  its `orderBy` enum, so `filters.indexed_only` and `@omit order` apply. A
+- The `<Type>GroupBy` enum lists the table's orderable columns that have a
+  default btree operator class (see `distinctCount`). It is the same set as
+  the `orderBy` enum, so `filters.indexed_only` and `@omit order` apply. A
   column that alone is a primary or unique key is left out, because each of
   its groups would hold one row.
 - `timestamp`/`timestamptz` columns also get `<COLUMN>_TRUNCATED_TO_HOUR` and
   `<COLUMN>_TRUNCATED_TO_DAY` (`date_trunc` in the session time zone).
 - Keys render like the column's own output, then as a string: ISO timestamps,
-  enum values by their GraphQL name, numbers as text.
+  enum values by their GraphQL name, numbers as text. `json`/`jsonb` values
+  and arrays render as JSON text (`{"theme": "dark"}`), so a JSON `null` or
+  string `"1"` stays distinct from SQL `NULL` (a `null` key) and the number
+  `1`. Values that compare equal without being identical (`citext` case
+  variants, `1.0` and `1.00`, nondeterministic collations) fall into one
+  group. Its key is the smallest member's text under the `C` collation, so it
+  is the same on every run.
 - Groups come back ordered by their keys. At most `server.max_page_size` groups
   are returned.
 
@@ -149,7 +168,10 @@ values as strings (`null` outside grouped aggregates), in `groupBy` order:
 
 `having: <Type>HavingInput` filters the groups. It takes one entry per
 aggregate, plus `AND`/`OR` lists of nested having inputs. Entries at the same
-level are ANDed:
+level are ANDed. An empty object matches every group, so `OR: [{}, ...]` is
+always true. The entries cover the table's filterable columns, the columns
+of its `<Type>Filter` input, so `filters.indexed_only` and `@omit filter`
+apply:
 
 ```graphql
 {
@@ -184,8 +206,21 @@ With `simple-names` the relation is `posts`, so the values read
 `POSTS_COUNT_DESC` and `POSTS_SUM_ID_DESC`. Each value compiles to a
 correlated scalar subquery, like the advanced-filters relational ordering. It
 works with keyset cursors, and descending values sort `NULL` (no related rows)
-last. The related columns pass through `filters.indexed_only` exactly as in
-advanced-filters, and `@omit order` on the foreign key skips the relation.
+last. The related table's aggregated columns are its orderable columns,
+those behind its own `orderBy` values, so `filters.indexed_only` and column
+`@omit order` apply as in advanced-filters. On the foreign key, `@omit order`
+and `@omit many` skip the relation. In advanced-filters' `relations_opt_in`
+mode, only keys tagged `@filterable`/`@sortable` get values.
+
+Keyset cursors over a floating-point aggregate (`sum`, `average`,
+`stddev*`/`variance*` of `float4`/`float8` columns) can skip or repeat a row
+at a page boundary. The cursor predicate compares the row's aggregate against
+the anchor row's, and each comes from its own subquery. Floating-point
+summation is order-dependent, so the two can differ in the last bit when the
+planner reads the related rows in a different order. Integer and `numeric`
+aggregates, `count`, `min` and `max` are exact. Use offset pagination, or add
+an exact tiebreaker such as `ID_ASC` (which only helps for exactly equal
+values), when this matters.
 
 ## Filtering by related aggregates
 
@@ -212,8 +247,12 @@ field, the pg-aggregates shape:
 aggregate's result type (`BigIntFilterOps` for the sum of an integer). The
 whole object compiles to one scalar subquery over the related rows. With no
 related rows, `sum` reads 0 and every other aggregate reads `NULL`, so a
-comparison on them fails. Related columns follow `filters.indexed_only`, as
-for ordering. `interval` and spatial results have no filter.
+comparison on them is false. `not: {...}` around it is the exact complement.
+The aggregated columns are the related table's filterable columns, those of
+its `<Type>Filter`, so `filters.indexed_only` and column `@omit filter` apply.
+The field is reachable only through relation filters advanced-filters
+generated, so `@omit filter` on the foreign key and `relations_opt_in` govern
+it too. `interval` and spatial results have no filter.
 
 ## Smart comments
 
@@ -243,18 +282,25 @@ All under `plugins.settings.aggregates`:
 | `grouped` | `true` | `groupedAggregates`, `<Type>GroupBy`, `<Type>HavingInput` |
 | `order` | `true` | `<REL>_COUNT_*` / `<REL>_<AGGREGATE>_<COLUMN>_*` orderBy values |
 | `filters` | `true` | the `aggregates` field of to-many relation filters |
-| `spatial` | `true` | `stExtent`, `stUnion`, `stCollect`, `stCentroid` |
-| `scan_cost` | `10` | cost-estimate surcharge per `aggregates`/`groupedAggregates` field |
+| `spatial` | `true` | `stExtent`, `stCentroid` (and the next row) |
+| `spatial_union_collect` | `false` | `stUnion`, `stCollect`, whose results grow with the row set |
+| `scan_cost` | `10` | cost-estimate surcharge per aggregate field, aggregate orderBy value and relation-aggregate comparison |
 
 ## Cost
 
-The executor's cost estimate charges each `aggregates` and `groupedAggregates`
-field `scan_cost` on top of its selection, because both read the whole
-filtered row set rather than a page. `groupedAggregates` returns a list of
-groups, so its selection is also multiplied by 10, the list fan-out the
-estimator assumes elsewhere. Both charges are multiplied by the enclosing
-connection's page size, as for any other field: a nested
-`postsByAuthorId { aggregates { ... } }` runs once per parent row.
+The executor's cost estimate adds `scan_cost` for each of:
+
+- an `aggregates` or `groupedAggregates` field, on top of its selection,
+  because both read the whole filtered row set rather than a page;
+- each aggregate `orderBy` value, tripled when an `after`/`before` cursor
+  repeats it in the keyset predicate;
+- each aggregate comparison in a relation-aggregate filter.
+
+The last two run once per candidate row. `groupedAggregates` returns up to
+`server.max_page_size` groups, so its selection is multiplied by that cap.
+Each `stUnion`/`stCollect` field costs 10 × `scan_cost`. All of these are
+multiplied by the enclosing connection's page size, as for any other field:
+a nested `postsByAuthorId { aggregates { ... } }` runs once per parent row.
 
 ## Limits
 

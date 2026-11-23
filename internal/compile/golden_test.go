@@ -90,7 +90,7 @@ func buildAggregates(t testing.TB) *schema.Built {
 		AllowColumns:      map[string][]string{"public.users": {"created_at"}},
 	})
 	reg := plugin.NewRegistry(advancedfilters.New(nil), postgisplugin.New(nil),
-		aggregates.New(map[string]any{"enabled": true}))
+		aggregates.New(map[string]any{"enabled": true, "spatial_union_collect": true}, nil))
 	if err := reg.TransformSchema(context.Background(), nil, b); err != nil {
 		t.Fatalf("plugins: %v", err)
 	}

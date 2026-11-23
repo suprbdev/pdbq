@@ -19,7 +19,7 @@ import (
 func aggregatesServer(t *testing.T, mutate func(*config.Config)) string {
 	t.Helper()
 	return testServer(t, func(cfg *config.Config) {
-		cfg.Plugins.Settings = map[string]map[string]any{"aggregates": {"enabled": true}}
+		cfg.Plugins.Settings = map[string]map[string]any{"aggregates": {"enabled": true, "spatial_union_collect": true}}
 		cfg.Filters.AllowColumns = map[string][]string{"public.users": {"created_at"}}
 		if mutate != nil {
 			mutate(cfg)
@@ -138,13 +138,15 @@ func TestAggregates(t *testing.T) {
 				all: groupedAggregates(groupBy: [AUTHOR_ID]) { keys sum { id } }
 				big: groupedAggregates(groupBy: [AUTHOR_ID], having: {sum: {id: {greaterThan: "3"}}}) { keys }
 				either: groupedAggregates(groupBy: [AUTHOR_ID], having: {OR: [{max: {id: {equalTo: 1}}}, {max: {id: {equalTo: 2}}}]}) { keys }
+				any: groupedAggregates(groupBy: [AUTHOR_ID], having: {OR: [{}, {max: {id: {equalTo: 2}}}]}) { keys }
 			}
 		}`, nil)
 		requireNoErrors(t, res)
 		want := normalizeStr(t, `{
 			"all": [{"keys": ["1"], "sum": {"id": "3"}}, {"keys": ["2"], "sum": {"id": "3"}}, {"keys": ["3"], "sum": {"id": "4"}}],
 			"big": [{"keys": ["3"]}],
-			"either": [{"keys": ["1"]}]}`)
+			"either": [{"keys": ["1"]}],
+			"any": [{"keys": ["1"]}, {"keys": ["2"]}, {"keys": ["3"]}]}`)
 		if got := normalize(t, res.Data["allPosts"]); got != want {
 			t.Errorf("got %s want %s", got, want)
 		}
@@ -156,6 +158,7 @@ func TestAggregates(t *testing.T) {
 				byDay: groupedAggregates(groupBy: [CREATED_AT_TRUNCATED_TO_DAY]) { keys distinctCount { id } }
 				byMood: groupedAggregates(groupBy: [MOOD]) { keys distinctCount { id } }
 				byMoods: groupedAggregates(groupBy: [MOODS], having: {distinctCount: {id: {greaterThan: "0"}}}) { keys }
+				bySettings: groupedAggregates(groupBy: [SETTINGS]) { keys }
 			}
 		}`, nil)
 		requireNoErrors(t, res)
@@ -175,6 +178,10 @@ func TestAggregates(t *testing.T) {
 		if got, want := normalize(t, mustJSON(t, dig(t, v, "byMoods"))), normalizeStr(t, `[
 			{"keys": ["[\"SAD\", \"HAPPY\"]"]}, {"keys": ["[\"OK\"]"]}, {"keys": [null]}]`); got != want {
 			t.Errorf("byMoods: got %s want %s", got, want)
+		}
+		if got, want := normalize(t, mustJSON(t, dig(t, v, "bySettings"))), normalizeStr(t, `[
+			{"keys": ["{\"theme\": \"dark\"}"]}, {"keys": ["{\"theme\": \"light\"}"]}, {"keys": [null]}]`); got != want {
+			t.Errorf("bySettings: got %s want %s", got, want)
 		}
 	})
 
@@ -207,6 +214,13 @@ func TestAggregates(t *testing.T) {
 		}}}) { nodes { id } }}`)
 		if !equalInts(ids, []int{1}) {
 			t.Errorf("filtered distinct count: got %v", ids)
+		}
+		empty := `postsByAuthorId: {aggregates: {filter: {title: {equalTo: "none"}}, max: {id: {greaterThan: 0}}}}`
+		if ids = fetchIDs(t, url, `{allUsers(orderBy: [ID_ASC], filter: {id: {lessThanOrEqualTo: 3}, `+empty+`}) { nodes { id } }}`); len(ids) != 0 {
+			t.Errorf("max over no rows must not match: got %v", ids)
+		}
+		if ids = fetchIDs(t, url, `{allUsers(orderBy: [ID_ASC], filter: {id: {lessThanOrEqualTo: 3}, not: {`+empty+`}}) { nodes { id } }}`); !equalInts(ids, []int{1, 2, 3}) {
+			t.Errorf("not must complement a NULL aggregate comparison: got %v", ids)
 		}
 	})
 
@@ -248,6 +262,13 @@ func TestAggregates(t *testing.T) {
 		}
 		if n := num(t, dig(t, agg, "distinctCount", "location")); n != 2 {
 			t.Errorf("distinct locations = %v, want 2", n)
+		}
+	})
+
+	t.Run("or with an empty branch matches everything", func(t *testing.T) {
+		ids := fetchIDs(t, url, `{allUsers(orderBy: [ID_ASC], filter: {id: {lessThanOrEqualTo: 3}, or: [{}, {email: {equalTo: "nobody"}}]}) { nodes { id } }}`)
+		if !equalInts(ids, []int{1, 2, 3}) {
+			t.Errorf("got %v", ids)
 		}
 	})
 

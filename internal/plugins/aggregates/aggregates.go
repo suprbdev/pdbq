@@ -31,9 +31,11 @@
 // rest of the plugins it only adds schema surface plus bindings; the core
 // compiler renders every aggregate inside the root field's single statement.
 //
-// Relational ordering and filtering respect filters.indexed_only exactly
-// like advanced-filters: only the related table's orderable columns are
-// aggregated there.
+// Relational ordering and filtering follow advanced-filters: they aggregate
+// only the related table's orderable (respectively filterable) columns, so
+// filters.indexed_only and column @omit order / @omit filter apply, and the
+// foreign key's @omit order, @omit many and the relations_opt_in mode gate
+// the ordering values.
 package aggregates
 
 import (
@@ -53,25 +55,31 @@ import (
 
 // Plugin implements the SchemaHook adding the aggregate surface.
 type Plugin struct {
-	enabled  bool
-	grouped  bool
-	order    bool
-	filters  bool
-	spatial  bool
-	scanCost int
+	enabled        bool
+	grouped        bool
+	order          bool
+	filters        bool
+	spatial        bool
+	unionCollect   bool
+	scanCost       int
+	relationsOptIn bool
 }
 
 // New builds the plugin from its `plugins.settings.aggregates` map: enabled
-// (default false), grouped, order, filters, spatial (default true) and
-// scan_cost (default 10).
-func New(settings map[string]any) *Plugin {
+// (default false), grouped, order, filters, spatial (default true),
+// spatial_union_collect (default false) and scan_cost (default 10).
+// advancedFilters is the `plugins.settings.advanced-filters` map, whose
+// relations_opt_in mode the relational aggregate ordering honours.
+func New(settings, advancedFilters map[string]any) *Plugin {
 	return &Plugin{
-		enabled:  boolSetting(settings, "enabled", false),
-		grouped:  boolSetting(settings, "grouped", true),
-		order:    boolSetting(settings, "order", true),
-		filters:  boolSetting(settings, "filters", true),
-		spatial:  boolSetting(settings, "spatial", true),
-		scanCost: intSetting(settings, "scan_cost", 10),
+		enabled:        boolSetting(settings, "enabled", false),
+		grouped:        boolSetting(settings, "grouped", true),
+		order:          boolSetting(settings, "order", true),
+		filters:        boolSetting(settings, "filters", true),
+		spatial:        boolSetting(settings, "spatial", true),
+		unionCollect:   boolSetting(settings, "spatial_union_collect", false),
+		scanCost:       intSetting(settings, "scan_cost", 10),
+		relationsOptIn: boolSetting(advancedFilters, "relations_opt_in", false),
 	}
 }
 
@@ -82,15 +90,25 @@ func (p *Plugin) Name() string { return "aggregates" }
 // filter wrappers it extends, and after the postgis and contrib plugins.
 func (p *Plugin) Priority() int { return 180 }
 
+// build is the state of one TransformSchema run.
+type build struct {
+	*Plugin
+	b *schema.Builder
+	// owned records the shared type names (Having<X>Filter) this run
+	// created (true) or found taken by another type (false).
+	owned map[string]bool
+}
+
 // TransformSchema adds the aggregate surface for every opted-in table.
 func (p *Plugin) TransformSchema(_ context.Context, b *schema.Builder) error {
+	r := &build{Plugin: p, b: b, owned: map[string]bool{}}
 	surfaces := map[*introspect.Table]*surface{}
 	for _, t := range b.Catalog.Tables {
 		beh := p.tableBehavior(t)
 		if !beh.aggregates {
 			continue
 		}
-		if s := p.addTable(b, t, beh); s != nil {
+		if s := r.addTable(t, beh); s != nil {
 			surfaces[t] = s
 		}
 	}
@@ -98,11 +116,11 @@ func (p *Plugin) TransformSchema(_ context.Context, b *schema.Builder) error {
 		return nil
 	}
 	for _, t := range b.Catalog.Tables {
-		p.addRelationOrder(b, t, surfaces)
+		r.addRelationOrder(t, surfaces)
 	}
 	for _, t := range b.Catalog.Tables {
 		if s := surfaces[t]; s != nil && s.beh.filterBy {
-			p.addRelationFilter(b, t, s)
+			r.addRelationFilter(t, s)
 		}
 	}
 	return nil
@@ -185,9 +203,32 @@ type surface struct {
 	order []*introspect.Column
 }
 
+// equality reports whether c's (element) type has a default btree equality:
+// an allowlisted type or an enum.
+func (r *build) equality(c *introspect.Column) bool {
+	if hasBtree(c) || c.EnumRef != "" {
+		return true
+	}
+	return r.b.Catalog.Enum(c.TypeSchema, strings.TrimPrefix(c.PGType, "_")) != nil
+}
+
+// bind is sp.bind with the column's equality and the scan cost applied.
+func (r *build) bind(sp spec, c *introspect.Column) *schema.Aggregate {
+	return sp.bind(c, r.equality(c), r.scanCost)
+}
+
+// specEnabled reports whether the settings expose sp at all.
+func (r *build) specEnabled(sp spec) bool {
+	if sp.bulky {
+		return r.spatial && r.unionCollect
+	}
+	return !sp.spatial || r.spatial
+}
+
 // addTable adds <Type>Aggregates and its groups, the aggregates field and
 // (grouped) groupedAggregates with its group-by enum and having input.
-func (p *Plugin) addTable(b *schema.Builder, t *introspect.Table, beh behavior) *surface {
+func (r *build) addTable(t *introspect.Table, beh behavior) *surface {
+	b := r.b
 	typeName := b.TypeForTable[t.Schema+"."+t.Name]
 	obj, conn := b.Objects[typeName], b.Objects[typeName+"Connection"]
 	if obj == nil || conn == nil {
@@ -226,13 +267,13 @@ func (p *Plugin) addTable(b *schema.Builder, t *introspect.Table, beh behavior) 
 		}},
 	}
 	for _, sp := range specs {
-		if sp.spatial && !p.spatial {
+		if !r.specEnabled(sp) {
 			continue
 		}
 		groupType := typeName + coreinflect.UpperCamel(sp.id) + "Aggregates"
 		group := &schema.Object{Name: groupType}
 		for _, c := range s.order {
-			a := sp.bind(c)
+			a := r.bind(sp, c)
 			if a == nil {
 				continue
 			}
@@ -240,11 +281,15 @@ func (p *Plugin) addTable(b *schema.Builder, t *introspect.Table, beh behavior) 
 			if sp.nonNull {
 				typ += "!"
 			}
+			meta := &schema.FieldMeta{Kind: schema.KindAggregateValue, Table: t, Column: c, Aggregate: a}
+			if sp.bulky {
+				meta.ScanCost = r.scanCost * bulkyCostFactor
+			}
 			group.Fields = append(group.Fields, &schema.Field{
 				Name:        s.cols[c],
 				Type:        typ,
 				Description: sp.label + " of " + s.cols[c] + " across the matching connection.",
-				Meta:        &schema.FieldMeta{Kind: schema.KindAggregateValue, Table: t, Column: c, Aggregate: a},
+				Meta:        meta,
 			})
 		}
 		if len(group.Fields) == 0 || !free(b, groupType) {
@@ -266,20 +311,20 @@ func (p *Plugin) addTable(b *schema.Builder, t *introspect.Table, beh behavior) 
 		Name:        "aggregates",
 		Type:        aggType,
 		Description: "Aggregates across the matching connection (ignoring before/after/first/last/offset).",
-		Meta:        &schema.FieldMeta{Kind: schema.KindAggregates, Table: t, ScanCost: p.scanCost},
+		Meta:        &schema.FieldMeta{Kind: schema.KindAggregates, Table: t, ScanCost: r.scanCost},
 	})
 	if beh.grouped {
-		p.addGrouped(b, t, s, conn, aggType)
+		r.addGrouped(t, s, conn, aggType)
 	}
 	return s
 }
 
 // addGrouped adds groupedAggregates when the table has a groupable column.
-func (p *Plugin) addGrouped(b *schema.Builder, t *introspect.Table, s *surface, conn *schema.Object, aggType string) {
+func (r *build) addGrouped(t *introspect.Table, s *surface, conn *schema.Object, aggType string) {
 	if conn.Field("groupedAggregates") != nil {
 		return
 	}
-	groupBy := p.addGroupByEnum(b, t, s)
+	groupBy := r.addGroupByEnum(t, s)
 	if groupBy == "" {
 		return
 	}
@@ -288,7 +333,7 @@ func (p *Plugin) addGrouped(b *schema.Builder, t *introspect.Table, s *surface, 
 		Type:        "[" + groupBy + "!]!",
 		Description: "The method to use when grouping `" + s.typeName + "` for these aggregates.",
 	}}
-	if having := p.addHaving(b, t, s); having != "" {
+	if having := r.addHaving(t, s); having != "" {
 		args = append(args, schema.Arg{
 			Name:        "having",
 			Type:        having,
@@ -300,57 +345,121 @@ func (p *Plugin) addGrouped(b *schema.Builder, t *introspect.Table, s *surface, 
 		Type:        "[" + aggType + "!]",
 		Description: "Grouped aggregates across the matching connection (ignoring before/after/first/last/offset).",
 		Args:        args,
-		Meta:        &schema.FieldMeta{Kind: schema.KindGroupedAggregates, Table: t, ScanCost: p.scanCost},
+		Meta:        &schema.FieldMeta{Kind: schema.KindGroupedAggregates, Table: t, ScanCost: r.scanCost},
 	})
 }
 
-// addGroupByEnum creates <Type>GroupBy from the table's plain orderBy values
-// (so filters.indexed_only and @omit order apply), skipping single-column
-// unique keys, whose groups would hold one row each.
-func (p *Plugin) addGroupByEnum(b *schema.Builder, t *introspect.Table, s *surface) string {
-	order := b.Enums[b.Inflect(inflect.KindOrderByTypeName, inflect.Input{Schema: t.Schema, Table: t.Name})]
-	name := s.typeName + "GroupBy"
-	if order == nil || !free(b, name) {
-		return ""
+// orderColumns returns the columns behind t's plain orderBy values, the set
+// filters.indexed_only and @omit order leave orderable.
+func orderColumns(b *schema.Builder, t *introspect.Table) []orderColumn {
+	en := b.Enums[b.Inflect(inflect.KindOrderByTypeName, inflect.Input{Schema: t.Schema, Table: t.Name})]
+	if en == nil {
+		return nil
 	}
-	en := &schema.Enum{Name: name, Description: "Grouping methods for `" + s.typeName + "` for usage during aggregation."}
-	for _, v := range order.Values {
+	var out []orderColumn
+	for _, v := range en.Values {
 		if v.Column == "" || v.Desc || v.Computed != nil || v.Relation != nil || v.Distance || v.Rank || v.Similarity != "" {
 			continue
 		}
 		base, ok := strings.CutSuffix(v.Name, "_ASC")
-		c := t.Column(v.Column)
-		if !ok || c == nil || s.cols[c] == "" || singleUnique(t, c.Name) || !groupable(c) {
+		if c := t.Column(v.Column); ok && c != nil {
+			out = append(out, orderColumn{c, base})
+		}
+	}
+	return out
+}
+
+// orderColumn is one orderable column and the base of its orderBy values.
+type orderColumn struct {
+	col  *introspect.Column
+	base string
+}
+
+// filterColumns returns the columns t's <Type>Filter input filters on, the
+// set filters.indexed_only and @omit filter leave filterable.
+func filterColumns(b *schema.Builder, t *introspect.Table) map[*introspect.Column]bool {
+	out := map[*introspect.Column]bool{}
+	if in := b.Inputs[b.Inflect(inflect.KindFilterTypeName, inflect.Input{Schema: t.Schema, Table: t.Name})]; in != nil {
+		for _, f := range in.Fields {
+			if c := t.Column(f.Column); f.Column != "" && c != nil {
+				out[c] = true
+			}
+		}
+	}
+	return out
+}
+
+// addGroupByEnum creates <Type>GroupBy from the table's plain orderBy values
+// (so filters.indexed_only and @omit order apply), skipping single-column
+// unique keys, whose groups would hold one row each. Timestamp derivatives
+// whose name a column value already takes are skipped.
+func (r *build) addGroupByEnum(t *introspect.Table, s *surface) string {
+	b := r.b
+	name := s.typeName + "GroupBy"
+	if !free(b, name) {
+		return ""
+	}
+	en := &schema.Enum{Name: name, Description: "Grouping methods for `" + s.typeName + "` for usage during aggregation."}
+	taken := map[string]bool{}
+	var stamps []orderColumn
+	for _, oc := range orderColumns(b, t) {
+		c := oc.col
+		if s.cols[c] == "" || singleUnique(t, c.Name) || !r.equality(c) || taken[oc.base] {
 			continue
 		}
 		if _, noGroup := columnTags(c); noGroup {
 			continue
 		}
-		en.Values = append(en.Values, schema.EnumValue{Name: base, GroupBy: &schema.GroupBy{Column: c}})
+		taken[oc.base] = true
+		en.Values = append(en.Values, schema.EnumValue{Name: oc.base, GroupBy: &schema.GroupBy{Column: c}})
 		if !c.IsArray && (c.PGType == "timestamp" || c.PGType == "timestamptz") {
-			for _, unit := range []string{"hour", "day"} {
-				en.Values = append(en.Values, schema.EnumValue{
-					Name:    base + "_TRUNCATED_TO_" + strings.ToUpper(unit),
-					GroupBy: &schema.GroupBy{Column: c, SQL: dateTrunc(unit)},
-				})
+			stamps = append(stamps, oc)
+		}
+	}
+	var derived []schema.EnumValue
+	for _, oc := range stamps {
+		for _, unit := range []string{"hour", "day"} {
+			vname := oc.base + "_TRUNCATED_TO_" + strings.ToUpper(unit)
+			if taken[vname] {
+				continue
 			}
+			taken[vname] = true
+			derived = append(derived, schema.EnumValue{Name: vname, GroupBy: &schema.GroupBy{Column: oc.col, SQL: dateTrunc(unit)}})
 		}
 	}
 	if len(en.Values) == 0 {
 		return ""
 	}
+	en.Values = insertDerived(en.Values, derived)
 	b.Enums[name] = en
 	return name
 }
 
+// insertDerived places each derivative value right after its column's
+// value, keeping the enum readable.
+func insertDerived(values, derived []schema.EnumValue) []schema.EnumValue {
+	out := make([]schema.EnumValue, 0, len(values)+len(derived))
+	for _, v := range values {
+		out = append(out, v)
+		for _, d := range derived {
+			if d.GroupBy.Column == v.GroupBy.Column {
+				out = append(out, d)
+			}
+		}
+	}
+	return out
+}
+
 // addHaving creates <Type>HavingInput with one <Type>Having<Spec>Input per
-// aggregate group whose results have a comparison filter; returns "" when
-// no group qualifies.
-func (p *Plugin) addHaving(b *schema.Builder, t *introspect.Table, s *surface) string {
+// aggregate group whose results have a comparison filter, over the table's
+// filterable columns; returns "" when no group qualifies.
+func (r *build) addHaving(t *introspect.Table, s *surface) string {
+	b := r.b
 	name := s.typeName + "HavingInput"
 	if !free(b, name) {
 		return ""
 	}
+	filterable := filterColumns(b, t)
 	in := &schema.Input{
 		Name:        name,
 		Description: "Conditions for `" + s.typeName + "` aggregates.",
@@ -366,11 +475,14 @@ func (p *Plugin) addHaving(b *schema.Builder, t *introspect.Table, s *surface) s
 		groupName := s.typeName + "Having" + coreinflect.UpperCamel(sp.id) + "Input"
 		group := &schema.Input{Name: groupName}
 		for _, c := range s.order {
-			a := sp.bind(c)
+			if !filterable[c] {
+				continue
+			}
+			a := r.bind(sp, c)
 			if a == nil {
 				continue
 			}
-			filter := havingFilter(b, a.ResultType)
+			filter := r.havingFilter(t, a.ResultType)
 			if filter == "" {
 				continue
 			}
@@ -394,21 +506,29 @@ var havingScalars = map[string]string{
 	"int2": "Int", "int4": "Int",
 	"int8":   "Bigint",
 	"float4": "Float", "float8": "Float",
-	"numeric": "Bigfloat", "money": "Bigfloat",
-	"date": "Datetime", "timestamp": "Datetime", "timestamptz": "Datetime",
+	"numeric": "Bigfloat",
+	"date":    "Datetime", "timestamp": "Datetime", "timestamptz": "Datetime",
 }
 
 // havingFilter returns (creating if needed) the shared Having<X>Filter input
 // comparing an aggregate result of pgType, or "" for result types without
-// one.
-func havingFilter(b *schema.Builder, pgType string) string {
+// one and when another type already took the name.
+func (r *build) havingFilter(t *introspect.Table, pgType string) string {
 	family, ok := havingScalars[pgType]
 	if !ok {
 		return ""
 	}
 	name := "Having" + family + "Filter"
-	if _, ok := b.Inputs[name]; ok {
-		return name
+	if owned, seen := r.owned[name]; seen {
+		if owned {
+			return name
+		}
+		return ""
+	}
+	if !free(r.b, name) {
+		warn(r.b, "aggregates: having filter type name taken, skipping", t, name)
+		r.owned[name] = false
+		return ""
 	}
 	scalar := map[string]string{"Bigint": "BigInt", "Bigfloat": "BigFloat"}[family]
 	if scalar == "" {
@@ -418,13 +538,18 @@ func havingFilter(b *schema.Builder, pgType string) string {
 	for _, op := range []string{"equalTo", "notEqualTo", "greaterThan", "greaterThanOrEqualTo", "lessThan", "lessThanOrEqualTo"} {
 		in.Fields = append(in.Fields, &schema.InputField{Name: op, Type: scalar})
 	}
-	b.Inputs[name] = in
+	r.b.Inputs[name] = in
+	r.owned[name] = true
 	return name
 }
 
 // addRelationOrder adds <REL>_COUNT_* and <REL>_<SPEC>_<COLUMN>_* values to
-// t's orderBy enum for every reverse relation from an opted-in table.
-func (p *Plugin) addRelationOrder(b *schema.Builder, t *introspect.Table, surfaces map[*introspect.Table]*surface) {
+// t's orderBy enum for every reverse relation from an opted-in table, unless
+// the foreign key opts out the way advanced-filters' relational ordering
+// does (@omit order, @omit many, relations_opt_in without @filterable /
+// @sortable).
+func (r *build) addRelationOrder(t *introspect.Table, surfaces map[*introspect.Table]*surface) {
+	b := r.b
 	en := b.Enums[b.Inflect(inflect.KindOrderByTypeName, inflect.Input{Schema: t.Schema, Table: t.Name})]
 	if en == nil {
 		return
@@ -434,21 +559,27 @@ func (p *Plugin) addRelationOrder(b *schema.Builder, t *introspect.Table, surfac
 		if cs == nil || !cs.beh.orderBy {
 			continue
 		}
+		var cols []*introspect.Column
+		for _, oc := range orderColumns(b, child) {
+			if cs.cols[oc.col] != "" {
+				cols = append(cols, oc.col)
+			}
+		}
 		for _, fk := range child.ForeignKeys {
-			if fk.RefSchema != t.Schema || fk.RefTable != t.Name || omitsOrder(fk.Comment) {
+			if fk.RefSchema != t.Schema || fk.RefTable != t.Name || r.omitsOrder(fk.Comment) {
 				continue
 			}
 			relName := b.Inflect(inflect.KindRelationBackward, inflect.Input{
 				Schema: child.Schema, Table: child.Name, Columns: fk.Columns, Constraint: fk.Name,
 			})
 			prefix := coreinflect.EnumValue(relName) + "_"
-			addOrderPair(en, prefix+"COUNT", &schema.OrderRelation{FK: fk, Table: child, Aggregate: countAggregate})
+			addOrderPair(en, prefix+"COUNT", &schema.OrderRelation{FK: fk, Table: child, Aggregate: countAggregate(r.scanCost)})
 			for _, sp := range specs {
 				if sp.spatial {
 					continue
 				}
-				for _, c := range relatedColumns(b, child, cs) {
-					a := sp.bind(c)
+				for _, c := range cols {
+					a := r.bind(sp, c)
 					if a == nil {
 						continue
 					}
@@ -458,6 +589,15 @@ func (p *Plugin) addRelationOrder(b *schema.Builder, t *introspect.Table, surfac
 			}
 		}
 	}
+}
+
+// omitsOrder applies advanced-filters' relational-ordering rules to a
+// foreign key comment, plus @omit many (no one-to-many relation exposed).
+func (r *build) omitsOrder(comment string) bool {
+	tags, _ := smarttags.Parse(comment)
+	omits, everything := tags.Omits()
+	optedOut := r.relationsOptIn && !tags.Has("filterable") && !tags.Has("sortable")
+	return everything || optedOut || omits["order"] || omits["many"]
 }
 
 // addOrderPair appends base_ASC/base_DESC unless either name is taken.
@@ -476,14 +616,19 @@ func addOrderPair(en *schema.Enum, base string, rel *schema.OrderRelation) {
 // addRelationFilter adds the aggregates field to the advanced-filters
 // <Type>ToManyFilter wrapper over t's rows: <Type>AggregatesFilter holds a
 // filter narrowing the aggregated rows plus one <Type><Spec>AggregateFilter
-// per group, typed with the operator inputs of the aggregate results.
-func (p *Plugin) addRelationFilter(b *schema.Builder, t *introspect.Table, s *surface) {
+// per group, typed with the operator inputs of the aggregate results, over
+// t's filterable columns. The wrapper is only reachable through the relation
+// filter fields advanced-filters generated, so its per-foreign-key rules
+// (@omit filter, relations_opt_in) apply.
+func (r *build) addRelationFilter(t *introspect.Table, s *surface) {
+	b := r.b
 	wrapper := b.Inputs[s.typeName+"ToManyFilter"]
 	filterType := b.Inflect(inflect.KindFilterTypeName, inflect.Input{Schema: t.Schema, Table: t.Name})
 	name := s.typeName + "AggregatesFilter"
 	if wrapper == nil || wrapper.Field("aggregates") != nil || b.Inputs[filterType] == nil || !free(b, name) {
 		return
 	}
+	filterable := filterColumns(b, t)
 	in := &schema.Input{
 		Name:        name,
 		Description: "A filter to be used against aggregates of `" + s.typeName + "` object types.",
@@ -499,8 +644,11 @@ func (p *Plugin) addRelationFilter(b *schema.Builder, t *introspect.Table, s *su
 		}
 		groupName := s.typeName + coreinflect.UpperCamel(sp.id) + "AggregateFilter"
 		group := &schema.Input{Name: groupName}
-		for _, c := range relatedColumns(b, t, s) {
-			a := sp.bind(c)
+		for _, c := range s.order {
+			if !filterable[c] {
+				continue
+			}
+			a := r.bind(sp, c)
 			if a == nil || a.ResultType == "interval" || postgis.IsSpatial(a.ResultType) {
 				continue
 			}
@@ -529,19 +677,6 @@ func (p *Plugin) addRelationFilter(b *schema.Builder, t *introspect.Table, s *su
 	})
 }
 
-// relatedColumns returns the aggregatable columns of a related table that
-// pass its filter policy (filters.indexed_only), the columns relational
-// ordering and filtering may aggregate.
-func relatedColumns(b *schema.Builder, t *introspect.Table, s *surface) []*introspect.Column {
-	var out []*introspect.Column
-	for _, c := range b.FilterableColumns(t) {
-		if s.cols[c] != "" {
-			out = append(out, c)
-		}
-	}
-	return out
-}
-
 // columnField returns the name of obj's field reading column c, or "" when
 // the column has none (omitted by a smart comment).
 func columnField(obj *schema.Object, c *introspect.Column) string {
@@ -561,14 +696,6 @@ func singleUnique(t *introspect.Table, col string) bool {
 		}
 	}
 	return false
-}
-
-// omitsOrder reports "@omit order" (or bare @omit) on a foreign key, the tag
-// advanced-filters honours for relational ordering.
-func omitsOrder(comment string) bool {
-	tags, _ := smarttags.Parse(comment)
-	omits, everything := tags.Omits()
-	return everything || omits["order"]
 }
 
 // free reports whether a type name is still unused.

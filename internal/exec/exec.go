@@ -441,7 +441,9 @@ func (e *Executor) executeField(ctx context.Context, q pgexec.Querier, op *Opera
 // first/last page size — assuming 10 when neither is given — and its direct
 // list children (nodes/edges) are not multiplied again; list fields outside
 // a paginated container multiply by 10; a field with a ScanCost adds it, and
-// multiplies its subtree by 10 when list-typed, e.g. groupedAggregates).
+// multiplies its subtree by the page-size cap when list-typed, e.g.
+// groupedAggregates; aggregate orderBy values and relation-aggregate filters
+// add their aggregates' Cost, tripled under a cursor).
 func (e *Executor) checkLimits(doc *ast.QueryDocument, op *ast.OperationDefinition, vars map[string]any) error {
 	maxDepth, maxCost := e.Opts.MaxDepth, e.Opts.MaxCost
 	if maxDepth <= 0 {
@@ -464,7 +466,7 @@ func (e *Executor) checkLimits(doc *ast.QueryDocument, op *ast.OperationDefiniti
 		}
 		sel = append(sel, item)
 	}
-	depth, cost := measure(sel, doc.Fragments, vars, pageCap, 1, e.Built.Meta)
+	depth, cost := measure(sel, doc.Fragments, vars, pageCap, 1, e.Built)
 	if depth > maxDepth {
 		return gqlerror.Errorf("operation depth %d exceeds limit %d", depth, maxDepth)
 	}
@@ -474,8 +476,8 @@ func (e *Executor) checkLimits(doc *ast.QueryDocument, op *ast.OperationDefiniti
 	return nil
 }
 
-func measure(sel ast.SelectionSet, frags ast.FragmentDefinitionList, vars map[string]any, pageCap, depth int, meta schema.Meta) (int, int) {
-	return measureSel(sel, frags, vars, pageCap, depth, false, meta)
+func measure(sel ast.SelectionSet, frags ast.FragmentDefinitionList, vars map[string]any, pageCap, depth int, built *schema.Built) (int, int) {
+	return measureSel(sel, frags, vars, pageCap, depth, false, built)
 }
 
 // fieldCostMultiplier returns the @costMultiplier override bound to a field,
@@ -508,11 +510,135 @@ func fieldScanCost(f *ast.Field, meta schema.Meta) int {
 	return 0
 }
 
+// aggregateArgCost charges the aggregates a field's arguments evaluate per
+// candidate row: the Cost of each aggregate orderBy value (tripled when an
+// after/before cursor repeats it in the keyset predicate) and of each
+// aggregate comparison in a relation-aggregate filter.
+func aggregateArgCost(f *ast.Field, vars map[string]any, built *schema.Built) int {
+	if built == nil || f.Definition == nil {
+		return 0
+	}
+	cost := 0
+	if ov, enum := argValue(f, "orderBy", vars); ov != nil {
+		vals, _ := ov.([]any)
+		if name, ok := ov.(string); ok {
+			vals = []any{name}
+		}
+		for _, v := range vals {
+			name, _ := v.(string)
+			if rel := built.OrderBy[enum][name].Relation; rel != nil && rel.Aggregate != nil {
+				cost += rel.Aggregate.Cost
+			}
+		}
+		if after, _ := argValue(f, "after", vars); after != nil {
+			cost *= 3
+		} else if before, _ := argValue(f, "before", vars); before != nil {
+			cost *= 3
+		}
+	}
+	if fv, filterType := argValue(f, "filter", vars); fv != nil {
+		cost += filterAggregateCost(built, filterType, fv)
+	}
+	return cost
+}
+
+// argValue resolves a field argument against the variables, returning its
+// value and the argument's named type.
+func argValue(f *ast.Field, name string, vars map[string]any) (any, string) {
+	arg, def := f.Arguments.ForName(name), f.Definition.Arguments.ForName(name)
+	if arg == nil || def == nil {
+		return nil, ""
+	}
+	v, err := arg.Value.Value(vars)
+	if err != nil {
+		return nil, ""
+	}
+	return v, def.Type.Name()
+}
+
+// filterAggregateCost walks a <Type>Filter value through and/or/not and
+// relation filters, summing the Cost of every aggregate a to-many
+// relation's aggregates filter compares.
+func filterAggregateCost(built *schema.Built, typeName string, v any) int {
+	m, ok := v.(map[string]any)
+	if !ok {
+		return 0
+	}
+	cost := 0
+	for key, val := range m {
+		if val == nil {
+			continue
+		}
+		switch key {
+		case "and", "or":
+			items, _ := val.([]any)
+			for _, item := range items {
+				cost += filterAggregateCost(built, typeName, item)
+			}
+		case "not":
+			cost += filterAggregateCost(built, typeName, val)
+		default:
+			rel := built.FilterRelations[typeName][key]
+			if rel == nil || rel.Exists {
+				continue
+			}
+			if rel.Forward && rel.FK.ReferencesOne() {
+				cost += filterAggregateCost(built, rel.FilterType, val)
+				continue
+			}
+			wrapper := inputFieldType(built, typeName, key)
+			quants, _ := val.(map[string]any)
+			for q, qv := range quants {
+				if q != "aggregates" {
+					cost += filterAggregateCost(built, rel.FilterType, qv)
+					continue
+				}
+				aggType := inputFieldType(built, wrapper, q)
+				groups, _ := qv.(map[string]any)
+				for g, gv := range groups {
+					if g == "filter" {
+						cost += filterAggregateCost(built, rel.FilterType, gv)
+						continue
+					}
+					cols, _ := gv.(map[string]any)
+					bindings := built.InputAggregates[inputFieldType(built, aggType, g)]
+					for col, ops := range cols {
+						if a := bindings[col]; a != nil && ops != nil {
+							cost += a.Cost
+						}
+					}
+				}
+			}
+		}
+	}
+	return cost
+}
+
+// inputFieldType returns the named type of field on the input object
+// typeName, or "" when either is unknown.
+func inputFieldType(built *schema.Built, typeName, field string) string {
+	if built.Schema == nil {
+		return ""
+	}
+	def := built.Schema.Types[typeName]
+	if def == nil {
+		return ""
+	}
+	if fd := def.Fields.ForName(field); fd != nil {
+		return fd.Type.Name()
+	}
+	return ""
+}
+
 // measureSel walks one selection set. paginated is true when the enclosing
 // field already applied a page-size multiplier (a connection): its direct
 // list children (nodes/edges) then count once instead of the ×10 list
 // default, so pagination is not charged twice.
-func measureSel(sel ast.SelectionSet, frags ast.FragmentDefinitionList, vars map[string]any, pageCap, depth int, paginated bool, meta schema.Meta) (int, int) {
+func measureSel(sel ast.SelectionSet, frags ast.FragmentDefinitionList, vars map[string]any, pageCap, depth int, paginated bool, built *schema.Built) (int, int) {
+	var meta schema.Meta
+	if built != nil {
+		meta = built.Meta
+	}
 	maxDepth, cost := depth, 0
 	for _, item := range sel {
 		switch v := item.(type) {
@@ -543,9 +669,10 @@ func measureSel(sel ast.SelectionSet, frags ast.FragmentDefinitionList, vars map
 			}
 			scan := fieldScanCost(v, meta)
 			if scan > 0 && v.Definition != nil && v.Definition.Type.NamedType == "" {
-				mult, childPaginated = 10, true
+				mult, childPaginated = pageCap, true
 			}
-			d, c := measureSel(v.SelectionSet, frags, vars, pageCap, depth+1, childPaginated, meta)
+			scan += aggregateArgCost(v, vars, built)
+			d, c := measureSel(v.SelectionSet, frags, vars, pageCap, depth+1, childPaginated, built)
 			cost += 1 + scan + mult*c
 			if len(v.SelectionSet) == 0 {
 				d = depth
@@ -557,7 +684,7 @@ func measureSel(sel ast.SelectionSet, frags ast.FragmentDefinitionList, vars map
 			if compile.SkipByDirectives(v.Directives, vars) {
 				continue
 			}
-			d, c := measureSel(v.SelectionSet, frags, vars, pageCap, depth, paginated, meta)
+			d, c := measureSel(v.SelectionSet, frags, vars, pageCap, depth, paginated, built)
 			cost += c
 			if d > maxDepth {
 				maxDepth = d
@@ -567,7 +694,7 @@ func measureSel(sel ast.SelectionSet, frags ast.FragmentDefinitionList, vars map
 				continue
 			}
 			if def := frags.ForName(v.Name); def != nil {
-				d, c := measureSel(def.SelectionSet, frags, vars, pageCap, depth, paginated, meta)
+				d, c := measureSel(def.SelectionSet, frags, vars, pageCap, depth, paginated, built)
 				cost += c
 				if d > maxDepth {
 					maxDepth = d

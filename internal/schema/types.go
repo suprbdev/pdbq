@@ -121,6 +121,9 @@ type Aggregate struct {
 	// drives the JSON encoding of the value and the coercion of filter
 	// operands compared against it.
 	ResultType string
+	// Cost is the cost-estimate surcharge for evaluating the aggregate in a
+	// filter or orderBy position, where it runs once per candidate row.
+	Cost int
 }
 
 // ResultColumn describes the aggregate's result as a column, the shape the

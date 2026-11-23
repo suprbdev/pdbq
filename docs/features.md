@@ -69,7 +69,7 @@ Checklist of PostgreSQL and GraphQL features pdbq supports. Checked = implemente
 - [x] GraphQL variables with coercion and default values
 - [x] Multiple root fields per operation
 - [x] Depth limit and cost limit per operation
-- [x] Aggregate fields — built-in `aggregates` plugin (opt-in, `@graphile/pg-aggregates` shape): connection `aggregates` (`sum distinctCount min max average stddevSample stddevPopulation varianceSample variancePopulation`), `groupedAggregates(groupBy:, having:)` with `_TRUNCATED_TO_HOUR`/`_DAY` timestamp derivatives, `<REL>_COUNT_*`/`<REL>_<AGGREGATE>_<COLUMN>_*` ordering, `aggregates` in to-many relation filters, PostGIS `stExtent stUnion stCollect stCentroid`; one statement, RLS and cost limits apply — see [Aggregates](aggregates.md)
+- [x] Aggregate fields — built-in `aggregates` plugin (opt-in, `@graphile/pg-aggregates` shape): connection `aggregates` (`sum distinctCount min max average stddevSample stddevPopulation varianceSample variancePopulation`), `groupedAggregates(groupBy:, having:)` with `_TRUNCATED_TO_HOUR`/`_DAY` timestamp derivatives, `<REL>_COUNT_*`/`<REL>_<AGGREGATE>_<COLUMN>_*` ordering, `aggregates` in to-many relation filters, PostGIS `stExtent stCentroid` (plus opt-in `stUnion stCollect`); one statement, RLS and cost limits apply — see [Aggregates](aggregates.md)
 - [ ] GraphQL subscriptions / live queries — non-goal for v1 (hook surfaces designed with this in mind; ship later)
 
 ## Filtering & ordering

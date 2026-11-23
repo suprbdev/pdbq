@@ -265,10 +265,11 @@ func (p *Plugin) addRelationOrder(b *schema.Builder) {
 }
 
 // addRelationOrderValues appends REL__COLUMN_{ASC,DESC} values for every
-// orderable column of the related table.
+// orderable column of the related table: the columns behind its own plain
+// orderBy values, so filters.indexed_only and column @omit order apply.
 func addRelationOrderValues(b *schema.Builder, en *schema.Enum, relName string, related *introspect.Table, fk *introspect.ForeignKey, forward bool) {
 	prefix := coreinflect.EnumValue(relName) + "__"
-	for _, c := range b.FilterableColumns(related) {
+	for _, c := range orderableColumns(b, related) {
 		base := prefix + coreinflect.EnumValue(c.Name)
 		if hasEnumValue(en, base+"_ASC") || hasEnumValue(en, base+"_DESC") {
 			continue
@@ -279,6 +280,25 @@ func addRelationOrderValues(b *schema.Builder, en *schema.Enum, relName string, 
 			schema.EnumValue{Name: base + "_DESC", Relation: rel, Desc: true},
 		)
 	}
+}
+
+// orderableColumns returns the columns behind t's plain (column-bound,
+// ascending) orderBy values, in enum order.
+func orderableColumns(b *schema.Builder, t *introspect.Table) []*introspect.Column {
+	en := b.Enums[b.Inflect(inflect.KindOrderByTypeName, inflect.Input{Schema: t.Schema, Table: t.Name})]
+	if en == nil {
+		return nil
+	}
+	var out []*introspect.Column
+	for _, v := range en.Values {
+		if v.Column == "" || v.Desc || v.Computed != nil || v.Relation != nil || v.Distance || v.Rank || v.Similarity != "" {
+			continue
+		}
+		if c := t.Column(v.Column); c != nil {
+			out = append(out, c)
+		}
+	}
+	return out
 }
 
 // addComputed exposes eligible computed columns (single row argument,

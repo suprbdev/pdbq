@@ -1,0 +1,4 @@
+{
+  allUsers(filter: {or: [{}, {email: {equalTo: "x"}}], mood: {equalTo: HAPPY}}) { nodes { id } }
+  listed: allUsers(filter: {and: [{}, {email: {equalTo: "y"}}], or: [{id: {equalTo: 1}}, {id: {equalTo: 2}}]}) { nodes { id } }
+}
