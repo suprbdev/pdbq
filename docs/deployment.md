@@ -156,3 +156,40 @@ Run a rate limiter in front of pdbq in production:
 
 Key by client IP at minimum; if you terminate JWTs at a gateway, keying by
 the authenticated subject gives fairer budgets than IP alone.
+
+
+## Releasing
+
+Releases are tags. `make release` (interactive) refuses a dirty tree, prompts
+for `vX.Y.Z`, runs the tests and lint, creates an annotated tag and pushes it.
+The `Release` workflow (`.github/workflows/release.yaml`) then, on the `v*` tag:
+
+1. runs `go test -race ./...`;
+2. cross-compiles `linux/amd64`, `linux/arm64`, `darwin/amd64`, `darwin/arm64`
+   and `windows/amd64` archives (`pdbq_X.Y.Z_<os>_<arch>.tar.gz` / `.zip`)
+   with `-X main.version=vX.Y.Z`;
+3. generates a CycloneDX SBOM (`pdbq_X.Y.Z_sbom.cdx.json`) and writes
+   `checksums.txt` (sha256) over the archives and the SBOM;
+4. signs `checksums.txt` with cosign (keyless, `checksums.txt.sigstore.json`) and
+   attests build provenance for the files it lists;
+5. creates the GitHub release with generated notes and the files attached;
+6. builds the multi-arch image (`linux/amd64`, `linux/arm64`) with buildkit SBOM
+   and provenance attestations, pushes it to `ghcr.io/suprbdev/pdbq` and
+   `docker.io/suprbdev/pdbq` (tags `X.Y.Z`, `vX.Y.Z`, `X.Y`, and `X` from 1.0)
+   and signs it with cosign (Docker Hub needs the `DOCKERHUB_USERNAME` /
+   `DOCKERHUB_TOKEN` repository secrets).
+
+Publishing, signing and attestation steps are skipped under
+[act](https://github.com/nektos/act) (`if: ${{ !env.ACT }}`), so
+`act -n -W .github/workflows/release.yaml` dry-runs the workflow locally.
+`go install github.com/suprbdev/pdbq/cmd/pdbq@vX.Y.Z` builds report the module
+version in `--version` too. Verification commands are in
+[SECURITY.md](../SECURITY.md#verifying-releases).
+
+Release order across the three repositories is pdbcore, then pdbq, then pdbr. To
+pick up a new pdbcore release, run `go get github.com/suprbdev/pdbcore@vX.Y.Z`
+and `go mod tidy`, regenerate goldens and `db/init/01-schema.sql` (`make
+fixture`) if the fixture changed, run `make test test-e2e lint`, move the
+"Unreleased" notes in `CHANGELOG.md` under the new version, then `make release`.
+Verify the release lists 5 archives, the SBOM, `checksums.txt` and its bundle,
+and that `docker run ghcr.io/suprbdev/pdbq:X.Y.Z --version` prints the tag.

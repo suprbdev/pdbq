@@ -1,5 +1,7 @@
 # Schema contracts
 
+> **Experimental.** Schema contracts are outside the 1.0 compatibility promise and may change in a minor release. See [Compatibility and versioning](compatibility.md#experimental-features).
+
 A schema contract is a named GraphQL schema for one audience — `public`,
 `partner`, `internal` — built from the same database as every other
 contract. Each contract is a subset of the full schema: smart comments tag
