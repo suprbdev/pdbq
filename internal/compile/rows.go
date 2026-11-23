@@ -478,12 +478,19 @@ func (s *stmt) connectionJSON(t *introspect.Table, f *ast.Field, extraCond strin
 	}
 
 	fields := s.expandFor(f.SelectionSet, connType)
+	separate, err := s.windowConnection(t, f, fields, &plan, extraCond, depth)
+	if err != nil {
+		return "", err
+	}
 	var nodesFields, edgeNodeFields, aggFields []*ast.Field
 	rowCols := map[*ast.Field]string{}
 	edgeSubs := map[*ast.Field][]*ast.Field{}
 	pageInfoSubs := map[*ast.Field][]*ast.Field{}
 	wantTotal, wantEdges, wantPageInfo := false, false, false
 	for _, sub := range fields {
+		if _, ok := separate[sub]; ok {
+			continue
+		}
 		switch sub.Name {
 		case "nodes":
 			rowCols[sub] = numberedCol("ndata", len(nodesFields))
@@ -686,6 +693,10 @@ func (s *stmt) connectionJSON(t *introspect.Table, f *ast.Field, extraCond strin
 	var pairs []string
 	for _, cf := range fields {
 		key := quoteLiteral(cf.Alias)
+		if expr, ok := separate[cf]; ok {
+			pairs = append(pairs, key, expr)
+			continue
+		}
 		switch cf.Name {
 		case "nodes":
 			pairs = append(pairs, key, agg(sub+"."+rowCols[cf]))

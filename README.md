@@ -56,6 +56,9 @@ time=... msg=listening addr=:8080 graphiql=true
   `internal`) selected by `@contract` / `@behavior ±contract:<name>` smart
   comments, each served at its own `/<name>/graphql`, see
   [docs/contracts.md](docs/contracts.md).
+- **Incremental delivery (opt-in)** — `@defer` and `@stream` over
+  `multipart/mixed` and WebSocket, every payload read from one snapshot, see
+  [docs/incremental.md](docs/incremental.md).
 - **Pipe-friendly CLI** — `echo '{users {email}}' | pdbq query -` prints
   JSON and exits non-zero on GraphQL errors.
 
@@ -121,6 +124,7 @@ See [docs/quickstart.md](docs/quickstart.md) for the full tour.
 | [docs/contracts.md](docs/contracts.md) | Schema contracts: per-audience schemas from `@contract` tags, endpoints, security model |
 | [docs/metrics.md](docs/metrics.md) | Prometheus `/metrics`: enabling, separate listener, metric reference |
 | [docs/subscriptions.md](docs/subscriptions.md) | Opt-in `listen` subscriptions over LISTEN/NOTIFY and WebSocket: protocol, auth, topics, limits, cost |
+| [docs/incremental.md](docs/incremental.md) | Opt-in `@defer` and `@stream`: transports, payload shapes, snapshot consistency, limits |
 
 ## Development
 

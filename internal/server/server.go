@@ -162,7 +162,11 @@ func (s *Server) Swap(ex *exec.Executor, sdl string) {
 // Handler returns the HTTP handler. With server.subscriptions on,
 // WebSocket upgrades of /graphql are served before the HTTP middlewares
 // (request timeout, CORS headers, gzip, metrics); their Origin must be the
-// server's own host or match server.cors_origins.
+// server's own host or match server.cors_origins. With
+// server.incremental_delivery on, GraphQL requests that accept
+// multipart/mixed skip the request timeout handler and gzip, which would
+// buffer their payloads; serveIncremental bounds them by
+// server.request_timeout itself.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /graphql", s.handleGraphQL)
@@ -190,6 +194,19 @@ func (s *Server) Handler() http.Handler {
 	}
 	if s.cfg.Compression {
 		h = httpx.Gzip(h)
+	}
+	if s.cfg.IncrementalDelivery {
+		buffered, streaming := h, http.Handler(mux)
+		if len(s.cfg.CORSOrigins) > 0 {
+			streaming = httpx.CORS(s.cfg.CORSOrigins, streaming)
+		}
+		h = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if s.streamsIncremental(r) {
+				streaming.ServeHTTP(w, r)
+				return
+			}
+			buffered.ServeHTTP(w, r)
+		})
 	}
 	h = s.metrics.Middleware(h, s.RouteClass)
 	if !s.cfg.Subscriptions {
@@ -285,14 +302,18 @@ func (s *Server) handleGraphQL(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	res := ex.Execute(r.Context(), exec.Request{
+	execReq := exec.Request{
 		Query:         req.Query,
 		OperationName: req.OperationName,
 		Variables:     req.Variables,
 		Claims:        claims,
 		Role:          role,
-	})
-	s.writeResult(w, res)
+	}
+	if s.streamsIncremental(r) {
+		s.serveIncremental(w, r, ex, execReq)
+		return
+	}
+	s.writeResult(w, ex.Execute(r.Context(), execReq))
 }
 
 // isJSONContentType reports whether the Content-Type header value v is

@@ -48,6 +48,9 @@ type Operation struct {
 	Built *schema.Built
 
 	introBytes int64
+	// inc is the incremental delivery plan, nil when the operation has
+	// nothing to deliver incrementally.
+	inc *incPlan
 }
 
 // Result is the GraphQL response for one operation.
@@ -196,6 +199,8 @@ type Options struct {
 	// check that fields sharing a response key can be merged; 0 means
 	// DefaultMaxFieldComparisons.
 	MaxFieldComparisons int
+	// Incremental configures the defer and stream directives.
+	Incremental IncrementalOptions
 	// Metrics records database operations, compile time and the product
 	// counters; nil records nothing.
 	Metrics *Metrics
@@ -213,6 +218,8 @@ type Executor struct {
 	docs *docCache
 	// queryTx replaces pgexec.QueryTx in tests.
 	queryTx func(ctx context.Context, db pgexec.ConnAcquirer, opts pgexec.TxOptions, id pgexec.Identity, stmts ...pgexec.Stmt) error
+	// runTx replaces pgexec.RunTx for incremental delivery in tests.
+	runTx func(ctx context.Context, db pgexec.TxBeginner, opts pgexec.TxOptions, id pgexec.Identity, fn func(q pgexec.Querier) error) error
 }
 
 // New builds an executor for built. Executors constructed without New run
@@ -354,6 +361,12 @@ func (e *Executor) prepare(ctx context.Context, req Request) (context.Context, *
 	if err := e.checkLimits(doc, opDef, vars); err != nil {
 		return ctx, nil, err
 	}
+	var inc *incPlan
+	if e.Opts.Incremental.Enabled {
+		if inc, err = e.planIncremental(doc, opDef, vars); err != nil {
+			return ctx, nil, err
+		}
+	}
 
 	op := &Operation{
 		Name:       opDef.Name,
@@ -364,6 +377,7 @@ func (e *Executor) prepare(ctx context.Context, req Request) (context.Context, *
 		Claims:     req.Claims,
 		Role:       req.Role,
 		Built:      e.Built,
+		inc:        inc,
 	}
 	// Expose the operation (claims, role, vars) to everything downstream that
 	// only sees a context — notably CompileHook plugins.
@@ -1309,23 +1323,10 @@ func (r *Result) AppendJSON(b []byte) ([]byte, error) {
 		if r.Data == nil {
 			b = append(b, "null"...)
 		} else {
-			b = append(b, '{')
-			for i, k := range r.Keys() {
-				if i > 0 {
-					b = append(b, ',')
-				}
-				var err error
-				if b, err = appendJSONString(b, k); err != nil {
-					return nil, err
-				}
-				b = append(b, ':')
-				if raw := r.Data[k]; len(raw) > 0 {
-					b = append(b, raw...)
-				} else {
-					b = append(b, "null"...)
-				}
+			var err error
+			if b, err = r.appendData(b); err != nil {
+				return nil, err
 			}
-			b = append(b, '}')
 		}
 		sep = true
 	}
@@ -1351,6 +1352,27 @@ func (r *Result) AppendJSON(b []byte) ([]byte, error) {
 		}
 		b = append(b, `"extensions":`...)
 		b = append(b, ext...)
+	}
+	return append(b, '}'), nil
+}
+
+// appendData appends Data as a JSON object, its keys in response order.
+func (r *Result) appendData(b []byte) ([]byte, error) {
+	b = append(b, '{')
+	for i, k := range r.Keys() {
+		if i > 0 {
+			b = append(b, ',')
+		}
+		var err error
+		if b, err = appendJSONString(b, k); err != nil {
+			return nil, err
+		}
+		b = append(b, ':')
+		if raw := r.Data[k]; len(raw) > 0 {
+			b = append(b, raw...)
+		} else {
+			b = append(b, "null"...)
+		}
 	}
 	return append(b, '}'), nil
 }

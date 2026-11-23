@@ -73,7 +73,11 @@ type Options struct {
 	// simple listen subscription (server.subscriptions). Without it the
 	// schema has no Subscription type.
 	Subscriptions bool
-	Logger        *slog.Logger
+	// IncrementalDelivery declares the defer and stream directives of the
+	// incremental delivery RFC (server.incremental_delivery). Without it
+	// the SDL declares no directive.
+	IncrementalDelivery bool
+	Logger              *slog.Logger
 }
 
 // Builder is the mutable schema IR handed to SchemaHook plugins.
@@ -1804,6 +1808,28 @@ func (b *Builder) FieldsByOrderBy() map[string][]*Field {
 	return out
 }
 
+// incrementalDirectives declares the defer and stream directives as
+// graphql-js 17 does.
+const incrementalDirectives = `"""Directs the executor to defer this fragment when the ` + "`if`" + ` argument is true or undefined."""
+directive @defer(
+  """Deferred when true or undefined."""
+  if: Boolean! = true
+  """Unique name"""
+  label: String
+) on FRAGMENT_SPREAD | INLINE_FRAGMENT
+
+"""Directs the executor to stream plural fields when the ` + "`if`" + ` argument is true or undefined."""
+directive @stream(
+  """Number of items to return immediately"""
+  initialCount: Int! = 0
+  """Stream when true or undefined."""
+  if: Boolean! = true
+  """Unique name"""
+  label: String
+) on FIELD
+
+`
+
 // Build renders SDL, validates it, and returns the executable schema + meta.
 func (b *Builder) Build() (*Built, error) {
 	if len(b.Mutation.Fields) == 0 {
@@ -1921,6 +1947,9 @@ func (b *Builder) Build() (*Built, error) {
 // SDL renders the current IR as GraphQL SDL, deterministically ordered.
 func (b *Builder) SDL() string {
 	var out strings.Builder
+	if b.Options.IncrementalDelivery {
+		out.WriteString(incrementalDirectives)
+	}
 	for _, s := range b.Scalars {
 		writeDesc(&out, b.ScalarDescriptions[s], "")
 		fmt.Fprintf(&out, "scalar %s\n", s)

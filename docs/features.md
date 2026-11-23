@@ -172,7 +172,7 @@ Checklist of PostgreSQL and GraphQL features pdbq supports. Checked = implemente
 - [x] Atomic schema hot-swap (in-flight requests finish on the old schema)
 - [x] `/metrics` (Prometheus) endpoint (opt-in `metrics.enabled`, optional separate `metrics.addr`; see [metrics.md](metrics.md))
 - [x] Persisted queries / APQ (`server.apq` Apollo protocol, `server.persisted_queries_path` allowlist file, `server.persisted_only` lockdown)
-- [ ] `@defer` / `@stream`
+- [x] `@defer` / `@stream` incremental delivery (opt-in `server.incremental_delivery`): `multipart/mixed` over HTTP (`incrementalSpec=v0.2` and `deferSpec=20220824` shapes), `next` messages over WebSocket; deferred fragments and stream batches run as their own statements in one repeatable read snapshot under the request's RLS identity — see [Incremental delivery](incremental.md)
 - [x] Schema contracts — named schema variants that hide tagged tables, columns, functions and relations per audience (e.g. `public`/`partner`/`internal`), each with its own SDL export (`schema print --contract`) and served endpoint; builds on the `@omit` machinery in smart-comments ([contracts.md](contracts.md))
 - [x] CORS configuration (`server.cors_origins`: exact-match allowlist or `*`)
 - [x] Response compression (gzip, opt-in via `server.compression`)

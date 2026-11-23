@@ -479,3 +479,45 @@ func TestPayloadRelationFallsBackOnCollision(t *testing.T) {
 		t.Error("missing relation metadata on CreateRunPayload.savedQueryByQueryId")
 	}
 }
+
+// TestIncrementalDeliverySchema checks that the defer and stream directives
+// are declared only with the option, and that declaring them changes
+// nothing else.
+func TestIncrementalDeliverySchema(t *testing.T) {
+	build := func(on bool) *schema.Built {
+		t.Helper()
+		built, err := schema.New(testutil.FixtureCatalog(), inflect.Default, schema.Options{
+			FilterIndexedOnly:   true,
+			Functions:           true,
+			IncrementalDelivery: on,
+		}).Build()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return built
+	}
+	off, on := build(false), build(true)
+	if strings.Contains(off.SDL, "directive @") || off.Schema.Directives["stream"] != nil {
+		t.Fatal("schema without incremental delivery declares directives")
+	}
+	if def := build(false).SDL; def != off.SDL {
+		t.Fatal("schema SDL is not deterministic")
+	}
+	end := strings.Index(on.SDL, ") on FIELD\n\n")
+	if !strings.HasPrefix(on.SDL, `"""Directs the executor to defer`) || end < 0 {
+		t.Fatalf("directives not declared first:\n%.400s", on.SDL)
+	}
+	if rest := on.SDL[end+len(") on FIELD\n\n"):]; rest != off.SDL {
+		t.Error("declaring the directives changed the rest of the schema")
+	}
+	stream := on.Schema.Directives["stream"]
+	if stream == nil || len(stream.Locations) != 1 || stream.Locations[0] != "FIELD" {
+		t.Fatalf("stream directive = %+v", stream)
+	}
+	if a := stream.Arguments.ForName("initialCount"); a == nil || a.Type.String() != "Int!" || a.DefaultValue.Raw != "0" {
+		t.Errorf("stream initialCount = %+v", a)
+	}
+	if a := on.Schema.Directives["defer"].Arguments.ForName("if"); a == nil || a.Type.String() != "Boolean!" {
+		t.Errorf("defer if = %+v", a)
+	}
+}
