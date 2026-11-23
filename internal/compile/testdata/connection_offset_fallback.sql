@@ -3,9 +3,9 @@ SELECT json_build_object('totalCount', (SELECT count(*) FROM "public"."metrics" 
 FROM (
   SELECT json_build_object('name', __t_1."name", 'value', __t_1."value") AS ndata, json_build_object('name', __t_1."name") AS edata, row_number() OVER () AS __rn
   FROM "public"."metrics" AS __t_1
-  LIMIT $1
-  OFFSET $2
+  LIMIT 2
+  OFFSET $1
 ) AS __s_2
 GROUP BY ()
--- args: [2,2]
+-- args: [2]
 

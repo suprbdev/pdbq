@@ -3,6 +3,8 @@ package compile_test
 import (
 	"context"
 	"errors"
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -44,6 +46,10 @@ func hasArg(stmt *compile.Statement, want int) bool {
 		}
 	}
 	return false
+}
+
+func hasLimit(stmt *compile.Statement, want int) bool {
+	return regexp.MustCompile(`\bLIMIT ` + strconv.Itoa(want) + `\b`).MatchString(stmt.SQL)
 }
 
 func TestNegativePaginationRejected(t *testing.T) {
@@ -90,8 +96,8 @@ func TestPageSizeAtCapAccepted(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Keyset mode scans cap+1 rows to detect hasNextPage and trims to cap.
-	if !hasArg(stmt, 101) || !hasArg(stmt, 100) {
-		t.Fatalf("first=100 at the cap not honored; args=%v", stmt.Args)
+	if !hasLimit(stmt, 101) || !hasArg(stmt, 100) {
+		t.Fatalf("first=100 at the cap not honored; args=%v sql=\n%s", stmt.Args, stmt.SQL)
 	}
 }
 
@@ -103,8 +109,8 @@ func TestMissingFirstDefaultsToMaxPageSize(t *testing.T) {
 	if !strings.Contains(stmt.SQL, "LIMIT ") {
 		t.Fatalf("no LIMIT emitted without first; sql=\n%s", stmt.SQL)
 	}
-	if !hasArg(stmt, 26) || !hasArg(stmt, 25) {
-		t.Fatalf("default limit not the cap 25; args=%v", stmt.Args)
+	if !hasLimit(stmt, 26) || !hasArg(stmt, 25) {
+		t.Fatalf("default limit not the cap 25; args=%v sql=\n%s", stmt.Args, stmt.SQL)
 	}
 }
 
@@ -113,8 +119,8 @@ func TestZeroMaxPageSizeFallsBackToDefault(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !hasArg(stmt, 101) || !hasArg(stmt, 100) {
-		t.Fatalf("compiler default cap 100 not applied; args=%v", stmt.Args)
+	if !hasLimit(stmt, 101) || !hasArg(stmt, 100) {
+		t.Fatalf("compiler default cap 100 not applied; args=%v sql=\n%s", stmt.Args, stmt.SQL)
 	}
 }
 
@@ -123,7 +129,7 @@ func TestFirstUnderCapUnchanged(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !hasArg(stmt, 6) || !hasArg(stmt, 5) {
-		t.Fatalf("first=5 altered; args=%v", stmt.Args)
+	if !hasLimit(stmt, 6) || !hasArg(stmt, 5) {
+		t.Fatalf("first=5 altered; args=%v sql=\n%s", stmt.Args, stmt.SQL)
 	}
 }

@@ -88,7 +88,7 @@ func (s *stmt) groupedAggregates(t *introspect.Table, f *ast.Field, alias, where
 	}
 	inner := fmt.Sprintf("SELECT %s AS data, %s\nFROM %s AS %s%s\nGROUP BY %s%s\nORDER BY %s\nLIMIT %s",
 		obj, strings.Join(cols, ", "), s.sourceRef(t, alias), alias, where,
-		strings.Join(exprs, ", "), having, strings.Join(inOrder, ", "), s.param(s.maxPageSize))
+		strings.Join(exprs, ", "), having, strings.Join(inOrder, ", "), strconv.Itoa(s.maxPageSize))
 	return fmt.Sprintf("(SELECT coalesce(json_agg(%s.data ORDER BY %s), '[]'::json) FROM (\n%s\n) AS %s)",
 		g, strings.Join(order, ", "), indent(inner), g), nil
 }

@@ -4,8 +4,8 @@ FROM (
   SELECT row_number() OVER (ORDER BY __t_1."id" ASC) AS __rn
   FROM "public"."durations" AS __t_1
   ORDER BY __t_1."id" ASC
-  LIMIT $1
+  LIMIT 101
 ) AS __s_2
 GROUP BY ()
--- args: [101]
+-- args: null
 

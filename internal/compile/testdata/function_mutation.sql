@@ -72,11 +72,11 @@ SELECT json_build_object('posts', (SELECT coalesce(json_agg(__s_5.data ORDER BY 
     SELECT row_number() OVER (ORDER BY __t_6."id" ASC) AS __rn
     FROM "public"."posts" AS __t_6
     ORDER BY __t_6."id" ASC
-    LIMIT $2
+    LIMIT 2
   ) AS __s_7
   GROUP BY ()
 ) AS __q_9))) AS data
--- args: [2]
+-- args: []
 
 -- field: touchPost
 SELECT '{}'::json AS data
