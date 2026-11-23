@@ -602,10 +602,8 @@ func (r *build) omitsOrder(comment string) bool {
 
 // addOrderPair appends base_ASC/base_DESC unless either name is taken.
 func addOrderPair(en *schema.Enum, base string, rel *schema.OrderRelation) {
-	for _, v := range en.Values {
-		if v.Name == base+"_ASC" || v.Name == base+"_DESC" {
-			return
-		}
+	if en.HasValue(base+"_ASC") || en.HasValue(base+"_DESC") {
+		return
 	}
 	en.Values = append(en.Values,
 		schema.EnumValue{Name: base + "_ASC", Relation: rel},

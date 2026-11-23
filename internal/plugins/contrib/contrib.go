@@ -107,11 +107,12 @@ type column struct {
 type build struct {
 	b        *schema.Builder
 	extended map[string]bool
+	orderBy  map[string][]*schema.Field
 }
 
 // TransformSchema implements plugin.SchemaHook.
 func (p *Plugin) TransformSchema(_ context.Context, b *schema.Builder) error {
-	st := &build{b: b, extended: map[string]bool{}}
+	st := &build{b: b, extended: map[string]bool{}, orderBy: b.FieldsByOrderBy()}
 	for _, t := range b.Catalog.Tables {
 		var cols []column
 		for _, c := range t.Columns {
@@ -371,10 +372,8 @@ func orderable(en *schema.Enum, col string) bool {
 }
 
 func addValue(en *schema.Enum, name string, v schema.EnumValue) {
-	for _, ex := range en.Values {
-		if ex.Name == name {
-			return
-		}
+	if en.HasValue(name) {
+		return
 	}
 	v.Name = name
 	en.Values = append(en.Values, v)
@@ -407,22 +406,11 @@ func (st *build) addSimilarToArg(t *introspect.Table, enumName string, cols []*i
 		})
 	}
 	b.Inputs[inputName] = input
-	for _, o := range b.Objects {
-		for _, f := range o.Fields {
-			if takesOrderBy(f, enumName) && !hasArg(f, "similarTo") {
-				f.Args = append(f.Args, schema.Arg{Name: "similarTo", Type: inputName})
-			}
+	for _, f := range st.orderBy[enumName] {
+		if !hasArg(f, "similarTo") {
+			f.Args = append(f.Args, schema.Arg{Name: "similarTo", Type: inputName})
 		}
 	}
-}
-
-func takesOrderBy(f *schema.Field, enumName string) bool {
-	for _, a := range f.Args {
-		if a.Name == "orderBy" && strings.Trim(a.Type, "[]!") == enumName {
-			return true
-		}
-	}
-	return false
 }
 
 func hasArg(f *schema.Field, name string) bool {

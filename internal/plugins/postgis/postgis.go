@@ -114,6 +114,7 @@ func (p *Plugin) TransformSchema(_ context.Context, b *schema.Builder) error {
 		return nil
 	}
 	p.addSharedInputs(b)
+	orderBy := b.FieldsByOrderBy()
 	for _, t := range b.Catalog.Tables {
 		cols := spatialColumns(t)
 		if len(cols) == 0 {
@@ -129,7 +130,7 @@ func (p *Plugin) TransformSchema(_ context.Context, b *schema.Builder) error {
 			p.addProjectionArgs(b, t, cols)
 		}
 		if p.ordering {
-			p.addDistanceOrdering(b, t, cols)
+			p.addDistanceOrdering(b, t, cols, orderBy)
 		}
 	}
 	if p.typedGeometry {
@@ -436,7 +437,7 @@ func (p *Plugin) addProjectionArgs(b *schema.Builder, t *introspect.Table, cols 
 //
 // The enum value carries the column binding; the reference geometry comes from
 // `near:` at query time, which is why the two are generated together.
-func (p *Plugin) addDistanceOrdering(b *schema.Builder, t *introspect.Table, cols []*introspect.Column) {
+func (p *Plugin) addDistanceOrdering(b *schema.Builder, t *introspect.Table, cols []*introspect.Column, orderBy map[string][]*schema.Field) {
 	enumName := b.Inflect(inflect.KindOrderByTypeName, inflect.Input{Schema: t.Schema, Table: t.Name})
 	en, ok := b.Enums[enumName]
 	if !ok {
@@ -457,7 +458,7 @@ func (p *Plugin) addDistanceOrdering(b *schema.Builder, t *introspect.Table, col
 			desc   bool
 		}{{"_DISTANCE_ASC", false}, {"_DISTANCE_DESC", true}} {
 			value := base + dir.suffix
-			if hasEnumValue(en, value) {
+			if en.HasValue(value) {
 				continue
 			}
 			en.Values = append(en.Values, schema.EnumValue{
@@ -472,40 +473,18 @@ func (p *Plugin) addDistanceOrdering(b *schema.Builder, t *introspect.Table, col
 		}
 	}
 	if added {
-		p.addNearArg(b, t, enumName)
+		addNearArg(orderBy[enumName])
 	}
-}
-
-func hasEnumValue(en *schema.Enum, name string) bool {
-	for _, v := range en.Values {
-		if v.Name == name {
-			return true
-		}
-	}
-	return false
 }
 
 // addNearArg adds `near: NearInput` to every field that already takes the
 // table's orderBy enum, so distance ordering has a reference geometry.
-func (p *Plugin) addNearArg(b *schema.Builder, t *introspect.Table, enumName string) {
-	for _, obj := range b.Objects {
-		for _, f := range obj.Fields {
-			if !takesOrderBy(f, enumName) || hasArg(f, "near") {
-				continue
-			}
+func addNearArg(fields []*schema.Field) {
+	for _, f := range fields {
+		if !hasArg(f, "near") {
 			f.Args = append(f.Args, schema.Arg{Name: "near", Type: nearInput})
 		}
 	}
-}
-
-// takesOrderBy reports whether a field accepts the given orderBy enum.
-func takesOrderBy(f *schema.Field, enumName string) bool {
-	for _, a := range f.Args {
-		if a.Name == "orderBy" && strings.Contains(a.Type, enumName) {
-			return true
-		}
-	}
-	return false
 }
 
 func hasArg(f *schema.Field, name string) bool {
