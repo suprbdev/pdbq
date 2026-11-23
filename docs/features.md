@@ -7,12 +7,12 @@ Checklist of PostgreSQL and GraphQL features pdbq supports. Checked = implemente
 - [x] Tables (including partitioned tables; partitions are left out unless `schema.expose_partitions` is set)
 - [x] Views (read-only)
 - [x] Materialized views (read-only)
-- [x] Columns: type, nullability, defaults, identity/generated detection
+- [x] Columns: type, nullability, defaults, identity/generated detection (a PostgreSQL 18 `NOT NULL ... NOT VALID` column stays nullable until validated)
 - [x] Primary keys
 - [x] Unique constraints
 - [x] Foreign keys (including multi-column)
 - [x] PostgreSQL 18 temporal keys (`WITHOUT OVERLAPS`), temporal foreign keys (`PERIOD`) and `NOT ENFORCED` foreign keys — see [Temporal keys](temporal.md)
-- [x] Indexes (name, columns, uniqueness, method) — drives the filter policy
+- [x] Indexes (name, columns, uniqueness, method, operator classes) — drives the filter policy
 - [x] Enums
 - [x] Functions (args, return type, set-returning, volatility)
 - [x] Comments on tables, columns, enums, functions (exposed as GraphQL descriptions), and constraints (smart comments)
@@ -96,7 +96,7 @@ Checklist of PostgreSQL and GraphQL features pdbq supports. Checked = implemente
 - [x] Filters/ordering on backward relation fields, not just root lists
 - [x] `jsonb` path operators (`@?`/`@@` via `pathExists`/`pathMatch`)
 - [x] Range operators (`overlaps contains containsElement containedBy strictlyLeftOf strictlyRightOf notExtendsRightOf notExtendsLeftOf adjacentTo`), on multiranges too
-- [x] Contrib operator sets respect `filters.indexed_only` per index hint (no unindexable operators; trigram operators/ordering only on GIN/GiST-indexed columns; unaccent and fuzzystrmatch operators, vector/bit distance thresholds, the earthdistance `point` surface and the ltree, hstore and intarray value filters and orderings only on allowlisted columns; each vector distance ordering only on columns led by an HNSW/IVFFlat index serving it; cube and earth thresholds and orderings only on GiST-indexed columns)
+- [x] Contrib operator sets respect `filters.indexed_only` per index hint (no unindexable operators; trigram operators/ordering only on GIN/GiST-indexed columns; unaccent and fuzzystrmatch operators, vector/bit distance thresholds, the earthdistance `point` surface and the ltree, hstore and intarray value filters and orderings only on allowlisted columns; each vector distance ordering only on columns led by an HNSW/IVFFlat index built for its metric; index hints matched by operator class; cube and earth thresholds and orderings only on GiST-indexed columns)
 - [x] Filtering across relations (`posts: {some: {title: {equalTo: ...}}}`) — built-in `advanced-filters` plugin: forward FK takes the parent's filter, reverse FK a `{some|none|every}` wrapper, compiled to EXISTS subqueries
 - [x] Filtering on relation existence (`postsExist: true`, `authorExists: false`) — Boolean variant per relation, compiled to a bare `(NOT) EXISTS`
 - [x] Filtering/ordering on computed columns — built-in `advanced-filters` plugin (single-row-argument stable functions; not index-backed)

@@ -227,7 +227,7 @@ func (st *build) served(t *introspect.Table, c *introspect.Column, hints []pgcon
 	if slices.Contains(st.b.Options.AllowColumns[t.Schema+"."+t.Name], c.Name) {
 		return true
 	}
-	return contribtype.IndexServes(contribtype.IndexMethods(t, c.Name), hints)
+	return contribtype.IndexServes(t, c.Name, hints)
 }
 
 // filterField returns the table filter's field bound to column c, or nil
