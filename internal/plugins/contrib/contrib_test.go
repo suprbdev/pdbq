@@ -186,8 +186,8 @@ func TestFilterSurface(t *testing.T) {
 		if field == "email" {
 			input = "UserFilter"
 		}
-		if got := fieldType(t, all, input, field); got != "StringTrgmUnaccentFilterOps" {
-			t.Errorf("%s.%s without indexed_only = %s, want StringTrgmUnaccentFilterOps", input, field, got)
+		if got := fieldType(t, all, input, field); got != "StringTrgmUnaccentFuzzyFilterOps" {
+			t.Errorf("%s.%s without indexed_only = %s, want StringTrgmUnaccentFuzzyFilterOps", input, field, got)
 		}
 	}
 }
@@ -201,8 +201,8 @@ func TestAllowColumnsGetEverything(t *testing.T) {
 	if err := New(nil).TransformSchema(context.Background(), b); err != nil {
 		t.Fatal(err)
 	}
-	if got := fieldType(t, b, "DocumentFilter", "notes"); got != "StringTrgmUnaccentFilterOps" {
-		t.Errorf("allowlisted notes = %s, want StringTrgmUnaccentFilterOps", got)
+	if got := fieldType(t, b, "DocumentFilter", "notes"); got != "StringTrgmUnaccentFuzzyFilterOps" {
+		t.Errorf("allowlisted notes = %s, want StringTrgmUnaccentFuzzyFilterOps", got)
 	}
 	if !hasEnumValue(b, "DocumentsOrderBy", "NOTES_SIMILARITY_DESC") {
 		t.Error("allowlisted notes lacks similarity ordering")

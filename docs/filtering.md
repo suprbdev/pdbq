@@ -12,7 +12,7 @@ matching the Postgres type:
 | json/jsonb | `equalTo contains containedBy containsKey pathExists pathMatch isNull` |
 | enums | scalar set, with GraphQL enum values |
 | PostGIS geometry/geography | spatial set only (`bboxIntersects intersects within dwithin` …) — see [PostGIS](postgis.md) |
-| `tsvector`, `hstore`, `ltree`, ranges/multiranges, `inet`/`cidr`; text with `pg_trgm` or `unaccent` | type-specific sets (`matches`, `containsKey`, `descendantOf`, `overlaps`, `containedBy`, `similarTo`, `unaccentIncludes` …) plus `_RANK_`/`_SIMILARITY_` ordering — see [Contrib types](contrib.md) |
+| `tsvector`, `hstore`, `ltree`, ranges/multiranges, `inet`/`cidr`; text with `pg_trgm`, `unaccent` or `fuzzystrmatch`; `int4[]` with `intarray` | type-specific sets (`matches`, `containsKey`, `descendantOf`, `overlaps`, `containedBy`, `similarTo`, `unaccentIncludes`, `soundexEqualTo`, `matchesQueryInt` …) plus `_RANK_`/`_SIMILARITY_`/`_LEVENSHTEIN_DISTANCE_` ordering and `<field>Nlevel`/`<field>Value`/`<field>Icount` filters — see [Contrib types](contrib.md) |
 | pgvector `vector`/`halfvec`/`sparsevec` (and `bit`/`varbit` distances) | `isNull`, `<distance>LessThan` thresholds on allowlisted columns, plus `_L2_DISTANCE_`/`_COSINE_DISTANCE_`/… ordering via `nearVector:` — see [pgvector](contrib.md#pgvector) |
 
 `startsWith`/`endsWith` escape `%`/`_`/`\` in the operand; every operand is

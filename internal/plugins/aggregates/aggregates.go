@@ -360,7 +360,7 @@ func orderColumns(b *schema.Builder, t *introspect.Table) []orderColumn {
 	}
 	var out []orderColumn
 	for _, v := range en.Values {
-		if v.Column == "" || v.Desc || v.Computed != nil || v.Relation != nil || v.Distance || v.Rank || v.Similarity != "" || v.Vector != "" {
+		if v.Column == "" || v.Desc || v.Computed != nil || v.Relation != nil || v.Distance || v.Rank || v.Similarity != "" || v.Vector != "" || v.Contrib != nil {
 			continue
 		}
 		base, ok := strings.CutSuffix(v.Name, "_ASC")

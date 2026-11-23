@@ -1,0 +1,17 @@
+# Filters on contrib values: ltree depth, intarray element count, the value of an hstore key (bound
+# once, only when a comparison uses it), intarray's query_int match on a
+# GIN-indexed int4[] column and the fuzzystrmatch operators on an
+# allowlisted text column.
+{
+  depth: allDocuments(filter: {pathNlevel: {greaterThanOrEqualTo: 2, lessThan: 5}}) { nodes { id } }
+  value: allDocuments(filter: {attrsValue: {key: "color", in: ["red", "blue"], likeInsensitive: "r%"}}) { nodes { id } }
+  keyOnly: allDocuments(filter: {attrsValue: {key: "color"}}) { nodes { id } }
+  keys: allDocuments(filter: {and: [{attrsValue: {key: "color", equalTo: "red"}}, {not: {attrsValue: {key: "size", isNull: true}}}]}) { nodes { id } }
+  tags: allDocuments(filter: {tagIds: {matchesQueryInt: "1&(2|!3)", contains: [1]}, tagIdsIcount: {greaterThan: 1}}) { nodes { id } }
+  fuzzy: allDocuments(filter: {notes: {
+    levenshteinDistanceLessThan: {text: "kitten", distance: 3}
+    soundexEqualTo: "Robert"
+    metaphoneEqualTo: "Knight"
+    doubleMetaphoneEqualTo: "Smith"
+  }}) { nodes { id } }
+}

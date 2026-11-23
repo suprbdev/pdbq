@@ -1,0 +1,21 @@
+# variables: {"key": "color", "len": null}
+# ltree, ltree[], hstore and intarray values as fields: accessors take no
+# arguments, derived values bind theirs (an omitted subpath length is bound
+# as NULL, so the SQL text does not depend on it).
+query ($key: String!, $len: Int) {
+  allDocuments(first: 2) {
+    nodes {
+      id
+      pathNlevel
+      pathParent
+      pathsLca
+      tagIdsIcount
+      color: attrsValue(key: $key)
+      size: attrsValue(key: "size")
+      pathLca(path: "a.b.x")
+      rest: pathSubpath(offset: 1, length: $len)
+      last: pathSubpath(offset: -1, length: 1)
+    }
+  }
+  documentById(id: 1) { pathNlevel attrsValue(key: "color") }
+}

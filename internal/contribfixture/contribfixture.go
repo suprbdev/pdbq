@@ -1,8 +1,9 @@
 // Package contribfixture extends pdbcore's shared test fixture with a table
 // covering every contrib column type (tsvector, citext, hstore, ltree,
-// ltree[], the range and multirange types, inet, cidr and pg_trgm-indexed
-// text) and a table of pgvector columns for golden and schema tests. The
-// extensions (with unaccent) are recorded as installed in the "ext" schema,
+// ltree[], the range and multirange types, inet, cidr, pg_trgm-indexed text
+// and a GIN-indexed int4[] for intarray) and a table of pgvector columns for
+// golden and schema tests. The extensions (with unaccent and fuzzystrmatch)
+// are recorded as installed in the "ext" schema,
 // so compiled SQL shows the schema-qualified spelling that works when that
 // schema is not on the search_path.
 //
@@ -22,7 +23,9 @@ const ExtSchema = "ext"
 func Extensions() []*introspect.Extension {
 	return []*introspect.Extension{
 		{Name: "citext", Version: "1.6", Schema: ExtSchema},
+		{Name: "fuzzystrmatch", Version: "1.2", Schema: ExtSchema},
 		{Name: "hstore", Version: "1.8", Schema: ExtSchema},
+		{Name: "intarray", Version: "1.5", Schema: ExtSchema},
 		{Name: "ltree", Version: "1.3", Schema: ExtSchema},
 		{Name: "pg_trgm", Version: "1.6", Schema: ExtSchema},
 		{Name: "unaccent", Version: "1.1", Schema: ExtSchema},
@@ -41,6 +44,8 @@ func Documents() *introspect.Table {
 	title.NotNull = true
 	paths := col(8, "paths", "_ltree", ExtSchema)
 	paths.IsArray = true
+	tagIDs := col(18, "tag_ids", "_int4", "pg_catalog")
+	tagIDs.IsArray = true
 	return &introspect.Table{
 		Schema: "public", Name: "documents", Kind: introspect.RelTable,
 		Privileges: introspect.Privileges{Select: true, Insert: true, Update: true, Delete: true},
@@ -62,6 +67,7 @@ func Documents() *introspect.Table {
 			col(15, "notes", "text", "pg_catalog"),
 			col(16, "keywords", "tsvector", "pg_catalog"),
 			col(17, "stay", "stay", "public"),
+			tagIDs,
 		},
 		PrimaryKey: &introspect.Constraint{Name: "documents_pkey", Columns: []string{"id"}},
 		Uniques:    []*introspect.Constraint{{Name: "documents_slug_key", Columns: []string{"slug"}}},
@@ -80,6 +86,7 @@ func Documents() *introspect.Table {
 			{Name: "documents_search_idx", Columns: []string{"search"}, Method: "gin"},
 			{Name: "documents_slug_key", Columns: []string{"slug"}, Unique: true, Method: "btree"},
 			{Name: "documents_span_idx", Columns: []string{"span"}, Method: "gist"},
+			{Name: "documents_tag_ids_idx", Columns: []string{"tag_ids"}, Method: "gin"},
 			{Name: "documents_title_idx", Columns: []string{"title"}, Method: "gin"},
 		},
 	}

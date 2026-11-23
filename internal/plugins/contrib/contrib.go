@@ -31,6 +31,26 @@
 //     trigram input) adds unaccentEqualTo, unaccentLike, unaccentIncludes
 //     and unaccentStartsWith;
 //
+//   - fuzzystrmatch operators on text columns when the extension is
+//     installed and the filter policy admits unindexable operators on the
+//     column: the String[Trgm][Unaccent]FuzzyFilterOps inputs add
+//     levenshteinDistanceLessThan ({text, distance}), soundexEqualTo,
+//     metaphoneEqualTo and doubleMetaphoneEqualTo, and
+//     <COLUMN>_LEVENSHTEIN_DISTANCE_ASC/_DESC orderBy values and a
+//     <field>LevenshteinDistance: Int score measure against similarTo:;
+//
+//   - intarray's matchesQueryInt (query_int) on int4[] columns led by a GIN
+//     or GiST index (or allowlisted), through IntListIntarrayFilterOps;
+//
+//   - value fields: <field>Nlevel, <field>Parent, <field>Lca(path:) and
+//     <field>Subpath(offset:, length:) on ltree columns, <field>Lca on
+//     ltree[] columns, <field>Value(key:) on hstore columns and
+//     <field>Icount on int4[] columns with intarray, with <field>Nlevel,
+//     <field>Icount and <field>Value table-filter fields and
+//     <COLUMN>_NLEVEL_, _ICOUNT_ and _VALUE_ orderBy values (the last
+//     against a hstoreKey: <Type>HstoreKeyInput argument) on columns the
+//     policy admits unindexed surface on;
+//
 //   - full-text rank: a <field>Rank: Float sibling of every filterable
 //     tsvector column and <COLUMN>_RANK_ASC/_DESC orderBy values, both
 //     computed (ts_rank) against the first matches* operator on that column
@@ -65,8 +85,9 @@
 //     serves, on columns the indexed-only policy admits them for.
 //
 // Under filters.indexed_only, operators no index can serve (hstore
-// containedBy, the ltree *Any forms, the unaccent operators, the vector and
-// bit distance thresholds) are left out,
+// containedBy and containsDefinedKey, the ltree *Any forms, the unaccent and
+// fuzzystrmatch operators, the vector and bit distance thresholds, the value
+// filters and orderings) are left out,
 // the trigram operators are offered only on columns with a GIN or GiST
 // index, trigram ordering only on columns with a GiST index, and each
 // vector distance ordering only on columns leading an index of a method
@@ -80,9 +101,10 @@
 // the plugin (plugins.disabled: [contrib]) removes the surface while plain
 // reads, writes and comparisons keep working. "@omit filter" / "@omit order"
 // on a column skips its filter / ordering surface; "@omit read" also skips
-// its rank field, its score fields and its rank, similarity and vector
-// distance orderings, which read the value back against a client-chosen
-// reference (package omit).
+// its rank field, its score and value fields and its rank, similarity,
+// distance and value orderings, which read the value back against a
+// client-chosen reference (package omit). The value fields come with the
+// plugin regardless of the filters and ordering settings.
 package contrib
 
 import (
@@ -159,11 +181,13 @@ func (p *Plugin) TransformSchema(_ context.Context, b *schema.Builder) error {
 		if len(cols) == 0 {
 			continue
 		}
+		st.addValueFields(t, cols)
 		if p.filters {
 			st.addFilters(t, cols)
 		}
 		if p.ordering {
 			st.addOrdering(t, cols)
+			st.addValueOrdering(t, cols)
 		}
 	}
 	return nil
@@ -216,10 +240,24 @@ func (st *build) addFilters(t *introspect.Table, cols []column) {
 				f.Type = contribtype.StringTrgmOps
 			}
 		}
-		if ua, ok := cc.ci.Unaccent(); ok && len(ua.Ops) > 0 && st.served(t, cc.col, ua.Ops[0].Index) {
-			if name := st.ensureUnaccentOps(f.Type, ua); name != "" {
+		var extra []pgcontrib.Vocabulary
+		for _, v := range []func() (pgcontrib.Vocabulary, bool){cc.ci.Unaccent, cc.ci.Fuzzy} {
+			if voc, ok := v(); ok && len(voc.Ops) > 0 && st.served(t, cc.col, voc.Ops[0].Index) {
+				extra = append(extra, voc)
+			}
+		}
+		if len(extra) > 0 {
+			if name := st.ensureTextOps(f.Type, extra); name != "" {
 				f.Type = name
 			}
+		}
+		if ia, ok := cc.ci.Intarray(); ok && len(ia.Ops) > 0 && f.Type == "IntListFilterOps" && st.served(t, cc.col, ia.Ops[0].Index) {
+			if st.ensureIntarrayOps(ia) {
+				f.Type = contribtype.IntListIntarrayOps
+			}
+		}
+		if st.served(t, cc.col, nil) {
+			st.addValueFilters(t, cc)
 		}
 		if dv, ok := cc.ci.Distances(); ok && len(dv.Ops) > 0 && st.served(t, cc.col, nil) {
 			if name := st.ensureDistanceOps(f.Type, cc.ci, dv); name != "" {
@@ -288,47 +326,145 @@ func (st *build) ensureDistanceOps(base string, ci contribtype.Column, dv pgcont
 	return target.name
 }
 
-// unaccentInputs maps the operator inputs of text columns to the inputs
-// adding the unaccent operators to them, with their descriptions.
-var unaccentInputs = map[string]struct{ name, desc string }{
-	"StringFilterOps": {contribtype.StringUnaccentOps,
-		"String operators plus unaccent comparisons, which ignore accents and case; no index can serve them."},
-	contribtype.StringTrgmOps: {contribtype.StringTrgmUnaccentOps,
-		"String operators plus pg_trgm similarity and unaccent comparisons. The similarity predicates compare " +
-			"against the pg_trgm.*similarity_threshold settings and can use a GIN or GiST trigram index; the " +
-			"unaccent comparisons ignore accents and case, and no index can serve them."},
+// textOpsDescriptions describe the text operator inputs by the
+// vocabularies they add to StringFilterOps.
+var textOpsDescriptions = map[string]string{
+	contribtype.StringUnaccentOps: "String operators plus unaccent comparisons, which ignore accents and case; no index can serve them.",
+	contribtype.StringTrgmUnaccentOps: "String operators plus pg_trgm similarity and unaccent comparisons. The similarity predicates compare " +
+		"against the pg_trgm.*similarity_threshold settings and can use a GIN or GiST trigram index; the " +
+		"unaccent comparisons ignore accents and case, and no index can serve them.",
 }
 
-// ensureUnaccentOps declares the input adding the unaccent operators to the
-// text operator input base, returning its name, or "" when base takes none
-// or the name is taken.
-func (st *build) ensureUnaccentOps(base string, ua pgcontrib.Vocabulary) string {
-	target, ok := unaccentInputs[base]
-	if !ok {
+// textOpsDescription describes a text operator input adding the given
+// vocabularies to StringFilterOps.
+func textOpsDescription(name string, trgm, unaccent, fuzzy bool) string {
+	if d, ok := textOpsDescriptions[name]; ok {
+		return d
+	}
+	var parts []string
+	if trgm {
+		parts = append(parts, "pg_trgm similarity (against the pg_trgm.*similarity_threshold settings; a GIN or GiST trigram index can serve it)")
+	}
+	if unaccent {
+		parts = append(parts, "unaccent comparisons ignoring accents and case")
+	}
+	if fuzzy {
+		parts = append(parts, "fuzzystrmatch Levenshtein distance thresholds and soundex, metaphone and double metaphone equality")
+	}
+	desc := "String operators plus " + strings.Join(parts, ", ") + "."
+	if unaccent || fuzzy {
+		desc += " No index can serve the unaccent and fuzzystrmatch operators."
+	}
+	return desc
+}
+
+// ensureTextOps declares the input adding the operators of extra (unaccent,
+// fuzzystrmatch) to the text operator input base (StringFilterOps or
+// StringTrgmFilterOps), returning its name, or "" when base takes none or a
+// name is taken.
+func (st *build) ensureTextOps(base string, extra []pgcontrib.Vocabulary) string {
+	if base != "StringFilterOps" && base != contribtype.StringTrgmOps {
 		return ""
 	}
-	if st.extended[target.name] {
-		return target.name
+	has := map[string]bool{}
+	for _, v := range extra {
+		has[v.Name] = true
+	}
+	trgm := base == contribtype.StringTrgmOps
+	name := contribtype.StringOps(trgm, has[pgcontrib.VocabUnaccent], has[pgcontrib.VocabFuzzy])
+	if st.extended[name] {
+		return name
 	}
 	src := st.b.Inputs[base]
 	if src == nil {
 		return ""
 	}
-	if _, taken := st.b.Inputs[target.name]; taken {
-		st.b.Options.Logger.Warn("contrib: type name already taken, unaccent operators disabled", "type", target.name)
+	if _, taken := st.b.Inputs[name]; taken {
+		st.b.Options.Logger.Warn("contrib: type name already taken, text operators disabled", "type", name)
 		return ""
 	}
-	st.extended[target.name] = true
-	in := &schema.Input{Name: target.name, Description: target.desc}
+	if has[pgcontrib.VocabFuzzy] && !st.ensureTextDistanceInput() {
+		return ""
+	}
+	st.extended[name] = true
+	in := &schema.Input{Name: name, Description: textOpsDescription(name, trgm, has[pgcontrib.VocabUnaccent], has[pgcontrib.VocabFuzzy])}
 	for _, f := range src.Fields {
 		cp := *f
 		in.Fields = append(in.Fields, &cp)
 	}
-	for _, o := range ua.Ops {
-		in.AddField(&schema.InputField{Name: contribtype.OpName(ua, o), Type: "String", Description: o.Description})
+	for _, v := range extra {
+		for _, o := range v.Ops {
+			typ := "String"
+			if o.Arg == pgcontrib.ArgTextDistance {
+				typ = contribtype.TextDistanceInput
+			}
+			in.AddField(&schema.InputField{Name: contribtype.OpName(v, o), Type: typ, Description: o.Description})
+		}
 	}
-	st.b.Inputs[target.name] = in
-	return target.name
+	st.b.Inputs[name] = in
+	return name
+}
+
+// ensureTextDistanceInput declares TextDistanceInput, the operand of
+// levenshteinDistanceLessThan, reporting false when the name is taken.
+func (st *build) ensureTextDistanceInput() bool {
+	name := contribtype.TextDistanceInput
+	if st.extended[name] {
+		return true
+	}
+	if st.nameTaken(name) {
+		st.b.Options.Logger.Warn("contrib: type name already taken, fuzzystrmatch operators disabled", "type", name)
+		return false
+	}
+	st.extended[name] = true
+	st.b.Inputs[name] = &schema.Input{
+		Name:        name,
+		Description: "An edit-distance threshold against a reference text: rows whose Levenshtein distance is less than distance match.",
+		Fields: []*schema.InputField{
+			{Name: "text", Type: "String!", Description: "Reference text, at most 255 characters."},
+			{Name: "distance", Type: "Int!", Description: "Exclusive upper bound of the edit distance."},
+		},
+	}
+	return true
+}
+
+// ensureIntarrayOps declares IntListIntarrayFilterOps from IntListFilterOps
+// plus the intarray operators, reporting false when the name is taken.
+func (st *build) ensureIntarrayOps(ia pgcontrib.Vocabulary) bool {
+	name := contribtype.IntListIntarrayOps
+	if st.extended[name] {
+		return true
+	}
+	base := st.b.Inputs["IntListFilterOps"]
+	if base == nil {
+		return false
+	}
+	if st.nameTaken(name) {
+		st.b.Options.Logger.Warn("contrib: type name already taken, intarray operators disabled", "type", name)
+		return false
+	}
+	st.extended[name] = true
+	in := &schema.Input{
+		Name:        name,
+		Description: "Int list operators plus intarray's query_int match, which a GIN (gin__int_ops) or GiST (gist__int_ops) index can serve.",
+	}
+	for _, f := range base.Fields {
+		cp := *f
+		in.Fields = append(in.Fields, &cp)
+	}
+	for _, o := range ia.Ops {
+		in.AddField(&schema.InputField{Name: contribtype.OpName(ia, o), Type: "String", Description: o.Description})
+	}
+	st.b.Inputs[name] = in
+	return true
+}
+
+// nameTaken reports whether a schema type of the given name exists.
+func (st *build) nameTaken(name string) bool {
+	_, in := st.b.Inputs[name]
+	_, obj := st.b.Objects[name]
+	_, en := st.b.Enums[name]
+	return in || obj || en
 }
 
 // operandType is the GraphQL type of a vocabulary operator's operand on a
@@ -440,6 +576,7 @@ func (st *build) addOrdering(t *introspect.Table, cols []column) {
 		return
 	}
 	var similar []*introspect.Column
+	levenshtein := map[string]bool{}
 	var vectors []vectorColumn
 	var filterable map[string]bool
 	for _, cc := range cols {
@@ -482,11 +619,33 @@ func (st *build) addOrdering(t *introspect.Table, cols []column) {
 			}
 			continue
 		}
+		added := false
+		if fz, ok := cc.ci.Fuzzy(); ok && len(fz.Ops) > 0 && st.served(t, cc.col, fz.Ops[0].Index) {
+			if e, ok := fz.Expr("levenshteinDistance"); ok && ordered {
+				base := coreinflect.EnumValue(cc.col.Name) + "_LEVENSHTEIN_DISTANCE"
+				desc := "Order by fuzzystrmatch Levenshtein distance to the similarTo: reference text for this column"
+				addValue(en, base+"_ASC", schema.EnumValue{
+					Column: cc.col.Name, Similarity: e.Name,
+					Description: desc + " (nearest first; values over 255 characters last). Requires similarTo:.",
+				})
+				addValue(en, base+"_DESC", schema.EnumValue{
+					Column: cc.col.Name, Similarity: e.Name, Desc: true,
+					Description: desc + " (farthest first). Requires similarTo:.",
+				})
+				added = true
+			}
+			if st.addScores(t, cc.col, fz, "similarTo") {
+				added = true
+			}
+			levenshtein[cc.col.Name] = added
+		}
 		trgm, ok := cc.ci.Trgm()
 		if !ok {
+			if added {
+				similar = append(similar, cc.col)
+			}
 			continue
 		}
-		added := false
 		for _, so := range contribtype.SimilarityOrders {
 			e, ok := trgm.Expr(so.Expr)
 			if !ordered || !ok || !st.served(t, cc.col, e.Index) {
@@ -512,7 +671,7 @@ func (st *build) addOrdering(t *introspect.Table, cols []column) {
 			similar = append(similar, cc.col)
 		}
 	}
-	if len(similar) > 0 && !st.addSimilarToArg(t, enumName, similar) {
+	if len(similar) > 0 && !st.addSimilarToArg(t, enumName, similar, levenshtein) {
 		st.dropScores(t, "similarTo")
 	}
 	if len(vectors) > 0 {
@@ -553,7 +712,7 @@ func (st *build) addScores(t *introspect.Table, c *introspect.Column, vocab pgco
 		}
 		obj.AddField(&schema.Field{
 			Name: name,
-			Type: "Float",
+			Type: scalarFor(e.Type),
 			Description: strings.TrimSuffix(e.Description, ".") + "; " + c.Name + " measured against the " + arg +
 				": reference of the list this row was read through, null without one.",
 			Meta: &schema.FieldMeta{Kind: schema.KindScore, Table: t, Column: c, Score: &schema.Score{Arg: arg, Expr: e.Name}},
@@ -647,7 +806,8 @@ func (st *build) addVectorOrdering(t *introspect.Table, enumName string, en *sch
 // column passed the indexed-only policy.
 func orderable(en *schema.Enum, col string) bool {
 	for _, v := range en.Values {
-		if v.Column == col && v.Computed == nil && v.Relation == nil && !v.Distance {
+		if v.Column == col && v.Computed == nil && v.Relation == nil && !v.Distance && !v.Rank &&
+			v.Similarity == "" && v.Vector == "" && v.Contrib == nil {
 			return true
 		}
 	}
@@ -663,9 +823,10 @@ func addValue(en *schema.Enum, name string, v schema.EnumValue) {
 }
 
 // addSimilarToArg declares <Type>SimilarToInput (one String per column with
-// similarity ordering or scores) and adds similarTo: to every field taking
+// similarity or Levenshtein distance ordering or scores, the latter marked
+// in levenshtein) and adds similarTo: to every field taking
 // the table's orderBy enum, reporting false when the input's name is taken.
-func (st *build) addSimilarToArg(t *introspect.Table, enumName string, cols []*introspect.Column) bool {
+func (st *build) addSimilarToArg(t *introspect.Table, enumName string, cols []*introspect.Column, levenshtein map[string]bool) bool {
 	b := st.b
 	typeName := b.TypeForTable[t.Schema+"."+t.Name]
 	inputName := typeName + "SimilarToInput"
@@ -680,11 +841,23 @@ func (st *build) addSimilarToArg(t *introspect.Table, enumName string, cols []*i
 		Name:        inputName,
 		Description: "Reference texts for the pg_trgm similarity orderBy values and similarity fields of " + typeName + ", per column.",
 	}
+	fuzzy := false
 	for _, c := range cols {
+		fuzzy = fuzzy || levenshtein[c.Name]
+	}
+	if fuzzy {
+		input.Description = "Reference texts for the pg_trgm similarity and fuzzystrmatch Levenshtein distance orderBy values and fields of " +
+			typeName + ", per column."
+	}
+	for _, c := range cols {
+		desc := "Reference text for the " + c.Name + " similarity orderBy values and similarity fields."
+		if levenshtein[c.Name] {
+			desc = "Reference text for the " + c.Name + " similarity and Levenshtein distance orderBy values and fields."
+		}
 		input.AddField(&schema.InputField{
 			Name:        b.Inflect(inflect.KindFieldName, inflect.Input{Schema: t.Schema, Table: t.Name, Column: c.Name}),
 			Type:        "String",
-			Description: "Reference text for the " + c.Name + " similarity orderBy values and similarity fields.",
+			Description: desc,
 			Column:      c.Name,
 		})
 	}

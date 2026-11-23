@@ -1,0 +1,15 @@
+# variables: {"after": "WyJEb2N1bWVudCIsIDNd"}
+# Ordering by ltree depth, by the value of the hstoreKey: key and by
+# Levenshtein distance to the similarTo: text, with the distance as a
+# field; keyset pages recompute the anchor row's values.
+query ($after: Cursor) {
+  depth: allDocuments(orderBy: [PATH_NLEVEL_DESC], first: 3) { nodes { id pathNlevel } }
+  byValue: allDocuments(hstoreKey: {attrs: "color"}, orderBy: [ATTRS_VALUE_ASC], after: $after, first: 2) {
+    nodes { id attrsValue(key: "color") }
+  }
+  nearest: allDocuments(similarTo: {notes: "kitten"}, orderBy: [NOTES_LEVENSHTEIN_DISTANCE_ASC], after: $after, first: 2) {
+    nodes { id notesLevenshteinDistance }
+  }
+  noKey: allDocuments(orderBy: [ATTRS_VALUE_DESC]) { nodes { id } }
+  noScoreRef: allDocuments(first: 1) { nodes { notesLevenshteinDistance } }
+}

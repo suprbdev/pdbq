@@ -83,6 +83,18 @@ func (s *stmt) rowJSONAs(typeName string, sel ast.SelectionSet, alias string, de
 				return "", nil, err
 			}
 			pairs = append(pairs, key, expr)
+		case schema.KindContribAccessor:
+			expr, err := s.contribAccessorSQL(meta, alias)
+			if err != nil {
+				return "", nil, err
+			}
+			pairs = append(pairs, key, expr)
+		case schema.KindContribDerived:
+			expr, err := s.contribDerivedSQL(meta, f, alias)
+			if err != nil {
+				return "", nil, err
+			}
+			pairs = append(pairs, key, expr)
 		case schema.KindSpatialDerived:
 			suffix, _ := meta.Nested["suffix"].(string)
 			expr, err := s.spatialDerivedSQL(alias, meta.Column, suffix)
