@@ -22,7 +22,9 @@ func TestMetricsEndpointAndRouteClasses(t *testing.T) {
 		get(t, h, p)
 	}
 	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/graphql", strings.NewReader("{")))
+	req := httptest.NewRequest(http.MethodPost, "/graphql", strings.NewReader("{"))
+	req.Header.Set("Content-Type", "application/json")
+	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("malformed body status %d", rec.Code)
 	}

@@ -42,7 +42,7 @@ func configFlags(cmd *cobra.Command) {
 	fs.StringSlice("server.cors_origins", nil, "allowed CORS origins for /graphql ('*' for any)")
 	fs.Bool("server.compression", false, "gzip responses when the client accepts it")
 	fs.Bool("server.read_only", false, "reject every mutation operation (read-only mode)")
-	fs.Bool("server.disable_introspection", false, "reject __schema/__type introspection queries")
+	fs.Bool("server.disable_introspection", false, "reject __schema/__type introspection queries and drop \"Did you mean\" suggestions from validation errors")
 	fs.Int("server.document_cache_size", 1000, "parsed+validated GraphQL documents to cache (0 disables)")
 	fs.Bool("server.subscriptions", false, "serve listen subscriptions (LISTEN/NOTIFY) over WebSocket on /graphql")
 	fs.StringSlice("schema.schemas", nil, "PostgreSQL schemas to expose")

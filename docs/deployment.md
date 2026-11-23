@@ -20,7 +20,7 @@ or times out; `/healthz` only reports that the process is serving.
 
 | Path | Purpose |
 |---|---|
-| `POST /graphql` | the API (GET with `?query=` also supported) |
+| `POST /graphql` | the API; the body must be `Content-Type: application/json` (`415` otherwise). `GET` with `?query=` runs queries only (`405` for mutations and subscriptions); see [CSRF](#csrf) |
 | `GET /` | GraphiQL (opt-in via `server.graphiql: true`; off by default) |
 | `GET /healthz`, `/readyz` | liveness / readiness (`/readyz` pings the database; `503` when unreachable) |
 | `GET /schema.graphql` | generated SDL (opt-in via `server.expose_schema: true`; off by default) |
@@ -48,7 +48,12 @@ truncating the query string in intermediary log formats.
   unless you want the playground and full SDL public — both hand an attacker
   a map of every table, column and relation. GraphQL introspection reveals
   the same map; set `server.disable_introspection: true` to close that
-  channel too (breaks GraphiQL and schema-aware clients).
+  channel too (breaks GraphiQL and schema-aware clients). It also leaves the
+  "Did you mean …" suggestions out of validation errors, which would
+  otherwise let a client rebuild the schema by guessing names. The base
+  messages still name the parent type of an unknown field (`Cannot query
+  field "x" on type "User"`) and the expected type of a mistyped value, as
+  in graphql-js and Apollo Server.
 - Boot from a schema cache (see [caching.md](caching.md)) so the runtime
   role needs no catalog privileges; leave `watch.enabled` off.
 - Set `server.max_depth` / `server.max_cost` to fit your workload;
@@ -58,6 +63,33 @@ truncating the query string in intermediary log formats.
 - If you enable `metrics.enabled`, set `metrics.addr` (e.g. `:9090`) to a
   port only your Prometheus can reach: the endpoint is unauthenticated, and
   its route and error counts describe your traffic.
+
+## CSRF
+
+`/graphql` only accepts requests that a cross-site page cannot send
+without a CORS preflight, following the
+[GraphQL-over-HTTP](https://graphql.github.io/graphql-over-http/draft/)
+spec:
+
+- `POST` requires `Content-Type: application/json` (parameters such as
+  `charset=utf-8` are fine). Any other type, including a missing header and
+  the CORS-safelisted `text/plain`, `application/x-www-form-urlencoded` and
+  `multipart/form-data`, answers `415 Unsupported Media Type` without
+  reading the body.
+- `GET` runs query operations only. A mutation or subscription, including
+  one sent as a persisted query hash, answers `405 Method Not Allowed` with
+  `Allow: POST`.
+
+A browser preflights a cross-origin `application/json` POST, and pdbq
+answers preflights only for `server.cors_origins`, so a page on another
+origin cannot make a victim's browser run a mutation with its cookies. This
+matters when identity comes from ambient credentials: `rls.auth.mode:
+headers` behind a gateway that authenticates with a session cookie, client
+certificates, or IP allowlists. Bearer JWTs are not sent automatically by
+the browser and were never exposed. GraphiQL and the usual GraphQL clients
+(Apollo Client, urql, graphql-request, Relay) already send
+`application/json`. WebSocket upgrades are covered separately: their
+`Origin` must be the server's own host or match `server.cors_origins`.
 
 ## Persisted queries / APQ
 

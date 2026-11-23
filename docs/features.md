@@ -162,7 +162,9 @@ Checklist of PostgreSQL and GraphQL features pdbq supports. Checked = implemente
 ## Server & protocol
 
 - [x] `POST /graphql` (JSON body) and `GET /graphql` (query params)
+- [x] CSRF prevention per GraphQL-over-HTTP: `POST` requires `Content-Type: application/json` (`415` otherwise); `GET` runs queries only (`405` with `Allow: POST` for mutations and subscriptions, persisted ones included)
 - [x] GraphQL introspection (`__schema`, `__type`, `__typename`), resolved in-process and exempt from depth/cost limits
+- [x] `server.disable_introspection`: rejects `__schema`/`__type` and drops "Did you mean …" suggestions from validation errors
 - [x] Embedded GraphiQL playground (opt-in, off by default)
 - [x] `GET /healthz` (liveness) / `/readyz` (bounded pool ping, `server.readyz_timeout`, `503` when the database is unreachable)
 - [x] `GET /schema.graphql` (SDL export; opt-in, off by default)

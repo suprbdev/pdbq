@@ -145,7 +145,10 @@ type Options struct {
 	// through (errors.detail: strict). Ignored when DevErrors is set.
 	StrictErrors bool
 	// DisableIntrospection rejects __schema / __type root fields
-	// (server.disable_introspection). __typename is unaffected.
+	// (server.disable_introspection) and validates without the "Did you
+	// mean" suggestions, which would name schema elements close to an
+	// unknown field, argument, type or enum value. __typename is
+	// unaffected.
 	DisableIntrospection bool
 	// ReadOnly, when non-nil and true, rejects mutation operations before
 	// they compile or touch the database. It is a shared pointer so the
@@ -281,13 +284,9 @@ func (e *Executor) prepare(ctx context.Context, req Request) (context.Context, *
 	if err != nil {
 		return ctx, nil, err
 	}
-	opDef := doc.Operations.ForName(req.OperationName)
-	if opDef == nil {
-		if req.OperationName == "" && len(doc.Operations) == 1 {
-			opDef = doc.Operations[0]
-		} else {
-			return ctx, nil, gqlerror.Errorf("operation %q not found", req.OperationName)
-		}
+	opDef, err := selectOperation(doc, req.OperationName)
+	if err != nil {
+		return ctx, nil, err
 	}
 	vars, verr := validator.VariableValues(e.Built.Schema, opDef, req.Variables)
 	if verr != nil {
@@ -332,6 +331,31 @@ func (e *Executor) prepare(ctx context.Context, req Request) (context.Context, *
 		ctx = ctx2
 	}
 	return ctx, op, nil
+}
+
+// OperationType returns the type of the operation that query and
+// operationName select, parsing and validating query through the document
+// cache. Its error is the parse, validation or operation-selection error
+// Execute would report for the same request.
+func (e *Executor) OperationType(query, operationName string) (ast.Operation, error) {
+	doc, err := e.document(query)
+	if err != nil {
+		return "", err
+	}
+	opDef, err := selectOperation(doc, operationName)
+	if err != nil {
+		return "", err
+	}
+	return opDef.Operation, nil
+}
+
+// selectOperation returns the operation of doc named name, or its only
+// operation when name is empty.
+func selectOperation(doc *ast.QueryDocument, name string) (*ast.OperationDefinition, error) {
+	if opDef := doc.Operations.ForName(name); opDef != nil {
+		return opDef, nil
+	}
+	return nil, gqlerror.Errorf("operation %q not found", name)
 }
 
 // queryRootFields returns an operation's root fields plus, for a

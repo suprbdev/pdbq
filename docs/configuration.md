@@ -47,7 +47,7 @@ $ pdbq config example   # print the full annotated reference
 | `server.persisted_queries_path` | — | JSON file of sha256 → document, preloaded as persisted queries |
 | `server.persisted_only` | `false` | reject requests that don't reference a persisted query (requires `apq` or `persisted_queries_path`) |
 | `server.read_only` | `false` | reject every mutation (maintenance, demos, defense in depth) |
-| `server.disable_introspection` | `false` | reject `__schema`/`__type` queries (`__typename` keeps working) |
+| `server.disable_introspection` | `false` | reject `__schema`/`__type` queries and leave "Did you mean …" suggestions out of validation errors, so guessed names don't reveal real ones (`__typename` keeps working) |
 | `server.subscriptions` | `false` | serve `Subscription.listen` over WebSocket on `/graphql` (`graphql-transport-ws`, legacy `graphql-ws`); off leaves the schema without a `Subscription` type — see [Subscriptions](subscriptions.md) |
 | `server.subscriptions_max_per_connection` | 100 | operations running at once per WebSocket; one more gets an `error` message |
 | `server.subscriptions_topic_prefix` | `postgraphile:` | channel = prefix + topic, as in `pg_notify('postgraphile:' \|\| topic, payload)`; the channel must fit in 63 bytes |
