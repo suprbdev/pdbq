@@ -1,6 +1,6 @@
 // Package contribtype maps pdbcore's contrib vocabularies (full-text search,
 // pg_trgm, unaccent, fuzzystrmatch, hstore, ltree, citext, intarray, ranges
-// and multiranges, inet/cidr, pgvector) onto
+// and multiranges, inet/cidr, pgvector, cube, earthdistance) onto
 // GraphQL: which type a column of such a type surfaces as, which operator
 // input filters it, and the PostGraphile-compatible names of operators and
 // range types.
@@ -27,13 +27,20 @@
 //	vector / halfvec        -> [Float!] (input [Float!]), VectorFilterOps
 //	                           (VectorDistanceFilterOps with distance thresholds)
 //	sparsevec               -> String (pgvector's text form), VectorFilterOps
+//	cube                    -> Cube scalar (JSON list of coordinates, or a pair
+//	                           of corner lists), CubeFilterOps
+//	                           (CubeDistanceFilterOps with distance thresholds)
+//	earth (earthdistance)   -> LatLon { lat lon }, input LatLonInput,
+//	                           LatLonFilterOps (LatLonDistanceFilterOps with
+//	                           the radius filter)
 //	interval                -> Interval { seconds minutes hours days months years },
 //	                           input IntervalInput, IntervalFilterOps
 //	interval[]              -> [Interval!], input [IntervalInput!], IntervalListFilterOps
 //
 // Text columns keep String but take StringFilterOps variants adding pg_trgm,
 // unaccent and fuzzystrmatch operators ([StringOps]); int4[] columns with
-// intarray keep [Int!] and may take [IntListIntarrayOps].
+// intarray keep [Int!] and may take [IntListIntarrayOps]; point columns with
+// earthdistance keep their mapping and may take [PointDistanceOps].
 //
 // Range types are named after their element's scalar: Int (int4), BigInt
 // (int8), BigFloat (numeric), Date (date) and Datetime (timestamp and
@@ -46,7 +53,7 @@
 // [For] resolves it for every interval column, and the schema builder keeps
 // the String fallback unless schema.interval_type is "object".
 //
-// Extension types (citext, hstore, ltree, the pgvector types) map only when
+// Extension types (citext, hstore, ltree, the pgvector types, cube, earth) map only when
 // the catalog records the extension; a catalog without it keeps the String
 // fallback, so schemas of databases that use none of these types are
 // unchanged.
@@ -87,6 +94,10 @@ const (
 	// Vector is a pgvector vector, halfvec ([Float!]) or sparsevec (String)
 	// column.
 	Vector
+	// Cube is a cube column (the Cube JSON scalar).
+	Cube
+	// Earth is a column declared as earthdistance's earth domain (LatLon).
+	Earth
 )
 
 // Scalar names declared when a column needs them.
@@ -95,6 +106,17 @@ const (
 	ScalarKeyValueHash    = "KeyValueHash"
 	ScalarInternetAddress = "InternetAddress"
 	ScalarCidrAddress     = "CidrAddress"
+	ScalarCube            = "Cube"
+)
+
+// ScalarCubeDescription describes the Cube scalar.
+const ScalarCubeDescription = "A cube (cube extension): a point as a list of coordinates ([1, 2, 3]) or a box as the pair of " +
+	"its opposite corners ([[1, 2], [3, 4]]). Input also accepts the cube text form as a string (\"(1, 2), (3, 4)\")."
+
+// Names of the earth location object and input types.
+const (
+	LatLonType  = "LatLon"
+	LatLonInput = "LatLonInput"
 )
 
 // Names of the interval object and input types.
@@ -170,6 +192,30 @@ const (
 	BitDistanceInput          = "BitDistanceInput"
 )
 
+// Distance-threshold filter inputs of the cube and earthdistance
+// vocabularies: CubeFilterOps plus the <distance>LessThan operators of cube
+// columns (CubeDistanceOps, operand CubeDistanceInput {cube, distance}),
+// LatLonFilterOps plus earthDistanceLessThan on earth columns
+// (LatLonDistanceOps, operand LatLonDistanceInput {lat, lon, distance}), and
+// the point column's StringFilterOps plus earthDistanceMilesLessThan
+// (PointDistanceOps, operand LatLonDistanceInput). A GiST index serves the
+// cube and earth thresholds; no index serves the point one.
+const (
+	CubeDistanceOps     = "CubeDistanceFilterOps"
+	CubeDistanceInput   = "CubeDistanceInput"
+	LatLonDistanceOps   = "LatLonDistanceFilterOps"
+	LatLonDistanceInput = "LatLonDistanceInput"
+	PointDistanceOps    = "PointDistanceFilterOps"
+)
+
+// Reference arguments of the distance orderings and scores: nearVector:
+// holds a reference vector or cube per column, nearPoint: a reference
+// location per earth or point column.
+const (
+	NearVectorArg = "nearVector"
+	NearPointArg  = "nearPoint"
+)
+
 // Column is the GraphQL view of one column (or composite attribute, or
 // computed-column return value).
 type Column struct {
@@ -234,6 +280,10 @@ func For(cat *introspect.Catalog, col *introspect.Column) Column {
 			if v.Type == "sparsevec" {
 				out.Scalar = "String"
 			}
+		case contrib.VocabCube:
+			out.Kind, out.Scalar, out.OpsInput = Cube, ScalarCube, "CubeFilterOps"
+		case contrib.VocabEarth:
+			out.Kind, out.Scalar, out.OpsInput = Earth, LatLonType, "LatLonFilterOps"
 		case contrib.VocabRange, contrib.VocabMultirange:
 			if r := catalogRange(cat, col, v); r != nil && r.SubtypeSchema != "pg_catalog" {
 				out.Own = contrib.Vocabulary{}
@@ -252,8 +302,11 @@ func For(cat *introspect.Catalog, col *introspect.Column) Column {
 			continue
 		}
 		out.Input = out.Scalar
-		if out.Kind == Range || out.Kind == Multirange {
+		switch out.Kind {
+		case Range, Multirange:
 			out.Input = RangeInput(out.Scalar)
+		case Earth:
+			out.Input = LatLonInput
 		}
 		break
 	}
@@ -413,24 +466,75 @@ func (c Column) Intarray() (contrib.Vocabulary, bool) { return c.vocab(contrib.V
 // any.
 func (c Column) Vocab(name string) (contrib.Vocabulary, bool) { return c.vocab(name) }
 
-// Distances returns the vocabulary holding the column's pgvector distances:
-// its own for vector, halfvec and sparsevec columns, pgvector's bit
-// vocabulary for bit and varbit columns.
+// Distances returns the vocabulary holding the column's distances to a
+// per-request reference: its own for vector, halfvec, sparsevec, cube and
+// earth columns, pgvector's bit vocabulary for bit and varbit columns and
+// earthdistance's point vocabulary for point columns.
 func (c Column) Distances() (contrib.Vocabulary, bool) {
-	if c.Kind == Vector {
+	switch c.Kind {
+	case Vector, Cube, Earth:
 		return c.Own, true
 	}
-	return c.vocab(contrib.VocabBit)
+	if v, ok := c.vocab(contrib.VocabBit); ok {
+		return v, true
+	}
+	return c.vocab(contrib.VocabEarthPoint)
 }
 
-// DistanceInput returns the GraphQL type of the column's reference vector
-// (nearVector: fields, the vector of distance-threshold operands): a list
-// of floats for vector and halfvec, the text form for sparsevec and bit.
+// DistanceInput returns the GraphQL type of the column's reference (the
+// nearVector: or nearPoint: field, the reference of distance-threshold
+// operands): a list of floats for vector and halfvec, the text form for
+// sparsevec and bit, Cube for cube columns and LatLonInput for earth and
+// point columns.
 func (c Column) DistanceInput() string {
-	if c.List() {
+	switch {
+	case c.List():
 		return "[" + c.Scalar + "!]"
+	case c.Kind == Cube:
+		return ScalarCube
+	case c.ReferenceArg() == NearPointArg:
+		return LatLonInput
 	}
 	return "String"
+}
+
+// ReferenceArg names the list argument holding the column's distance
+// reference: [NearPointArg] for earth and point columns, [NearVectorArg]
+// for the other columns with [Column.Distances].
+func (c Column) ReferenceArg() string {
+	if c.Kind == Earth {
+		return NearPointArg
+	}
+	if _, ok := c.vocab(contrib.VocabEarthPoint); ok {
+		return NearPointArg
+	}
+	return NearVectorArg
+}
+
+// IsDistanceOp reports whether o is a distance threshold against a
+// per-operand reference (the operators of the distance-threshold inputs).
+func IsDistanceOp(o contrib.Op) bool {
+	switch o.Arg {
+	case contrib.ArgVectorDistance, contrib.ArgCubeDistance, contrib.ArgLatLonDistance:
+		return true
+	}
+	return false
+}
+
+// DistanceOps returns the distance thresholds of the column's
+// [Column.Distances] vocabulary.
+func (c Column) DistanceOps() []contrib.Op {
+	dv, ok := c.Distances()
+	if !ok {
+		return nil
+	}
+	var out []contrib.Op
+	for _, o := range dv.Ops {
+		if IsDistanceOp(o) {
+			out = append(out, o)
+		}
+	}
+	return out
 }
 
 func (c Column) vocab(name string) (contrib.Vocabulary, bool) {
@@ -446,23 +550,31 @@ func (c Column) vocab(name string) (contrib.Vocabulary, bool) {
 // the column's own operator input (OpsInput): the owning vocabulary's
 // operators. Text vocabularies (pg_trgm, unaccent) are exposed through
 // [StringTrgmOps], [StringUnaccentOps] and [StringTrgmUnaccentOps] instead,
-// the pgvector distance thresholds through the distance-threshold inputs,
-// and full-text search over text columns is not exposed.
+// the distance thresholds (pgvector, cube, earthdistance) through the
+// distance-threshold inputs, and full-text search over text columns is not
+// exposed.
 func (c Column) FilterOps() []contrib.Op {
 	if !c.Owned() || c.Kind == Vector {
 		return nil
 	}
-	return c.Own.Ops
+	var out []contrib.Op
+	for _, o := range c.Own.Ops {
+		if !IsDistanceOp(o) {
+			out = append(out, o)
+		}
+	}
+	return out
 }
 
 // Op finds a filter operator by its GraphQL name among the column's owning,
-// pg_trgm, unaccent, pgvector bit, fuzzystrmatch and intarray vocabularies.
+// pg_trgm, unaccent, pgvector bit, fuzzystrmatch, intarray and earthdistance
+// point vocabularies.
 func (c Column) Op(name string) (contrib.Op, bool) {
 	var vs []contrib.Vocabulary
 	if c.Owned() {
 		vs = append(vs, c.Own)
 	}
-	for _, n := range []string{contrib.VocabTrgm, contrib.VocabUnaccent, contrib.VocabBit, contrib.VocabFuzzy, contrib.VocabIntarray} {
+	for _, n := range []string{contrib.VocabTrgm, contrib.VocabUnaccent, contrib.VocabBit, contrib.VocabFuzzy, contrib.VocabIntarray, contrib.VocabEarthPoint} {
 		if v, ok := c.vocab(n); ok {
 			vs = append(vs, v)
 		}
@@ -543,26 +655,33 @@ var SimilarityOrders = []SimilarityOrder{
 	{Infix: "_STRICT_WORD_SIMILARITY", Expr: "strictWordDistance"},
 }
 
-// VectorOrder describes one pgvector distance ordering of a vector column:
-// the orderBy value infix and the vocabulary expression it sorts by.
-type VectorOrder struct {
+// DistanceOrder describes one distance ordering of a column with
+// [Column.Distances]: the orderBy value infix and the vocabulary expression
+// it sorts by.
+type DistanceOrder struct {
 	// Infix sits between the column's enum name and the direction:
 	// EMBEDDING_COSINE_DISTANCE_ASC.
 	Infix string
-	// Expr is the vector vocabulary's distance expression; nearest rows
-	// have the smallest distance.
+	// Expr is the vocabulary's distance expression; nearest rows have the
+	// smallest distance.
 	Expr string
 	// Label names the metric in descriptions.
 	Label string
 }
 
-// VectorOrders lists the pgvector ordering families in schema order: the
-// vector distances, then the bit distances.
-var VectorOrders = []VectorOrder{
+// DistanceOrders lists the distance ordering families in schema order: the
+// pgvector vector distances, the bit distances, then cube's Chebyshev
+// distance (cube shares L2 and L1 with pgvector) and the earthdistance
+// distances. A column takes the families its vocabulary has an expression
+// for.
+var DistanceOrders = []DistanceOrder{
 	{Infix: "_L2_DISTANCE", Expr: "l2Distance", Label: "Euclidean (L2) distance"},
 	{Infix: "_NEGATIVE_INNER_PRODUCT", Expr: "negativeInnerProduct", Label: "negative inner product"},
 	{Infix: "_COSINE_DISTANCE", Expr: "cosineDistance", Label: "cosine distance"},
 	{Infix: "_L1_DISTANCE", Expr: "l1Distance", Label: "taxicab (L1) distance"},
 	{Infix: "_HAMMING_DISTANCE", Expr: "hammingDistance", Label: "Hamming distance"},
 	{Infix: "_JACCARD_DISTANCE", Expr: "jaccardDistance", Label: "Jaccard distance"},
+	{Infix: "_CHEBYSHEV_DISTANCE", Expr: "chebyshevDistance", Label: "Chebyshev (L-infinity) distance"},
+	{Infix: "_EARTH_DISTANCE", Expr: "earthDistance", Label: "great-circle distance in metres"},
+	{Infix: "_EARTH_DISTANCE_MILES", Expr: "earthDistanceMiles", Label: "distance in statute miles"},
 }

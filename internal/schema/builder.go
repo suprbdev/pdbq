@@ -210,11 +210,14 @@ type OrderSpec struct {
 	// Column to the field's similarTo: reference text (contrib plugin);
 	// Desc applies to the distance, so best matches first is ascending.
 	Similarity string
-	// Vector names the pgvector distance expression ("l2Distance",
-	// "negativeInnerProduct", "cosineDistance", "l1Distance") ordering by
-	// distance of Column from the field's nearVector: reference vector
-	// (contrib plugin); nearest first is ascending.
+	// Vector names the distance expression ("l2Distance", "cosineDistance",
+	// "chebyshevDistance", "earthDistance", ...) ordering by distance of
+	// Column from the field's per-column reference in the Reference
+	// argument (contrib plugin); nearest first is ascending.
 	Vector string
+	// Reference names the list argument holding Vector's reference:
+	// "nearVector" (pgvector and cube) or "nearPoint" (earthdistance).
+	Reference string
 	// Contrib orders by a contrib value of Column (contrib plugin): an
 	// accessor, or a derived expression measured against the field's
 	// Contrib.Arg reference for Column.
@@ -489,10 +492,19 @@ func (b *Builder) baseTypeForColumn(c *introspect.Column) string {
 	return base
 }
 
-// isVector reports whether c is a pgvector column, which, like a spatial
-// column, has no condition field, distinctOn value or plain orderBy values.
-func (b *Builder) isVector(c *introspect.Column) bool {
-	return b.ContribColumn(c).Kind == contribtype.Vector
+// unordered reports whether c has no meaningful scalar equality or order,
+// and so no condition field, distinctOn value or plain orderBy values: a
+// PostGIS geometry, geography or raster column, or a pgvector, cube or
+// earth column (their plugins add distance orderings instead).
+func (b *Builder) unordered(c *introspect.Column) bool {
+	if postgis.IsSpatial(c.PGType) || postgis.IsRaster(c.PGType) {
+		return true
+	}
+	switch b.ContribColumn(c).Kind {
+	case contribtype.Vector, contribtype.Cube, contribtype.Earth:
+		return true
+	}
+	return false
 }
 
 // ContribColumn resolves a column's contrib mapping (see package
@@ -515,7 +527,7 @@ func (b *Builder) ensureContrib(ci contribtype.Column) bool {
 		return true
 	}
 	names := []string{ci.Scalar}
-	if ci.Kind == contribtype.Interval {
+	if ci.Kind == contribtype.Interval || ci.Kind == contribtype.Earth {
 		names = append(names, ci.Input)
 	}
 	if ci.Kind == contribtype.Range || ci.Kind == contribtype.Multirange {
@@ -533,8 +545,16 @@ func (b *Builder) ensureContrib(ci contribtype.Column) bool {
 	for _, n := range names {
 		b.contribTypes[n] = true
 	}
-	if ci.Kind == contribtype.Interval {
+	switch ci.Kind {
+	case contribtype.Interval:
 		b.addIntervalTypes()
+		return true
+	case contribtype.Earth:
+		b.addLatLonTypes()
+		return true
+	case contribtype.Cube:
+		b.Scalars = append(b.Scalars, ci.Scalar)
+		b.ScalarDescriptions[ci.Scalar] = contribtype.ScalarCubeDescription
 		return true
 	}
 	if ci.Kind != contribtype.Range && ci.Kind != contribtype.Multirange {
@@ -594,6 +614,46 @@ func (b *Builder) addIntervalTypes() {
 	b.Inputs[in.Name] = in
 }
 
+// EnsureLatLonTypes declares the LatLon object and LatLonInput input types
+// of earth locations unless an earth column already did, for SchemaHook
+// plugins taking locations elsewhere (the contrib plugin's nearPoint:
+// references of point columns). It reports false when another type took
+// one of the names.
+func (b *Builder) EnsureLatLonTypes() bool {
+	if b.contribTypes[contribtype.LatLonType] {
+		return true
+	}
+	for _, n := range []string{contribtype.LatLonType, contribtype.LatLonInput} {
+		_, obj := b.Objects[n]
+		_, in := b.Inputs[n]
+		_, en := b.Enums[n]
+		if obj || in || en || slices.Contains(b.Scalars, n) {
+			return false
+		}
+	}
+	b.contribTypes[contribtype.LatLonType], b.contribTypes[contribtype.LatLonInput] = true, true
+	b.addLatLonTypes()
+	return true
+}
+
+// addLatLonTypes declares the LatLon object and LatLonInput input types of
+// earthdistance's earth columns: a point on the Earth's surface in degrees.
+func (b *Builder) addLatLonTypes() {
+	const desc = "A location on the Earth's surface (earthdistance earth value), in degrees."
+	fields := []struct{ name, desc string }{
+		{"lat", "Latitude in degrees, between -90 and 90."},
+		{"lon", "Longitude in degrees, between -180 and 180."},
+	}
+	obj := &Object{Name: contribtype.LatLonType, Description: desc}
+	in := &Input{Name: contribtype.LatLonInput, Description: desc}
+	for _, f := range fields {
+		obj.Fields = append(obj.Fields, &Field{Name: f.name, Type: "Float!", Description: f.desc, Meta: &FieldMeta{Kind: KindSynthetic}})
+		in.Fields = append(in.Fields, &InputField{Name: f.name, Type: "Float!", Description: f.desc})
+	}
+	b.Objects[obj.Name] = obj
+	b.Inputs[in.Name] = in
+}
+
 // gqlInputTypeForColumn is gqlTypeForColumn for input positions: composite
 // columns resolve to their generated input type (object types are not valid
 // in argument or input-field position).
@@ -605,7 +665,7 @@ func (b *Builder) gqlInputTypeForColumn(c *introspect.Column) string {
 		}
 		return in
 	}
-	if ci := b.ContribColumn(c); ci.Kind == contribtype.Range || (ci.Kind == contribtype.Interval && !ci.Array) {
+	if ci := b.ContribColumn(c); ci.Kind == contribtype.Range || ci.Kind == contribtype.Earth || (ci.Kind == contribtype.Interval && !ci.Array) {
 		return ci.Input
 	} else if ci.List() || ci.Kind == contribtype.Interval {
 		return "[" + ci.Input + "!]"
@@ -630,6 +690,9 @@ func (b *Builder) addTables() {
 		b.TypeForTable[tableKey(t.Schema, t.Name)] = typeName
 		obj := &Object{Name: typeName, Description: t.Comment}
 		for _, c := range t.Columns {
+			if postgis.IsRaster(c.PGType) && !c.IsArray {
+				continue
+			}
 			obj.AddField(&Field{
 				Name:        b.Inflect(inflect.KindFieldName, inflect.Input{Schema: t.Schema, Table: t.Name, Column: c.Name}),
 				Type:        nonNull(b.gqlTypeForColumn(c), c.NotNull),
@@ -905,7 +968,7 @@ func (b *Builder) addFilter(t *introspect.Table) string {
 		// (GeometryFilterOps). Generating a scalar operator input here would
 		// leave an unused type behind whenever the plugin is enabled, and an
 		// unusable one when it is not.
-		if postgis.IsSpatial(c.PGType) {
+		if postgis.IsSpatial(c.PGType) || postgis.IsRaster(c.PGType) {
 			continue
 		}
 		opInput := b.FilterOpsInputFor(c)
@@ -934,7 +997,7 @@ func (b *Builder) addCondition(t *introspect.Table) string {
 	for _, c := range cols {
 		// Spatial columns have no plain equality operator; use the filter
 		// argument's spatial predicates (equals, intersects, ...) instead.
-		if postgis.IsSpatial(c.PGType) || b.isVector(c) {
+		if b.unordered(c) {
 			continue
 		}
 		in.AddField(&InputField{
@@ -1032,7 +1095,7 @@ func (b *Builder) addDistinctOn(t *introspect.Table) string {
 	for _, c := range cols {
 		// DISTINCT ON needs a btree equality operator, which PostGIS types do
 		// not provide; offering the value would only produce a runtime error.
-		if postgis.IsSpatial(c.PGType) || b.isVector(c) {
+		if b.unordered(c) {
 			continue
 		}
 		en.Values = append(en.Values, EnumValue{Name: coreinflect.EnumValue(c.Name), Column: c.Name})
@@ -1053,7 +1116,7 @@ func (b *Builder) addOrderBy(t *introspect.Table) string {
 		// PostGIS values have no meaningful linear order; the postgis plugin
 		// adds <COLUMN>_DISTANCE_ASC/_DESC instead, which sorts by distance
 		// from a supplied reference geometry.
-		if postgis.IsSpatial(c.PGType) || b.isVector(c) {
+		if b.unordered(c) {
 			continue
 		}
 		base := coreinflect.EnumValue(c.Name)
@@ -2003,7 +2066,7 @@ func (b *Builder) Build() (*Built, error) {
 			if v.Column != "" || v.Computed != nil || v.Relation != nil {
 				ordered[v.Name] = OrderSpec{
 					Column: v.Column, Desc: v.Desc, Computed: v.Computed, Relation: v.Relation,
-					Distance: v.Distance, Rank: v.Rank, Similarity: v.Similarity, Vector: v.Vector,
+					Distance: v.Distance, Rank: v.Rank, Similarity: v.Similarity, Vector: v.Vector, Reference: v.Reference,
 					Contrib: v.Contrib,
 				}
 			}

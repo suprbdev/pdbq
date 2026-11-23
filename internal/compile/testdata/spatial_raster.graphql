@@ -1,0 +1,18 @@
+# Raster columns: no field of their own, header-only metadata accessors, the
+# pixel value at a point, per-band summary statistics and the intersects
+# filter (allowlisted rast only).
+{
+  allTiles(filter: {rast: {intersects: "SRID=3857;POINT(1 2)", isNull: false}}) {
+    nodes {
+      id
+      rastWidth rastHeight rastNumBands rastSrid rastPixelWidth rastPixelHeight rastEnvelope
+      rastValue(point: {type: "Point", coordinates: [1, 2]})
+      b2: rastValue(point: "POINT(1 2)", band: 2)
+      rastSummaryStats { count mean max }
+      s2: rastSummaryStats(band: 2) { __typename total: sum stddev min }
+      maskSrid
+    }
+  }
+  badBand: allTiles { nodes { rastValue(point: "POINT(1 2)", band: 0) } }
+  badPoint: allTiles { nodes { rastValue(point: "nope") } }
+}

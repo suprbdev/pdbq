@@ -124,9 +124,9 @@ func contribFilterOps(ci contribtype.Column) []filterOp {
 	}
 	var out []filterOp
 	switch ci.Kind {
-	case contribtype.FullText, contribtype.Vector:
+	case contribtype.FullText, contribtype.Vector, contribtype.Earth:
 		return isNull
-	case contribtype.Hstore:
+	case contribtype.Hstore, contribtype.Cube:
 		out = append(slices.Clone(eq), isNull...)
 	case contribtype.Ltree, contribtype.Inet:
 		out = append(append(append(eq, in...), isNull...), cmp...)

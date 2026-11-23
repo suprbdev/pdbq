@@ -6,6 +6,9 @@ DE-9IM predicates, radius search, derived accessors, reprojection and distance
 ordering — all compiled into the same **single SQL statement** as the rest of
 the query.
 
+Raster columns (`postgis_raster`) get metadata, pixel value, statistics and
+intersects surface, never their raw bytes (see [Rasters](#rasters)).
+
 Nothing needs to be configured. If the database has a spatial column, the
 surface appears; if it does not, the schema is byte-identical to what pdbq
 generates without PostGIS installed.
@@ -473,6 +476,81 @@ function results) stay on the scalar. If a table or composite type already
 uses one of the generated names (say a `geometry_points` table, whose type
 is `GeometryPoint`), that flavour keeps the scalar and pdbq logs a warning.
 
+## Rasters
+
+`postgis_raster` columns get a read surface of their own. **The raster value
+itself is never returned**: a raster is a pixel grid, often megabytes, so
+the column has no output field. To serve the bytes, opt in with a computed
+column, for example
+`CREATE FUNCTION tiles_png(t tiles) RETURNS text STABLE LANGUAGE sql AS
+$$ SELECT encode(ST_AsPNG(t.rast), 'base64') $$` (or `ST_AsGDALRaster`,
+`ST_AsHexWKB`). Writes keep the raster's text form: `createTile(input:
+{rast: "0100..."})` takes hex WKB as a `String`. Raster columns get no
+generic comparison filter, `condition:` field, orderBy or `distinctOn:` value
+and no aggregates (raster has no btree operator class).
+
+| Field | Returns | PostGIS |
+|---|---|---|
+| `<field>Width` / `<field>Height` | `Int` | `ST_Width` / `ST_Height` (pixels) |
+| `<field>NumBands` | `Int` | `ST_NumBands` |
+| `<field>Srid` | `Int` | `ST_SRID` |
+| `<field>PixelWidth` / `<field>PixelHeight` | `Float` | `ST_PixelWidth` / `ST_PixelHeight` (SRID units) |
+| `<field>Envelope` | `GeoJSON` | `ST_Envelope` |
+| `<field>Value(point: GeoJSON!, band: Int = 1)` | `Float` | `ST_Value` of the band at the point |
+| `<field>SummaryStats(band: Int = 1)` | `RasterSummaryStats` | `ST_SummaryStats` of the band (NODATA excluded) |
+
+```graphql
+{
+  allTiles(filter: {rast: {intersects: "SRID=4326;POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))"}}) {
+    nodes {
+      id rastWidth rastSrid rastEnvelope
+      rastValue(point: {type: "Point", coordinates: [0.5, 0.5]})
+      rastSummaryStats(band: 1) { count mean min max }
+    }
+  }
+}
+```
+
+The metadata accessors read the raster header only. `<field>Value` samples
+the pixel at the point, reprojected to the raster's SRID when both carry a
+different one (so a GeoJSON point, WGS 84, samples a raster in any
+projection); it is `null` for NODATA, a point outside the raster or a
+missing band. `RasterSummaryStats` is `{count: Int, sum, mean, stddev, min,
+max: Float}`, `null` for a NULL raster or a missing band; it reads every
+pixel of the band. The point, the band and every other value are bind
+parameters, and a band below 1 is a client error.
+
+The filter is `RasterFilterOps { isNull, intersects: GeoJSON }`:
+`intersects` is `ST_Intersects(rast, geometry)`, which tests the raster's
+convex hull. **The geometry must be in the raster's SRID**: it is not
+reprojected, so give it as EWKT (`SRID=3857;POLYGON(...)`) unless the raster
+is in WGS 84. A row whose bounding box overlaps a geometry in another SRID
+raises an error, reported as a client error; other rows just do not match.
+Index it with an expression index on the convex hull:
+
+```sql
+CREATE INDEX tiles_rast_hull_idx ON tiles USING gist (ST_ConvexHull(rast));
+```
+
+An expression index leads no column in the catalog, so under
+`filters.indexed_only` the raster filter is offered only on columns listed
+in `filters.allow_columns`. The accessors, value and statistics follow the
+`derived` setting, the filter the `filters` setting. `@omit read` on a raster
+column removes every one of these fields and the filter, `@omit filter` the
+filter.
+
+**Cost.** The metadata accessors cost a column each. The cost estimator
+charges `<field>Value` 10 and `<field>SummaryStats` 100 per row (pdbcore's
+`RasterValueCost` and `RasterSummaryStatsCost`), multiplied by the page like
+any field, so a large page of statistics hits `server.max_cost`. Filter
+predicates are not priced (only relation-aggregate filters, which run a
+subquery per row, are); the raster `intersects` filter, which tests the
+convex hull like a geometry predicate, is left unpriced like the spatial
+filters.
+
+Function results and composite attributes of type `raster` keep the text
+form: a function returning a raster is the author's choice to return it.
+
 ## Indexing
 
 Spatial filters and ordering respect `filters.indexed_only` exactly like
@@ -497,8 +575,8 @@ keeps working.
 plugins:
   settings:
     postgis:
-      filters: true      # GeometryFilterOps on spatial columns
-      derived: true      # <field>Area, <field>Centroid, ...
+      filters: true      # GeometryFilterOps on spatial columns, RasterFilterOps
+      derived: true      # <field>Area, <field>Centroid, ..., raster accessors
       ordering: true     # <COLUMN>_DISTANCE_ASC/_DESC, <field>Distance + near:
       projection: true   # transform:/simplify: field arguments
       typed_geometry: false  # typed geometry objects instead of GeoJSON
@@ -526,7 +604,8 @@ point of the client's choosing. A bare `@omit` hides all of it.
 - **Malformed input fails fast.** A value that is neither valid GeoJSON nor
   plausible WKT is rejected at compile time with a GraphQL error, rather than
   reaching Postgres as a type error mid-statement.
-- **Not covered:** raster and topology types. Unless
+- **Not covered:** topology types, and raster output other than through a
+  computed column (see [Rasters](#rasters)). Unless
   [typed geometry](#typed-geometry) is on, `geometry(TypeName, SRID)` type
   modifiers only decide which derived accessors are generated, and every
   spatial column is the same `GeoJSON` scalar whatever its declared subtype.

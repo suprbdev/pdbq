@@ -3,6 +3,7 @@ package compile_test
 import (
 	"context"
 	"encoding/base64"
+	"math"
 	"strconv"
 	"testing"
 
@@ -18,10 +19,11 @@ import (
 // and asserts the invariant that makes injection impossible: user values
 // never appear in the SQL text, only in the parameter list. It runs against
 // the contrib fixture so the contrib vocabulary operators (full-text,
-// pg_trgm, unaccent, hstore, ltree, citext, ranges, inet), the codec-typed
-// generic comparisons, rank, similarity and vector distance ordering, the
-// similarity and distance score fields, the vector and bit distance
-// thresholds and vector inputs are covered too, and against
+// pg_trgm, unaccent, hstore, ltree, citext, ranges, inet, cube,
+// earthdistance), the codec-typed generic comparisons, rank, similarity,
+// vector, cube and earth distance ordering, the similarity and distance
+// score fields, the vector, bit, cube, earth and point distance thresholds
+// and vector, cube and earth inputs are covered too, and against
 // the aggregates schema for having and relation-aggregate filters, through
 // offset and offset-cursor pagination (with and without distinctOn), and
 // through a custom mutation whose payload compiles to a Then statement.
@@ -120,6 +122,23 @@ func FuzzFilter(f *testing.F) {
 		allPosts(first: 3, offset: $n, orderBy: [TITLE_ASC]) { edges { cursor } pageInfo { hasNextPage hasPreviousPage } }
 		allMetrics(first: 2, offset: $n, after: $after) { totalCount edges { cursor } pageInfo { hasNextPage hasPreviousPage } }
 	}`
+	const cubeQuery = `query ($cu: Cube!, $cs: Cube!, $fl: Float!, $lat: Float!, $lon: Float!) {
+		allLocations(
+			filter: {
+				pos: {contains: $cu, overlaps: $cs, l1DistanceLessThan: {cube: $cu, distance: $fl}}
+				box: {equalTo: $cs, containedBy: $cu}
+				spot: {earthDistanceLessThan: {lat: $lat, lon: $lon, distance: $fl}}
+				here: {earthDistanceMilesLessThan: {lat: $lat, lon: $lon, distance: $fl}}
+			}
+			nearVector: {pos: $cu, box: $cs}
+			nearPoint: {spot: {lat: $lat, lon: $lon}, here: {lat: $lon, lon: $lat}}
+			orderBy: [POS_CHEBYSHEV_DISTANCE_ASC, SPOT_EARTH_DISTANCE_DESC, HERE_EARTH_DISTANCE_MILES_ASC]
+			first: 3
+		) { nodes { id pos spot { lat lon } posL2Distance boxL1Distance spotEarthDistance homeEarthDistance hereEarthDistanceMiles } }
+	}`
+	const cubeMutation = `mutation ($cu: Cube!, $lat: Float!, $lon: Float!) {
+		createLocation(input: {pos: $cu, box: $cu, spot: {lat: $lat, lon: $lon}}) { location { id pos spot { lon } } }
+	}`
 	const mutationQuery = `mutation ($e: String, $n: Int!, $vec: [Float!], $cfg: String) {
 		createEmbedding(input: {embedding: $vec, half: $vec, sparse: $cfg}) { embedding { id embedding } }
 		publishPost(input: {postId: $n, clientMutationId: $e}) {
@@ -141,7 +160,8 @@ func FuzzFilter(f *testing.F) {
 		built   *schema.Built
 		query   string
 		lenient bool
-	}{{built, query, false}, {aggBuilt, aggQuery, false}, {built, pageQuery, true}, {built, mutationQuery, false}, {built, fuzzyQuery, true}} {
+	}{{built, query, false}, {aggBuilt, aggQuery, false}, {built, pageQuery, true}, {built, cubeQuery, true}, {built, cubeMutation, true},
+		{built, mutationQuery, false}, {built, fuzzyQuery, true}} {
 		doc, perr := parser.ParseQuery(&ast.Source{Input: tc.query})
 		if perr != nil {
 			f.Fatal(perr)
@@ -165,6 +185,7 @@ func FuzzFilter(f *testing.F) {
 				"d": email, "ip": email, "ips": []any{tag}, "cfg": "c" + email, "big": tag, "bigs": []any{tag}, "bf": email,
 				"vec": []any{float64(n), 0.5, -float64(n)}, "fl": float64(n) / 4, "sv": "c" + email, "vv": []any{0.5, float64(n)},
 				"len": length, "k": email, "after": base64.StdEncoding.EncodeToString([]byte("o:" + strconv.Itoa(n))),
+				"cu": []any{float64(n), 0.5}, "cs": "(" + tag + ")", "lat": float64(n % 91), "lon": float64(n) / 7,
 			})
 			if verr != nil {
 				t.Skipf("rejected variables: %v", verr)
@@ -230,11 +251,13 @@ func FuzzFilter(f *testing.F) {
 // exactly like scalars. A WKT string is the interesting case because it is
 // free text that ends up inside a PostGIS constructor. Every input form (bare
 // WKT, EWKT) compiles to the same SQL text, so one baseline covers them all.
+// The raster intersects filter, pixel value and summary statistics take the
+// same geometry and a band number.
 func FuzzSpatial(f *testing.F) {
 	built := build(f)
 	compiler := compile.New(built)
 
-	const query = `query ($wkt: GeoJSON!, $x: Float!, $d: Float!, $p: Int!) {
+	const query = `query ($wkt: GeoJSON!, $x: Float!, $d: Float!, $p: Int!, $band: Int!) {
 		allPlaces(filter: {
 			location: {
 				intersects: $wkt
@@ -245,6 +268,9 @@ func FuzzSpatial(f *testing.F) {
 				bboxIntersects2D: $wkt
 			}
 		}, near: {geometry: $wkt}, orderBy: [AREA_DISTANCE_ASC]) { nodes { id locationDistance areaDistance location(buffer: $d, precision: $p) area(buffer: $x, simplify: $d, transform: 3857, precision: $p) } }
+		allTiles(filter: {rast: {intersects: $wkt}}) {
+			nodes { rastEnvelope rastValue(point: $wkt, band: $band) rastSummaryStats(band: $band) { count mean } }
+		}
 	}`
 	doc, perr := parser.ParseQuery(&ast.Source{Input: query})
 	if perr != nil {
@@ -255,26 +281,30 @@ func FuzzSpatial(f *testing.F) {
 	}
 	op := doc.Operations[0]
 
-	compileWith := func(t testing.TB, wkt string, x, d float64) (*compile.Statement, bool) {
+	compileWith := func(t testing.TB, wkt string, x, d float64) ([]*compile.Statement, bool) {
 		t.Helper()
 		vars, verr := validator.VariableValues(built.Schema, op, map[string]any{
-			"wkt": wkt, "x": x, "d": d, "p": len(wkt) % 16,
+			"wkt": wkt, "x": x, "d": d, "p": len(wkt) % 16, "band": 1 + int(math.Mod(math.Abs(x), 4)),
 		})
 		if verr != nil {
 			return nil, false
 		}
-		stmt, err := compiler.Compile(context.Background(), &compile.Request{
-			Field:    op.SelectionSet[0].(*ast.Field),
-			Vars:     vars,
-			Built:    built,
-			MaxDepth: 15,
-		})
-		if err != nil {
-			// Malformed geometry is rejected at compile time by design; only a
-			// successful compile is subject to the invariant.
-			return nil, false
+		var out []*compile.Statement
+		for _, sel := range op.SelectionSet {
+			stmt, err := compiler.Compile(context.Background(), &compile.Request{
+				Field:    sel.(*ast.Field),
+				Vars:     vars,
+				Built:    built,
+				MaxDepth: 15,
+			})
+			if err != nil {
+				// Malformed geometry is rejected at compile time by design; only a
+				// successful compile is subject to the invariant.
+				return nil, false
+			}
+			out = append(out, stmt)
 		}
-		return stmt, true
+		return out, true
 	}
 
 	baseline, ok := compileWith(f, "POINT(1 2)", 1.5, 100)
@@ -290,15 +320,17 @@ func FuzzSpatial(f *testing.F) {
 	f.Add("", 0.0, 0.0)
 
 	f.Fuzz(func(t *testing.T, wkt string, x, d float64) {
-		stmt, ok := compileWith(t, wkt, x, d)
+		stmts, ok := compileWith(t, wkt, x, d)
 		if !ok {
 			return
 		}
-		if stmt.SQL != baseline.SQL {
-			t.Fatalf("spatial SQL text varied with input values:\n--- baseline ---\n%s\n--- got ---\n%s", baseline.SQL, stmt.SQL)
-		}
-		if len(stmt.Args) != len(baseline.Args) {
-			t.Fatalf("parameter count varied: %d != %d", len(stmt.Args), len(baseline.Args))
+		for i, stmt := range stmts {
+			if stmt.SQL != baseline[i].SQL {
+				t.Fatalf("spatial SQL text varied with input values:\n--- baseline ---\n%s\n--- got ---\n%s", baseline[i].SQL, stmt.SQL)
+			}
+			if len(stmt.Args) != len(baseline[i].Args) {
+				t.Fatalf("parameter count varied: %d != %d", len(stmt.Args), len(baseline[i].Args))
+			}
 		}
 	})
 }

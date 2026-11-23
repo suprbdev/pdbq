@@ -293,3 +293,87 @@ func (s *stmt) spatialDerivedSQL(alias string, c *introspect.Column, suffix stri
 	}
 	return d.JSONSQL(alias+"."+quoteIdent(c.Name), postgis.FlavourOf(c.PGType)), nil
 }
+
+// rasterAccessorSQL renders a raster metadata accessor field (rastWidth,
+// rastEnvelope, ...) over the owning column.
+func (s *stmt) rasterAccessorSQL(alias string, c *introspect.Column, suffix string) (string, error) {
+	a, ok := postgis.RasterAccessorBySuffix(suffix)
+	if !ok {
+		return "", fmt.Errorf("compile: unknown raster accessor %q", suffix)
+	}
+	return a.JSONSQL(alias + "." + quoteIdent(c.Name)), nil
+}
+
+// rasterBand binds the 1-based band number of a raster field's band:
+// argument, 1 when absent.
+func (s *stmt) rasterBand(f *ast.Field) (string, error) {
+	band := int64(1)
+	if v, ok := s.argValue(f, "band"); ok {
+		n, ok := toInt(v)
+		if !ok || n < 1 {
+			return "", errUser("%s: band must be a positive integer", f.Name)
+		}
+		band = n
+	}
+	return s.param(band), nil
+}
+
+// rasterValueSQL renders <field>Value(point:, band:): the pixel value of the
+// band at the point (ST_Value), the point reprojected to the raster's SRID.
+func (s *stmt) rasterValueSQL(alias string, c *introspect.Column, f *ast.Field) (string, error) {
+	point, ok := s.argValue(f, "point")
+	if !ok {
+		return "", errUser("%s requires a point", f.Name)
+	}
+	geom, err := s.spatialOperand(postgis.Geometry, 0, point)
+	if err != nil {
+		return "", err
+	}
+	band, err := s.rasterBand(f)
+	if err != nil {
+		return "", err
+	}
+	return postgis.RasterValueSQL(alias+"."+quoteIdent(c.Name), geom, band), nil
+}
+
+// rasterSummaryStatsSQL renders the selection of a RasterSummaryStats object
+// over <field>SummaryStats(band:) (ST_SummaryStats), null for a NULL raster
+// or a missing band. The statistics are computed once per row.
+func (s *stmt) rasterSummaryStatsSQL(alias string, c *introspect.Column, f *ast.Field, typeName string) (string, error) {
+	band, err := s.rasterBand(f)
+	if err != nil {
+		return "", err
+	}
+	v := s.alias("rs")
+	j := v + ".j"
+	var pairs []string
+	for _, sf := range s.expandFor(f.SelectionSet, typeName) {
+		key := quoteLiteral(sf.Alias)
+		if sf.Name == "__typename" {
+			pairs = append(pairs, key, quoteLiteral(typeName)+"::text")
+			continue
+		}
+		pairs = append(pairs, key, j+"->"+quoteLiteral(sf.Name))
+	}
+	return fmt.Sprintf("(SELECT %s FROM (SELECT %s AS j) AS %s WHERE %s IS NOT NULL)",
+		buildJSONObject(pairs), postgis.RasterSummaryStatsJSONSQL(alias+"."+quoteIdent(c.Name), band), v, j), nil
+}
+
+// rasterOp compiles one operator of RasterFilterOps: isNull, or intersects
+// with a geometry in the raster's SRID (ST_Intersects).
+func (s *stmt) rasterOp(ref, op string, val any) (string, error) {
+	switch op {
+	case "isNull":
+		if b, _ := val.(bool); b {
+			return ref + " IS NULL", nil
+		}
+		return ref + " IS NOT NULL", nil
+	case "intersects":
+		geom, err := s.spatialOperand(postgis.Geometry, 0, val)
+		if err != nil {
+			return "", err
+		}
+		return postgis.RasterIntersectsSQL(ref, geom), nil
+	}
+	return "", errUser("unknown raster filter operator %q", op)
+}

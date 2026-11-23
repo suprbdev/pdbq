@@ -24,9 +24,10 @@ func contribFor(built *schema.Built, c *introspect.Column) contribtype.Column {
 	return ci
 }
 
-// contribKey identifies everything contrib.ForColumn reads off a column.
+// contribKey identifies everything contrib.ForColumn reads off a column (the
+// domain tells an earth column from a plain cube one).
 func contribKey(c *introspect.Column) string {
-	return c.BaseTypeSchema + "|" + c.PGType + "|" + strconv.FormatBool(c.IsArray) + "|" + strconv.FormatBool(c.Spatial != nil) + "|" + c.EnumRef
+	return c.BaseTypeSchema + "|" + c.PGType + "|" + strconv.FormatBool(c.IsArray) + "|" + strconv.FormatBool(c.Spatial != nil) + "|" + c.EnumRef + "|" + c.Domain
 }
 
 // contrib resolves a column's contrib mapping, cached per column type on
@@ -331,14 +332,17 @@ func (s *stmt) resolveRanks(sql string) (string, error) {
 // contribJSON renders a contrib-owned value whose JSON form differs from its
 // text form: hstore as a JSON object, ranges as their selected
 // {start {value inclusive} end {...}} objects, multiranges as lists of them,
-// vector and halfvec values as arrays of numbers.
+// vector and halfvec values as arrays of numbers, cubes as lists of
+// coordinates and earth locations as their selected {lat lon} objects.
 func (s *stmt) contribJSON(ref string, c *introspect.Column, sel ast.SelectionSet) (string, bool) {
 	ci := s.contrib(c)
 	switch ci.Kind {
 	case contribtype.Interval:
 		return s.intervalJSON(ci, ref, sel), true
-	case contribtype.Hstore:
+	case contribtype.Hstore, contribtype.Cube:
 		return ci.Own.Codec.OutputJSONSQL(ref), true
+	case contribtype.Earth:
+		return s.latLonJSON(ci, ref, sel), true
 	case contribtype.Vector:
 		if !ci.List() {
 			return "", false
@@ -354,6 +358,29 @@ func (s *stmt) contribJSON(ref string, c *introspect.Column, sel ast.SelectionSe
 			v, s.rangeObject(ci, e+".r", sel), e, v, e, ref, v), true
 	}
 	return "", false
+}
+
+// latLonJSON renders the selection of a LatLon object over an earth value,
+// null for a NULL value. ref is evaluated once.
+func (s *stmt) latLonJSON(ci contribtype.Column, ref string, sel ast.SelectionSet) string {
+	v := s.alias("ll")
+	e := v + ".e"
+	var pairs []string
+	for _, f := range s.expandFor(sel, ci.Scalar) {
+		key := quoteLiteral(f.Alias)
+		switch f.Name {
+		case "__typename":
+			pairs = append(pairs, key, quoteLiteral(ci.Scalar)+"::text")
+		case "lat", "lon":
+			name := "latitude"
+			if f.Name == "lon" {
+				name = "longitude"
+			}
+			a, _ := ci.Own.Accessor(name)
+			pairs = append(pairs, key, a.SQL(e))
+		}
+	}
+	return fmt.Sprintf("(SELECT %s FROM (SELECT %s AS e) AS %s WHERE %s IS NOT NULL)", buildJSONObject(pairs), ref, v, e)
 }
 
 // rangeObject renders the selection of a range object over a non-null range
@@ -403,8 +430,9 @@ func (s *stmt) rangeBound(ci contribtype.Column, ref string, f *ast.Field) strin
 
 // exprTerm resolves an orderBy value sorting by a contrib expression of a
 // column against a per-column reference: pg_trgm similarity or Levenshtein
-// distance (spec.Similarity, referenced by similarTo:) or pgvector distance
-// (spec.Vector, referenced by nearVector:). The reference's parameters are
+// distance (spec.Similarity, referenced by similarTo:) or a pgvector, cube
+// or earthdistance distance (spec.Vector, referenced by the spec.Reference
+// argument, nearVector: or nearPoint:). The reference's parameters are
 // allocated here.
 func (s *stmt) exprTerm(t *introspect.Table, f *ast.Field, value string, spec schema.OrderSpec) (orderTerm, error) {
 	col := t.Column(spec.Column)
@@ -413,7 +441,7 @@ func (s *stmt) exprTerm(t *introspect.Table, f *ast.Field, value string, spec sc
 	}
 	name, arg := spec.Similarity, "similarTo"
 	if spec.Vector != "" {
-		name, arg = spec.Vector, "nearVector"
+		name, arg = spec.Vector, spec.Reference
 	}
 	expr, err := s.referenceExpr(col, arg, name)
 	if err != nil {
@@ -432,8 +460,9 @@ func (s *stmt) exprTerm(t *introspect.Table, f *ast.Field, value string, spec sc
 
 // referenceExpr resolves the contrib expression name measured against the
 // list argument arg: a pg_trgm expression or the fuzzystrmatch Levenshtein
-// distance for similarTo:, a pgvector (vector or bit) distance for
-// nearVector:.
+// distance for similarTo:, a distance of the column's
+// [contribtype.Column.Distances] vocabulary for nearVector: (pgvector,
+// cube) and nearPoint: (earthdistance).
 func (s *stmt) referenceExpr(col *introspect.Column, arg, name string) (pgcontrib.Expr, error) {
 	ci := s.contrib(col)
 	vocab, ok := ci.Trgm()
@@ -442,7 +471,7 @@ func (s *stmt) referenceExpr(col *introspect.Column, arg, name string) (pgcontri
 			vocab, ok = fz, true
 		}
 	}
-	if arg == "nearVector" {
+	if arg != "similarTo" {
 		vocab, ok = ci.Distances()
 	}
 	if !ok {
@@ -456,7 +485,8 @@ func (s *stmt) referenceExpr(col *introspect.Column, arg, name string) (pgcontri
 }
 
 // referenceValue returns the reference the list field f's argument arg
-// (similarTo:, nearVector:) holds for column col; nil when absent.
+// (similarTo:, nearVector:, nearPoint:) holds for column col; nil when
+// absent.
 func (s *stmt) referenceValue(f *ast.Field, arg, col string) any {
 	v, ok := s.argValue(f, arg)
 	if !ok {
@@ -474,13 +504,22 @@ func (s *stmt) referenceValue(f *ast.Field, arg, col string) any {
 // contribLiteral renders an input value of a contrib-owned type as the text
 // literal its type input function parses: what jsonb_populate_record needs
 // for a composite attribute, which it reads from a JSON string. hstore
-// objects become "k"=>"v" pairs and ranges [lower,upper) literals (with
-// multiranges as {...} lists of them); the other types already arrive in
-// their text form.
+// objects become "k"=>"v" pairs, ranges [lower,upper) literals (with
+// multiranges as {...} lists of them) and cubes their text form; the other
+// types already arrive in their text form. Earth locations have no literal
+// short of computing ll_to_earth, so they are rejected.
 func contribLiteral(ci contribtype.Column, v any) (any, error) {
 	switch ci.Kind {
 	case contribtype.Interval:
 		return intervalLiteral(ci, v)
+	case contribtype.Cube:
+		c, err := pgcontrib.CubeParam(v)
+		if err != nil {
+			return nil, errUser("%s", err.Error())
+		}
+		return c, nil
+	case contribtype.Earth:
+		return nil, errUser("earth values are not supported inside composite inputs")
 	case contribtype.Vector:
 		params, err := ci.Own.Codec.Params(v)
 		if err != nil {

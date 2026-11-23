@@ -1,4 +1,4 @@
-# Full-text search, trigrams, unaccent, fuzzystrmatch, hstore, ltree, intarray, ranges, network types and vectors
+# Full-text search, trigrams, unaccent, fuzzystrmatch, hstore, ltree, intarray, ranges, network types, vectors, cubes and earthdistance
 
 pdbq maps PostgreSQL's non-scalar built-in types and the common contrib
 extensions onto GraphQL types, reads and writes them in the same single
@@ -30,6 +30,9 @@ connection-filter operator names) wherever PostGraphile has one.
 | `vector`, `halfvec` (pgvector) | `[Float!]` | `[Float!]` | `VectorFilterOps` (`isNull` only), `VectorDistanceFilterOps` with distance thresholds (see [pgvector](#pgvector)) |
 | `sparsevec` (pgvector) | `String` (`"{1:1.5,3:2}/5"`) | `String` | `VectorFilterOps`, `SparseVectorDistanceFilterOps` with distance thresholds |
 | `bit`, `varbit` with pgvector installed | `String` (`"101"`) | `String` | `StringFilterOps`, `BitDistanceFilterOps` with Hamming/Jaccard thresholds (see [Bit vectors](#bit-vectors)) |
+| `cube` | `Cube` (JSON: `[1, 2, 3]` for a point, `[[1, 2], [3, 4]]` for a box) | `Cube` (the same, or the text form `"(1, 2), (3, 4)"`) | `CubeFilterOps`, `CubeDistanceFilterOps` with distance thresholds (see [cube](#cube)) |
+| earthdistance's `earth` (and domains over it) | `LatLon { lat lon }` | `LatLonInput` | `LatLonFilterOps` (`isNull` only), `LatLonDistanceFilterOps` with the radius filter (see [earthdistance](#earthdistance)) |
+| `point` with earthdistance installed | `String` (unchanged) | `String` | `StringFilterOps`, `PointDistanceFilterOps` with the `<@>` radius filter on admitted columns (see [earthdistance](#earthdistance)) |
 
 Ranges have PostGraphile's shape:
 
@@ -52,7 +55,7 @@ The mapping applies to table columns, composite attributes, computed columns
 and function arguments and results. Arrays of these types (other than
 `ltree[]`) map to lists of their text form (`[String!]`, `["[1,3)", "[5,9)"]`
 for `int4range[]`), as columns and as function arguments, VARIADIC ones
-included. `citext`, `hstore`, `ltree` and the pgvector types map only
+included. `citext`, `hstore`, `ltree`, the pgvector types, `cube` and `earth` map only
 when the catalog records the extension; a database that uses none of these
 types gets exactly the schema it got before. A custom range type (`CREATE
 TYPE floatrange AS RANGE (subtype = float8)`, in any schema) maps like the
@@ -159,11 +162,15 @@ On top of that, with `indexed_only` on (the default):
   access method can serve that metric: HNSW for all of them, IVFFlat for
   all but L1 and `sparsevec` (and, on bit columns, Hamming only);
 - the vector and bit distance thresholds, which no index serves, are offered
-  only on columns listed in `filters.allow_columns`.
+  only on columns listed in `filters.allow_columns`;
+- the cube distance thresholds, distance orderings and the earth radius filter
+  and distance ordering need a GiST index led by the column (or an allowlist
+  entry); the `point` surface of earthdistance, which no index serves, is
+  offered only on allowlisted columns.
 
 Columns listed in `filters.allow_columns` get everything on their own inputs
-(trigram, unaccent, fuzzystrmatch, intarray, vector and bit surface, and the
-value filters and orderings; the hstore and ltree operators above live on
+(trigram, unaccent, fuzzystrmatch, intarray, vector, bit, cube, earth and
+point surface, and the value filters and orderings; the hstore and ltree operators above live on
 shared inputs and stay out). Operator classes are not introspected:
 a GIN index on a text column is taken to be a trigram index, and an HNSW
 index on a vector column is taken to serve every metric, although pgvector
@@ -501,6 +508,110 @@ CREATE FUNCTION search_items(q vector(1536), n int DEFAULT 10) RETURNS SETOF ite
 $$;
 ```
 
+## cube
+
+With the `cube` extension installed, `cube` columns read and write as the
+`Cube` scalar: a point is a JSON list of its coordinates (`[1, 2, 3]`), a box
+the pair of its opposite corners (`[[1, 2], [3, 4]]`). Inputs also accept the
+cube text form as a string (`"(1, 2), (3, 4)"`), which Postgres validates;
+every input is one text parameter cast to the type
+(`$1::"ext".cube`). Output is built from the value's text form in the same
+statement.
+
+`CubeFilterOps` holds `equalTo`, `notEqualTo` and `isNull` (cube's own
+equality) plus `contains` (`@>`), `containedBy` (`<@`) and `overlaps` (`&&`),
+each taking a `Cube`. Like vectors, cube columns get no `condition:` field,
+`distinctOn:` value or plain `<COLUMN>_ASC` ordering: cube's btree order is a
+storage order with no meaning. What they get is distance ordering against
+the `nearVector:` reference for the column, which takes a `Cube`:
+
+| orderBy value | cube operator | field |
+|---|---|---|
+| `<COLUMN>_L2_DISTANCE_ASC/_DESC` | `<->` (Euclidean) | `<field>L2Distance` |
+| `<COLUMN>_L1_DISTANCE_ASC/_DESC` | `<#>` (taxicab) | `<field>L1Distance` |
+| `<COLUMN>_CHEBYSHEV_DISTANCE_ASC/_DESC` | `<=>` (Chebyshev, L-infinity) | `<field>ChebyshevDistance` |
+
+```graphql
+{
+  allShapes(
+    filter: {pos: {l2DistanceLessThan: {cube: [1, 2], distance: 5}, containedBy: [[0, 0], [10, 10]]}}
+    nearVector: {pos: [1, 2]}
+    orderBy: [POS_L2_DISTANCE_ASC]
+    first: 10
+  ) { nodes { id pos posL2Distance } }
+}
+```
+
+A GiST index on the column serves all of it: the operators directly, the
+orderings as KNN scans (`ORDER BY pos <-> $1::cube LIMIT n`), and the
+`<distance>LessThan: {cube, distance}` thresholds of `CubeDistanceFilterOps`
+through an overlap prefilter with the reference enlarged by the distance
+(`pos && cube_enlarge($1, $2, cube_dim($1)) AND (pos <-> $1) < $2`). The
+KNN scans need PostgreSQL 17 or later, which adds the primary-key
+tiebreaker every ordering carries by an incremental sort over the index
+order; earlier versions sort the filtered rows instead (the same holds for
+the earth ordering below). Under
+`filters.indexed_only` the orderings and thresholds are therefore offered only
+on columns led by a GiST index (or allowlisted); other filterable cube
+columns keep `CubeFilterOps`. The distance fields come with every readable
+cube column, `null` without a reference, and the cost estimator prices each
+like a column. Cube columns take no aggregates either.
+
+## earthdistance
+
+With `earthdistance` (which needs `cube`) installed, columns declared as its
+`earth` domain, or a domain over it, read and write as `LatLon { lat lon }`
+(degrees) with input `LatLonInput`; an `earth` value is written through
+`ll_to_earth($1::float8, $2::float8)` and read back with `latitude()` and
+`longitude()`. Latitude must lie within ±90 and longitude within ±180.
+`LatLonFilterOps` holds `isNull`; `LatLonDistanceFilterOps` adds the radius
+filter `earthDistanceLessThan: {lat, lon, distance}` (metres), compiled to the
+index-friendly `earth_box(ll_to_earth($1, $2), $3) @> col` prefilter refined
+by `earth_distance(col, ll_to_earth($1, $2)) < $3`.
+
+Distance to a reference location is an ordering and a score. Fields taking
+the table's orderBy gain `nearPoint: <Type>NearPointInput`, one `LatLonInput`
+per earth (and admitted point) column:
+
+```graphql
+{
+  allStores(
+    filter: {location: {earthDistanceLessThan: {lat: 51.5074, lon: -0.1278, distance: 5000}}}
+    nearPoint: {location: {lat: 51.5074, lon: -0.1278}}
+    orderBy: [LOCATION_EARTH_DISTANCE_ASC]
+    first: 10
+  ) { nodes { id location { lat lon } locationEarthDistance } }
+}
+```
+
+`<field>EarthDistance: Float` is the great-circle distance in metres
+(`earth_distance`). `<COLUMN>_EARTH_DISTANCE_ASC/_DESC` orders by cube's `<->`
+distance between the two points instead, the chord through the Earth, which
+orders rows exactly like the great-circle distance and which a GiST index on
+the column answers as a KNN scan; keyset cursors compare that same chord
+value. Under `filters.indexed_only` the radius filter and the ordering need a
+GiST index led by the column (or an allowlist entry); the distance field
+comes with every readable earth column. A reference outside the latitude and
+longitude ranges is a client error, and ordering without a reference for the
+column is an error. Earth values inside composite inputs are rejected (their
+text form is a cube of Earth-centred coordinates).
+
+earthdistance before 1.2 (PostgreSQL 15 and earlier) calls the cube
+functions unqualified, so its schema and cube's must be on the search_path
+there; from 1.2 on the extensions can live in any schema, and pdbq
+schema-qualifies everything it emits.
+
+`point` columns holding (longitude, latitude) take earthdistance's `<@>`
+operator, in statute miles: `<COLUMN>_EARTH_DISTANCE_MILES_ASC/_DESC`,
+`<field>EarthDistanceMiles` and `earthDistanceMilesLessThan: {lat, lon,
+distance}` on `PointDistanceFilterOps` (`StringFilterOps` plus the radius
+filter), all against `nearPoint:`. No index serves `<@>`, so like the bit
+surface of pgvector it is generated only where the policy admits unindexed
+surface (an allowlisted column, or `indexed_only` off): installing
+earthdistance leaves other point columns' schema unchanged. For
+index-assisted radius search store an `earth` column (a generated column
+over `ll_to_earth(lat, lon)` works) and index it with GiST.
+
 ## fuzzystrmatch
 
 With the `fuzzystrmatch` extension installed, text columns (`text`,
@@ -621,32 +732,38 @@ Inputs go through each type's constructor or cast: `hstore($1::text[])` from
 the JSON object (`null` values allowed), `int4range($1::int4, $2::int4,
 $3::text)` from the bound objects, `int4multirange(...)` from a list of them,
 `$1::"ext".citext`, `$1::"ext".ltree`, `$1::inet`, `$1::tsvector`,
-`$1::"ext".vector` from the list of numbers. Nested mutations use the same
-path. Composite attributes of these types are sent
-in their text form inside the composite's jsonb parameter (`"k"=>"v"` for
-hstore, `["1","3")` for ranges).
+`$1::"ext".vector` from the list of numbers, `$1::"ext".cube` from the cube's
+text form, `"ext".ll_to_earth($1::float8, $2::float8)` from a `LatLonInput`.
+Nested mutations use the same path. Composite attributes of these types are
+sent in their text form inside the composite's jsonb parameter (`"k"=>"v"`
+for hstore, `["1","3")` for ranges, `(1, 2)` for cubes); `earth` attributes
+are not supported there.
 
 ## Settings
 
 The `contrib` plugin (priority 170) adds the vocabulary operators, the rank
 fields, the ltree, hstore and intarray value fields, filters and orderings
-and the rank, similarity, Levenshtein and vector distance ordering; the type
+and the rank, similarity, Levenshtein, vector, cube and earth distance
+ordering; the type
 mapping, reads, writes and generic comparisons are core. `plugins.disabled: [contrib]` removes the
 plugin's surface.
 
 | Key | Default | Effect |
 |---|---|---|
 | `plugins.settings.contrib.filters` | `true` | vocabulary operators, `StringTrgmFilterOps`, the unaccent, fuzzystrmatch and intarray inputs, the distance-threshold inputs, the value filters (`<field>Nlevel`, `<field>Value`, `<field>Icount`), `<field>Rank` fields (and so rank ordering) |
-| `plugins.settings.contrib.ordering` | `true` | `_RANK_`, `_SIMILARITY_`, `_LEVENSHTEIN_DISTANCE_`, `_NLEVEL_`, `_ICOUNT_`, `_VALUE_` and vector `_DISTANCE_`/`_INNER_PRODUCT_` orderBy values, the similarity and distance fields and the `similarTo:`, `nearVector:` and `hstoreKey:` arguments |
+| `plugins.settings.contrib.ordering` | `true` | `_RANK_`, `_SIMILARITY_`, `_LEVENSHTEIN_DISTANCE_`, `_NLEVEL_`, `_ICOUNT_`, `_VALUE_`, vector and cube `_DISTANCE_`/`_INNER_PRODUCT_` and earthdistance `_EARTH_DISTANCE_`/`_EARTH_DISTANCE_MILES_` orderBy values, the similarity and distance fields and the `similarTo:`, `nearVector:`, `nearPoint:` and `hstoreKey:` arguments |
 
 `@omit filter` / `@omit order` on a column removes its filter / ordering
 surface (the similarity, distance and value fields stay); `@omit read` also
 removes its rank, similarity, distance and value fields and its rank,
 similarity and distance orderings, which measure the value against a
 reference of the client's choosing. Schema contracts hide columns the same
-way. If a table's `<Type>NearVectorInput` name is already taken, its vector
-ordering is skipped and the builder logs a warning; the same goes for
-`<Type>HstoreKeyInput` (hstore value ordering), the text operator inputs,
-`TextDistanceInput`, `KeyValueHashValueFilter` and
-`IntListIntarrayFilterOps`, and for a value field or filter field whose
-name a column already takes.
+way. If a table's `<Type>NearVectorInput` or `<Type>NearPointInput` name is
+already taken, its vector and cube or earthdistance ordering is skipped and
+the builder logs a warning; the same goes for `<Type>HstoreKeyInput` (hstore
+value ordering), the text operator inputs, `TextDistanceInput`,
+`KeyValueHashValueFilter`, `IntListIntarrayFilterOps` and the
+distance-threshold inputs and operands (`CubeDistanceFilterOps`,
+`LatLonDistanceInput`, ...), and for a value field or filter field whose name
+a column already takes. A table taking the `Cube`, `LatLon` or `LatLonInput`
+name makes cube or earth columns fall back to `String`.

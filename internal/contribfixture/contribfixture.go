@@ -1,9 +1,10 @@
 // Package contribfixture extends pdbcore's shared test fixture with a table
 // covering every contrib column type (tsvector, citext, hstore, ltree,
 // ltree[], the range and multirange types, inet, cidr, pg_trgm-indexed text
-// and a GIN-indexed int4[] for intarray) and a table of pgvector columns for
-// golden and schema tests. The extensions (with unaccent and fuzzystrmatch)
-// are recorded as installed in the "ext" schema,
+// and a GIN-indexed int4[] for intarray), a table of pgvector columns and a
+// table of cube, earth and point columns for golden and schema tests. The
+// extensions (with unaccent, fuzzystrmatch and earthdistance) are recorded
+// as installed in the "ext" schema,
 // so compiled SQL shows the schema-qualified spelling that works when that
 // schema is not on the search_path.
 //
@@ -23,6 +24,8 @@ const ExtSchema = "ext"
 func Extensions() []*introspect.Extension {
 	return []*introspect.Extension{
 		{Name: "citext", Version: "1.6", Schema: ExtSchema},
+		{Name: "cube", Version: "1.5", Schema: ExtSchema},
+		{Name: "earthdistance", Version: "1.2", Schema: ExtSchema},
 		{Name: "fuzzystrmatch", Version: "1.2", Schema: ExtSchema},
 		{Name: "hstore", Version: "1.8", Schema: ExtSchema},
 		{Name: "intarray", Version: "1.5", Schema: ExtSchema},
@@ -123,8 +126,45 @@ func Embeddings() *introspect.Table {
 	}
 }
 
-// Catalog returns testutil.FixtureCatalog plus the documents and embeddings
-// tables, their extensions, the composite type stay (nights int4range,
+// Locations is the cube and earthdistance table: public.locations with a
+// cube column led by a GiST index (pos), a cube column led by a btree index
+// (box), an earth column led by a GiST index (spot), an unindexed earth
+// column (home) and two unindexed point columns (here, there).
+func Locations() *introspect.Table {
+	col := func(pos int, name, typ, schema string) *introspect.Column {
+		return &introspect.Column{Name: name, Position: pos, PGType: typ, TypeSchema: schema, BaseTypeSchema: schema}
+	}
+	id := col(1, "id", "int4", "pg_catalog")
+	id.NotNull, id.Generated, id.GeneratedKind = true, true, introspect.GeneratedIdentity
+	earth := func(pos int, name string) *introspect.Column {
+		c := col(pos, name, "cube", ExtSchema)
+		c.Domain = ExtSchema + ".earth"
+		return c
+	}
+	return &introspect.Table{
+		Schema: "public", Name: "locations", Kind: introspect.RelTable,
+		Privileges: introspect.Privileges{Select: true, Insert: true, Update: true, Delete: true},
+		Columns: []*introspect.Column{
+			id,
+			col(2, "pos", "cube", ExtSchema),
+			col(3, "box", "cube", ExtSchema),
+			earth(4, "spot"),
+			earth(5, "home"),
+			col(6, "here", "point", "pg_catalog"),
+			col(7, "there", "point", "pg_catalog"),
+		},
+		PrimaryKey: &introspect.Constraint{Name: "locations_pkey", Columns: []string{"id"}},
+		Indexes: []*introspect.Index{
+			{Name: "locations_box_idx", Columns: []string{"box"}, Method: "btree"},
+			{Name: "locations_pkey", Columns: []string{"id"}, Unique: true, Method: "btree"},
+			{Name: "locations_pos_idx", Columns: []string{"pos"}, Method: "gist"},
+			{Name: "locations_spot_idx", Columns: []string{"spot"}, Method: "gist"},
+		},
+	}
+}
+
+// Catalog returns testutil.FixtureCatalog plus the documents, embeddings and
+// locations tables, their extensions, earthdistance's earth domain, the composite type stay (nights int4range,
 // extras hstore), a computed column (documents_window(documents) returns
 // tstzrange) and functions taking and returning contrib types (widen(r
 // int4range, by int4) returns int4range, with_flag(h hstore) returns hstore,
@@ -132,8 +172,12 @@ func Embeddings() *introspect.Table {
 // by float8) returns vector).
 func Catalog() *introspect.Catalog {
 	cat := testutil.FixtureCatalog()
-	cat.Tables = append(cat.Tables, Documents(), Embeddings())
+	cat.Tables = append(cat.Tables, Documents(), Embeddings(), Locations())
 	cat.Extensions = append(cat.Extensions, Extensions()...)
+	cat.Domains = append(cat.Domains, &introspect.Domain{
+		Schema: ExtSchema, Name: "earth", BaseType: "cube", BaseTypeSchema: ExtSchema,
+		Checks: []string{"CHECK (cube_is_point(VALUE))", "CHECK (cube_dim(VALUE) <= 3)", "CHECK (cube_ll_coord(VALUE, 4) = 0::double precision)"},
+	})
 	cat.Composites = append(cat.Composites, &introspect.Composite{
 		Schema: "public", Name: "stay",
 		Fields: []*introspect.Column{

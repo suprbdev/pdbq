@@ -1,0 +1,24 @@
+# earth columns read as LatLon objects (selection, aliases and __typename),
+# filter by radius, order by the index-served chord distance and score the
+# great-circle distance against nearPoint:; point columns take the <@>
+# statute-mile surface.
+{
+  allLocations(
+    filter: {spot: {earthDistanceLessThan: {lat: 51.5, lon: -0.12, distance: 10000}}}
+    nearPoint: {spot: {lat: 51.5, lon: -0.12}, home: {lat: 48.85, lon: 2.35}}
+    orderBy: [SPOT_EARTH_DISTANCE_ASC]
+    first: 3
+  ) {
+    nodes { id spot { lat lon } where: home { __typename latitude: lat } spotEarthDistance homeEarthDistance }
+  }
+  points: allLocations(
+    filter: {here: {earthDistanceMilesLessThan: {lat: 40.7, lon: -74, distance: 50}}}
+    nearPoint: {here: {lat: 40.7, lon: -74}}
+    orderBy: [HERE_EARTH_DISTANCE_MILES_DESC]
+  ) {
+    nodes { id hereEarthDistanceMiles }
+  }
+  badLat: allLocations(nearPoint: {spot: {lat: 100, lon: 0}}, orderBy: [SPOT_EARTH_DISTANCE_ASC]) { nodes { id } }
+  noRef: allLocations(orderBy: [SPOT_EARTH_DISTANCE_ASC]) { nodes { id } }
+  locationById(id: 1) { spot { lat } spotEarthDistance }
+}
