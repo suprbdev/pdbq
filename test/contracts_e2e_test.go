@@ -54,11 +54,21 @@ func setupContracts(t *testing.T) {
 
 func contractsServer(t *testing.T, watch bool) (*pdbq.App, string) {
 	t.Helper()
+	return contractsServerWith(t, watch, nil)
+}
+
+// contractsServerWith is contractsServer running ddl on the contracts_e2e
+// schema after its setup and applying configure to the config.
+func contractsServerWith(t *testing.T, watch bool, configure func(*config.Config), ddl ...string) (*pdbq.App, string) {
+	t.Helper()
 	url := os.Getenv("PDBQ_TEST_DATABASE_URL")
 	if url == "" {
 		t.Skip("PDBQ_TEST_DATABASE_URL not set; run `make test-e2e`")
 	}
 	setupContracts(t)
+	if len(ddl) > 0 {
+		execAll(t, testConn(t), ddl...)
+	}
 	cfg := config.DefaultConfig()
 	cfg.Database.URL = url
 	cfg.RLS.Enabled = false
@@ -76,6 +86,9 @@ func contractsServer(t *testing.T, watch bool) (*pdbq.App, string) {
 	if watch {
 		cfg.Watch.Enabled = true
 		cfg.Watch.PollInterval = 200 * time.Millisecond
+	}
+	if configure != nil {
+		configure(&cfg)
 	}
 	if err := cfg.Validate(); err != nil {
 		t.Fatal(err)
@@ -310,5 +323,39 @@ func TestContractsKeepRLS(t *testing.T) {
 	}
 	if n := countPosts(map[string]string{"X-Pdbq-Claim-Role": "app_user", "X-Pdbq-Claim-User-Id": "1"}); n != 4 {
 		t.Errorf("author 1 sees %d posts through the contract, want 4", n)
+	}
+}
+
+// TestContractsIntegrityErrorsHideNames pins that an integrity violation
+// whose message names a table, constraint or column a contract hides
+// reaches that contract's clients as a generic message with the SQLSTATE,
+// while a contract that shows them keeps PostgreSQL's message.
+func TestContractsIntegrityErrorsHideNames(t *testing.T) {
+	_, base := contractsServerWith(t, false, func(c *config.Config) { c.Errors.Detail = "prod" },
+		`ALTER TABLE `+contractsSchema+`.customers ADD COLUMN pin text NOT NULL DEFAULT '0000'`,
+		`ALTER TABLE `+contractsSchema+`.customers ALTER COLUMN pin DROP DEFAULT`,
+		`COMMENT ON COLUMN `+contractsSchema+`.customers.pin IS '@behavior -contract:public'`,
+	)
+	const (
+		del    = `mutation { deleteCustomerById(id: 1) { clientMutationId } }`
+		create = `mutation { createCustomer(input: {name: "x"}) { clientMutationId } }`
+	)
+	for _, tc := range []struct {
+		name, url, query, want string
+	}{
+		{"hidden table in a foreign key error", base + "/public", del,
+			`{"data":{"deleteCustomerById":null},"errors":[{"message":"foreign key violation","path":["deleteCustomerById"],"extensions":{"code":"23503"}}]}`},
+		{"hidden column in a not-null error", base + "/public", create,
+			`{"data":{"createCustomer":null},"errors":[{"message":"not-null violation","path":["createCustomer"],"extensions":{"code":"23502"}}]}`},
+		{"visible foreign key error", base, del,
+			`{"data":{"deleteCustomerById":null},"errors":[{"message":"update or delete on table \"customers\" violates foreign key constraint \"invoices_customer_id_fkey\" on table \"invoices\"","path":["deleteCustomerById"],"extensions":{"code":"23503"}}]}`},
+		{"visible not-null error", base, `mutation { updateCustomerById(id: 1, patch: {pin: null}) { clientMutationId } }`,
+			`{"data":{"updateCustomerById":null},"errors":[{"message":"null value in column \"pin\" of relation \"customers\" violates not-null constraint","path":["updateCustomerById"],"extensions":{"code":"23502"}}]}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := postRaw(t, tc.url, tc.query, nil); got != tc.want {
+				t.Errorf("got  %s\nwant %s", got, tc.want)
+			}
+		})
 	}
 }

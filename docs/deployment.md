@@ -44,7 +44,10 @@ truncating the query string in intermediary log formats.
   `rls.auth.header_prefix` (`X-Pdbq-Claim-` by default) in any letter case,
   and sets `rls.auth.header_claims` to the claims it injects).
 - `errors.detail: prod` (default) — constraint violations pass through,
-  internals do not. Use `strict` if constraint/column names in error
+  internals do not; a violation naming a table, column or foreign key the
+  schema does not expose (omitted, hidden by the contract, or outside
+  `schema.schemas`) gets a generic message such as `foreign key violation`
+  (see [Contracts](contracts.md#security)). Use `strict` if constraint/column names in error
   messages are themselves sensitive (hides all database error messages).
 - Leave `server.graphiql` and `server.expose_schema` off (their defaults)
   unless you want the playground and full SDL public — both hand an attacker

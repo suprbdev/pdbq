@@ -1349,6 +1349,9 @@ func (e *Executor) gqlError(err error, f *ast.Field) *gqlerror.Error {
 			ext["constraint"] = pgErr.ConstraintName
 		} else {
 			msg = pgexec.SanitizeMessage(pgErr, e.Opts.StrictErrors)
+			if e.Built != nil && !e.Opts.StrictErrors {
+				msg = integrityMessage(e.Built.Catalog, pgErr, msg)
+			}
 		}
 		return &gqlerror.Error{Message: msg, Path: path, Extensions: ext}
 	}
