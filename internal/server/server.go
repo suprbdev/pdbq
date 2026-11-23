@@ -42,9 +42,13 @@ type Server struct {
 
 	metrics     *metrics.Metrics
 	metricsPath string
+	ping        func(context.Context) error
 }
 
 func New(cfg config.Server, authn *Authenticator, ex *exec.Executor, sdl string, log *slog.Logger) (*Server, error) {
+	if log == nil {
+		log = slog.Default()
+	}
 	s := &Server{cfg: cfg, auth: authn, log: log}
 	s.executor.Store(ex)
 	s.sdl.Store(&sdl)
@@ -64,6 +68,26 @@ func New(cfg config.Server, authn *Authenticator, ex *exec.Executor, sdl string,
 // uninstrumented.
 func (s *Server) SetMetrics(m *metrics.Metrics, path string) {
 	s.metrics, s.metricsPath = m, path
+}
+
+// SetReadiness makes GET /readyz call ping with a server.readyz_timeout
+// deadline and answer 503 when it fails; nil (the default) leaves /readyz a
+// liveness alias. Call it before Handler.
+func (s *Server) SetReadiness(ping func(context.Context) error) { s.ping = ping }
+
+func (s *Server) handleReadyz(w http.ResponseWriter, r *http.Request) {
+	if s.ping != nil {
+		ctx, cancel := context.WithTimeout(r.Context(), s.cfg.ReadyzTimeout)
+		defer cancel()
+		if err := s.ping(ctx); err != nil {
+			s.log.Warn("readyz: database ping failed", "err", err)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			w.Write([]byte(`{"errors":[{"message":"database unavailable","extensions":{"code":"unavailable"}}]}`)) //nolint:errcheck
+			return
+		}
+	}
+	httpx.Healthz(w, r)
 }
 
 // RouteClass is the route label of r in the HTTP metrics: graphql, health,
@@ -99,7 +123,7 @@ func (s *Server) Handler() http.Handler {
 		mux.HandleFunc("OPTIONS /graphql", httpx.Preflight(s.cfg.CORSOrigins, "POST, GET, OPTIONS"))
 	}
 	mux.HandleFunc("GET /healthz", httpx.Healthz)
-	mux.HandleFunc("GET /readyz", httpx.Healthz)
+	mux.HandleFunc("GET /readyz", s.handleReadyz)
 	if s.cfg.ExposeSchema {
 		mux.HandleFunc("GET /schema.graphql", s.handleSDL)
 	}

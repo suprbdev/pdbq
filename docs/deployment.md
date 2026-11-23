@@ -11,7 +11,10 @@ $ docker run -e PDBQ_DATABASE_URL=postgres://... -p 8080:8080 pdbq:dev
 ```
 
 Distroless has no shell, so run health checks from the orchestrator against
-`GET /healthz` (`/readyz` is an alias).
+`GET /healthz` (liveness) and `GET /readyz` (readiness). `/readyz` pings the
+database pool, bounded by `server.readyz_timeout` (default `2s`), and answers
+`503` with a GraphQL-style error body (`code: unavailable`) when the ping fails
+or times out; `/healthz` only reports that the process is serving.
 
 ## Endpoints
 
@@ -19,7 +22,7 @@ Distroless has no shell, so run health checks from the orchestrator against
 |---|---|
 | `POST /graphql` | the API (GET with `?query=` also supported) |
 | `GET /` | GraphiQL (opt-in via `server.graphiql: true`; off by default) |
-| `GET /healthz`, `/readyz` | liveness/readiness |
+| `GET /healthz`, `/readyz` | liveness / readiness (`/readyz` pings the database; `503` when unreachable) |
 | `GET /schema.graphql` | generated SDL (opt-in via `server.expose_schema: true`; off by default) |
 | `GET /metrics` | Prometheus metrics (opt-in via `metrics.enabled: true`; path `metrics.path`, or on its own listener with `metrics.addr`); see [metrics.md](metrics.md) |
 

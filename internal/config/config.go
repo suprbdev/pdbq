@@ -48,6 +48,7 @@ type Server struct {
 	GraphiQL             bool          `koanf:"graphiql" doc:"Serve the GraphiQL playground at / (off by default; enable for development)."`
 	ExposeSchema         bool          `koanf:"expose_schema" doc:"Serve the generated SDL at /schema.graphql (off by default; it reveals every table, column and relation to unauthenticated callers)."`
 	RequestTimeout       time.Duration `koanf:"request_timeout" doc:"Overall HTTP request timeout."`
+	ReadyzTimeout        time.Duration `koanf:"readyz_timeout" doc:"Timeout of the database ping behind GET /readyz; an unreachable or slow database answers 503. /healthz stays a liveness check."`
 	MaxBodyBytes         int64         `koanf:"max_body_bytes" doc:"Maximum accepted request body size in bytes."`
 	MaxDepth             int           `koanf:"max_depth" doc:"Maximum GraphQL selection depth per operation."`
 	MaxCost              int           `koanf:"max_cost" doc:"Maximum estimated cost (selected fields x list multipliers) per operation."`
@@ -96,6 +97,7 @@ func DefaultConfig() Config {
 		Server: Server{
 			Addr:              ":8080",
 			RequestTimeout:    30 * time.Second,
+			ReadyzTimeout:     2 * time.Second,
 			MaxBodyBytes:      1 << 20,
 			MaxDepth:          15,
 			MaxCost:           10000,
@@ -153,6 +155,9 @@ func (c *Config) Validate() error {
 	}
 	if c.TX.MaxRetries < 0 {
 		errs = append(errs, "transactions.max_retries must be >= 0")
+	}
+	if c.Server.ReadyzTimeout <= 0 {
+		errs = append(errs, "server.readyz_timeout must be > 0")
 	}
 	if c.Server.MaxDepth < 1 {
 		errs = append(errs, "server.max_depth must be >= 1")
