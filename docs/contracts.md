@@ -129,7 +129,10 @@ contract does can add a field, a type, a privilege or a row:
   exclusion violation whose message names a table, column or foreign key
   the contract hides (or `@omit` hides, with or without contracts) is
   reported as `foreign key violation`, `not-null violation`, and so on. A
-  check or exclusion constraint, which pdbq does not introspect, gets the
+  unique, check or exclusion constraint counts as naming every column it
+  references: its key and `INCLUDE` columns, the columns of index
+  expressions and of a partial index's predicate, and a check's columns.
+  A constraint pdbq does not know (a partition's own index) gets the
   generic message whenever its table has a hidden column. Deleting a
   visible row still fails while a hidden table references it: the error no
   longer names that table, but its SQLSTATE (`23503`) still tells that some
