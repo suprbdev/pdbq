@@ -78,23 +78,11 @@ func (c *Compiler) Compile(ctx context.Context, req *Request) (*Statement, error
 	var sql string
 	var err error
 	switch meta.Kind {
-	case schema.KindRowByKey:
-		sql, err = s.rowByKey(meta, req.Field)
-	case schema.KindListQuery:
-		sql, err = s.listQuery(meta, req.Field)
-	case schema.KindConnectionQuery:
-		sql, err = s.connectionQuery(meta, req.Field)
 	case schema.KindCreate, schema.KindUpdate, schema.KindDelete, schema.KindUpsert,
 		schema.KindCreateMany, schema.KindUpdateMany, schema.KindDeleteMany:
 		sql, err = s.mutation(meta, req.Field)
-	case schema.KindFunction:
-		sql, err = s.function(meta, req.Field)
-	case schema.KindNode:
-		sql, err = s.nodeQuery(req.Field)
-	case schema.KindSynthetic:
-		sql = "SELECT NULL::json AS data"
 	default:
-		err = fmt.Errorf("compile: unsupported root field kind %q", meta.Kind)
+		sql, err = s.rootField(meta, req.Field)
 	}
 	if err != nil {
 		return nil, err
@@ -116,6 +104,27 @@ func (c *Compiler) Compile(ctx context.Context, req *Request) (*Statement, error
 			meta.Kind == schema.KindCreateMany || meta.Kind == schema.KindUpdateMany ||
 			meta.Kind == schema.KindDeleteMany,
 	}, nil
+}
+
+// rootField compiles a root field other than a table mutation: a query
+// field, or a function (a mutation when volatile). A mutation payload's
+// query field compiles its selections through it too.
+func (s *stmt) rootField(meta *schema.FieldMeta, f *ast.Field) (string, error) {
+	switch meta.Kind {
+	case schema.KindRowByKey:
+		return s.rowByKey(meta, f)
+	case schema.KindListQuery:
+		return s.listQuery(meta, f)
+	case schema.KindConnectionQuery:
+		return s.connectionQuery(meta, f)
+	case schema.KindFunction:
+		return s.function(meta, f)
+	case schema.KindNode:
+		return s.nodeQuery(f)
+	case schema.KindSynthetic:
+		return "SELECT NULL::json AS data", nil
+	}
+	return "", fmt.Errorf("compile: unsupported root field kind %q", meta.Kind)
 }
 
 func rootTypeName(req *Request) string {

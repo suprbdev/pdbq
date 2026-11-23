@@ -70,6 +70,7 @@ Tags may repeat where noted. Disable everything with
 |---|---|
 | `@omit` | Hide the function (root field or computed column). |
 | `@name <new_name>` | Rename the generated field. |
+| `@resultFieldName <name>` on a volatile function | Name the result field of its mutation payload (default: PostGraphile's, e.g. `post`, `integer`, `posts`). |
 | `@deprecated [reason]` | Deprecate the generated field(s). |
 | `@omit filter` / `@omit order` on a computed column | Keep the computed field, drop its `advanced-filters` filter field / orderBy values. |
 | `@filterable` (alias `@sortable`) | Opt the computed column in when `advanced-filters` runs in opt-in mode. |

@@ -675,28 +675,9 @@ func (b *Builder) addRelations(t *introspect.Table) {
 	obj := b.Objects[typeName]
 	// Forward: FK on t points to parent row (many-to-one).
 	for _, fk := range t.ForeignKeys {
-		ref := b.Catalog.Table(fk.RefSchema, fk.RefTable)
-		refType, ok := b.TypeForTable[tableKey(fk.RefSchema, fk.RefTable)]
-		if ref == nil || !ok {
-			continue
+		if f := b.forwardRelationField(t, fk); f != nil {
+			b.addRootField(obj, f)
 		}
-		if !fk.ReferencesOne() {
-			b.addRootField(obj, &Field{
-				Name: b.ForwardRelationName(t, fk),
-				Type: b.ensureConnection(ref) + "!",
-				Args: b.connectionArgs(ref, "", "", ""),
-				Meta: &FieldMeta{
-					Kind: KindRelationForward, Table: ref, FK: fk,
-					CostMultiplier: costMultiplier(fk.Comment),
-				},
-			})
-			continue
-		}
-		b.addRootField(obj, &Field{
-			Name: b.ForwardRelationName(t, fk),
-			Type: refType,
-			Meta: &FieldMeta{Kind: KindRelationForward, Table: ref, FK: fk},
-		})
 	}
 	// Backward: FKs on other tables pointing at t (one-to-many).
 	for _, other := range b.Catalog.Tables {
@@ -724,6 +705,83 @@ func (b *Builder) addRelations(t *introspect.Table) {
 	}
 }
 
+// forwardRelationField builds the relation field following fk from a row of
+// t, or nil when the referenced table is not in the schema: the referenced
+// row's object, or a connection over the referenced rows for a PERIOD key.
+func (b *Builder) forwardRelationField(t *introspect.Table, fk *introspect.ForeignKey) *Field {
+	ref := b.Catalog.Table(fk.RefSchema, fk.RefTable)
+	refType, ok := b.TypeForTable[tableKey(fk.RefSchema, fk.RefTable)]
+	if ref == nil || !ok {
+		return nil
+	}
+	if !fk.ReferencesOne() {
+		return &Field{
+			Name: b.ForwardRelationName(t, fk),
+			Type: b.ensureConnection(ref) + "!",
+			Args: b.connectionArgs(ref, "", "", ""),
+			Meta: &FieldMeta{
+				Kind: KindRelationForward, Table: ref, FK: fk,
+				CostMultiplier: costMultiplier(fk.Comment),
+			},
+		}
+	}
+	return &Field{
+		Name: b.ForwardRelationName(t, fk),
+		Type: refType,
+		Meta: &FieldMeta{Kind: KindRelationForward, Table: ref, FK: fk},
+	}
+}
+
+// fallbackRelationName is the PostGraphile-default name of fk's forward
+// relation, <referencedTable>By<Columns>, used when the inflected name is
+// taken.
+func fallbackRelationName(fk *introspect.ForeignKey) string {
+	return coreinflect.LowerCamel(coreinflect.Singularize(fk.RefTable)) + "By" + coreinflect.ByColumns(fk.Columns)
+}
+
+// addPayloadFields appends the fields PostGraphile gives mutation payloads:
+// query (the Query root, readable alongside the mutation's result) on every
+// payload and, when t is set (the payload carries one row of t), the row's
+// forward relations and a <row>Edge for Relay connection updates. A
+// relation whose name is taken on the payload falls back to
+// <referencedTable>By<Columns>; one still colliding is left out.
+func (b *Builder) addPayloadFields(obj *Object, t *introspect.Table) {
+	b.addRootField(obj, &Field{
+		Name:        "query",
+		Type:        "Query",
+		Description: "The root query type, to read any data alongside the mutation's result.",
+		Meta:        &FieldMeta{Kind: KindPayloadQuery},
+	})
+	if t == nil {
+		return
+	}
+	for _, fk := range t.ForeignKeys {
+		f := b.forwardRelationField(t, fk)
+		if f == nil {
+			continue
+		}
+		if obj.Field(f.Name) != nil {
+			f.Name = fallbackRelationName(fk)
+		}
+		b.addRootField(obj, f)
+	}
+	typeName := b.TypeForTable[tableKey(t.Schema, t.Name)]
+	if t.PrimaryKey == nil || typeName == "" {
+		return
+	}
+	edge := &Field{
+		Name:        strings.ToLower(typeName[:1]) + typeName[1:] + "Edge",
+		Type:        typeName + "Edge",
+		Description: "An edge for the payload's " + typeName + ", to add to a Relay connection. Its cursor is the row's nodeId, valid under every ordering; orderBy is accepted for PostGraphile compatibility.",
+		Meta:        &FieldMeta{Kind: KindPayloadEdge, Table: t},
+	}
+	b.ensureConnection(t)
+	if order := b.Inflect(inflect.KindOrderByTypeName, inflect.Input{Schema: t.Schema, Table: t.Name}); b.Enums[order] != nil {
+		edge.Args = []Arg{{Name: "orderBy", Type: "[" + order + "!]"}}
+	}
+	b.addRootField(obj, edge)
+}
+
 // ForwardRelationName returns the name of the relation field following fk
 // from t to the referenced table: [inflect.KindRelationForward] for a key
 // referencing one row, [inflect.KindRelationForwardMany] for a PERIOD key.
@@ -745,7 +803,7 @@ func (b *Builder) ForwardRelationName(t *introspect.Table, fk *introspect.Foreig
 		taken[b.ForwardRelationName(t, other)] = true
 	}
 	if taken[name] {
-		return coreinflect.LowerCamel(coreinflect.Singularize(fk.RefTable)) + "By" + coreinflect.ByColumns(fk.Columns)
+		return fallbackRelationName(fk)
 	}
 	return name
 }
@@ -1127,10 +1185,12 @@ func (b *Builder) addMutations(t *introspect.Table, filterName string) {
 	payload := func(verb string) string {
 		name := b.Inflect(inflect.KindPayloadTypeName, inflect.Input{Schema: t.Schema, Table: t.Name, Column: verb})
 		if _, ok := b.Objects[name]; !ok {
-			b.Objects[name] = &Object{Name: name, Fields: []*Field{
+			obj := &Object{Name: name, Fields: []*Field{
 				{Name: rowField, Type: typeName, Meta: &FieldMeta{Kind: KindPayloadRow, Table: t}},
 				{Name: "clientMutationId", Type: "String", Meta: &FieldMeta{Kind: KindClientMutationID}},
 			}}
+			b.addPayloadFields(obj, t)
+			b.Objects[name] = obj
 		}
 		return name
 	}
@@ -1140,11 +1200,13 @@ func (b *Builder) addMutations(t *introspect.Table, filterName string) {
 		name := b.Inflect(inflect.KindPayloadTypeName, inflect.Input{Schema: t.Schema, Table: t.Name, Column: verb})
 		if _, ok := b.Objects[name]; !ok {
 			rowsField := coreinflect.LowerCamel(coreinflect.Pluralize(typeName))
-			b.Objects[name] = &Object{Name: name, Fields: []*Field{
+			obj := &Object{Name: name, Fields: []*Field{
 				{Name: rowsField, Type: "[" + typeName + "!]!", Meta: &FieldMeta{Kind: KindPayloadRows, Table: t}},
 				{Name: "affectedCount", Type: "Int!", Meta: &FieldMeta{Kind: KindPayloadCount}},
 				{Name: "clientMutationId", Type: "String", Meta: &FieldMeta{Kind: KindClientMutationID}},
 			}}
+			b.addPayloadFields(obj, nil)
+			b.Objects[name] = obj
 		}
 		return name
 	}
@@ -1388,8 +1450,9 @@ func (b *Builder) addFunctions() {
 		}
 		fieldName := b.Inflect(inflect.KindFunctionField, inflect.Input{Schema: f.Schema, Function: f.Name})
 		if f.Volatility == introspect.VolatilityVolatile {
-			// Volatile functions are mutations with the Relay-classic shape:
-			// fn(input: FnInput!): FnPayload! { result clientMutationId }.
+			// Volatile functions are mutations with PostGraphile's payload
+			// shape: fn(input: FnInput!): FnPayload! { <result>
+			// clientMutationId query ... }.
 			inputName := b.Inflect(inflect.KindFunctionInput, inflect.Input{Schema: f.Schema, Function: f.Name})
 			payloadName := b.Inflect(inflect.KindFunctionPayload, inflect.Input{Schema: f.Schema, Function: f.Name})
 			if _, dup := b.Inputs[inputName]; dup {
@@ -1413,14 +1476,25 @@ func (b *Builder) addFunctions() {
 			in.AddField(&InputField{Name: "clientMutationId", Type: "String"})
 			b.Inputs[inputName] = in
 
-			resultType := retBase
-			if f.ReturnsSet {
-				resultType = "[" + resultType + "!]"
+			payload := &Object{Name: payloadName}
+			if f.ReturnType != "void" {
+				resultType := retType
+				if f.ReturnsSet {
+					resultType = "[" + retBase + "!]"
+				}
+				payload.AddField(&Field{
+					Name: b.functionResultField(f, retType),
+					Type: resultType,
+					Meta: &FieldMeta{Kind: KindPayloadResult, Function: f},
+				})
 			}
-			b.Objects[payloadName] = &Object{Name: payloadName, Fields: []*Field{
-				{Name: "result", Type: resultType, Meta: &FieldMeta{Kind: KindPayloadResult, Function: f}},
-				{Name: "clientMutationId", Type: "String", Meta: &FieldMeta{Kind: KindClientMutationID}},
-			}}
+			b.addRootField(payload, &Field{Name: "clientMutationId", Type: "String", Meta: &FieldMeta{Kind: KindClientMutationID}})
+			var row *introspect.Table
+			if !f.ReturnsSet {
+				row = b.Catalog.Table(f.ReturnTypeSchema, f.ReturnType)
+			}
+			b.addPayloadFields(payload, row)
+			b.Objects[payloadName] = payload
 			b.addRootField(b.Mutation, &Field{
 				Name:        fieldName,
 				Type:        payloadName + "!",
@@ -1438,6 +1512,30 @@ func (b *Builder) addFunctions() {
 			Meta:        &FieldMeta{Kind: KindFunction, Function: f},
 		})
 	}
+}
+
+// functionResultField names the result field of volatile function f's
+// payload (inflect.KindFunctionResultField) from its GraphQL type retType. A
+// JWT-minting function is named after its composite, not the String token.
+func (b *Builder) functionResultField(f *introspect.Function, retType string) string {
+	in := inflect.Input{
+		Schema:   f.Schema,
+		Function: f.Name,
+		Value:    strings.Trim(retType, "[]!"),
+		IsList:   strings.HasPrefix(retType, "["),
+	}
+	if len(f.ReturnColumns) == 1 {
+		in.Column = f.ReturnColumns[0].Name
+	}
+	if f.ReturnType == "record" && len(f.ReturnColumns) > 1 {
+		in.Value = ""
+	}
+	if key := tableKey(f.ReturnTypeSchema, f.ReturnType); key == b.Options.JWTType {
+		if tn, ok := b.TypeForComposite[key]; ok {
+			in.Value = tn
+		}
+	}
+	return b.Inflect(inflect.KindFunctionResultField, in)
 }
 
 // functionArgs maps function parameters to GraphQL field arguments. All are

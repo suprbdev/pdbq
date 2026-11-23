@@ -1,18 +1,66 @@
 mutation {
   addNumbers(input: {a: 2, b: 40, clientMutationId: "cm-1"}) {
     __typename
-    result
+    integer
     clientMutationId
   }
   publishPost(input: {postId: 7}) {
-    result {
+    post {
       title
       author {
         email
       }
     }
+    author {
+      email
+    }
+    postEdge(orderBy: [TITLE_ASC]) {
+      __typename
+      cursor
+      node {
+        id
+      }
+    }
+    query {
+      __typename
+      postById(id: 7) {
+        published
+      }
+    }
+  }
+  unpublishPost(input: {postId: 7, clientMutationId: "cm-2"}) {
+    clientMutationId
+    author {
+      id
+    }
   }
   retryProbe(input: {}) {
     clientMutationId
+  }
+  publishPosts(input: {postIds: [1, 2]}) {
+    posts {
+      id
+      author {
+        email
+      }
+    }
+    query {
+      allPosts(first: 1) {
+        totalCount
+      }
+    }
+  }
+  touchPost(input: {postId: 1}) {
+    query {
+      userById(id: 1) {
+        email
+      }
+    }
+  }
+  bumpBalance(input: {userId: 1}) {
+    newBalance
+  }
+  postTitleList(input: {postIds: [1]}) {
+    strings
   }
 }

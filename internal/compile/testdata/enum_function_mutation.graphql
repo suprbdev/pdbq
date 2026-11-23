@@ -1,6 +1,6 @@
 mutation {
   bumpMood(input: {m: SAD}) {
-    result
+    mood
     clientMutationId
   }
 }

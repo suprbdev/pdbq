@@ -80,6 +80,12 @@ const (
 	// KindListenRelatedNodeID is ListenPayload.relatedNodeId: the nodeId
 	// encoded from the payload's __node__.
 	KindListenRelatedNodeID FieldKind = "listen_related_node_id"
+	// KindPayloadQuery is the query: Query field of a mutation payload; its
+	// selections compile like root query fields, in the same statement.
+	KindPayloadQuery FieldKind = "payload_query"
+	// KindPayloadEdge is the <row>Edge field of a payload carrying one row of
+	// Table: an edge whose cursor is the row's nodeId.
+	KindPayloadEdge FieldKind = "payload_edge"
 )
 
 // FieldMeta binds a GraphQL field to the catalog for SQL compilation.

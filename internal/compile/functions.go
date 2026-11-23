@@ -228,10 +228,15 @@ func (s *stmt) function(meta *schema.FieldMeta, f *ast.Field) (string, error) {
 		s.fnValueJSON("__fn.v", fn, f.SelectionSet), call), nil
 }
 
-// functionMutation compiles a volatile function with the Relay-classic shape
-// fn(input: FnInput!): FnPayload! { result clientMutationId }. The call sits
-// in the FROM clause so it executes exactly once, whether or not `result` is
-// selected.
+// functionMutation compiles a volatile function with PostGraphile's payload
+// shape fn(input: FnInput!): FnPayload! { <result> clientMutationId query
+// ... }. The call sits in the FROM clause so it executes exactly once,
+// whatever the payload selects. A function returning one table row is the
+// payload row: its relations and edge read the returned row.
+//
+// The statement's own reads (relations, query) use the snapshot taken when
+// it started, so they do not see what the function wrote; only the result
+// itself carries the function's changes.
 func (s *stmt) functionMutation(meta *schema.FieldMeta, f *ast.Field) (string, error) {
 	fn := meta.Function
 	input, _ := s.argValue(f, "input")
@@ -242,57 +247,41 @@ func (s *stmt) functionMutation(meta *schema.FieldMeta, f *ast.Field) (string, e
 	}
 
 	payloadType := fieldTypeName(f)
-	cmid, hasCmid := "", false
-	if id, ok := inputObj["clientMutationId"].(string); ok {
-		cmid, hasCmid = id, true
-	}
-
+	fields := s.expandFor(f.SelectionSet, payloadType)
 	var resultField *ast.Field
-	var pairs []string
-	for _, sub := range s.expandFor(f.SelectionSet, payloadType) {
-		if sub.Name == "__typename" {
-			pairs = append(pairs, quoteLiteral(sub.Alias), quoteLiteral(payloadType)+"::text")
-			continue
-		}
-		subMeta := s.fieldMeta(payloadType, sub.Name)
-		if subMeta == nil {
-			continue
-		}
-		switch subMeta.Kind {
-		case schema.KindPayloadResult:
+	for _, sub := range fields {
+		if m := s.fieldMeta(payloadType, sub.Name); m != nil && m.Kind == schema.KindPayloadResult {
 			resultField = sub
-		case schema.KindClientMutationID:
-			expr := "NULL::text"
-			if hasCmid {
-				expr = s.param(cmid) + "::text"
-			}
-			pairs = append(pairs, quoteLiteral(sub.Alias), expr)
 		}
 	}
-
 	shape, comp := fnScalar, (*introspect.Composite)(nil)
 	var resultSel ast.SelectionSet
 	if resultField != nil {
 		resultSel = resultField.SelectionSet
-		shape, comp = s.fnResultShape(fn, resultField.SelectionSet)
+		shape, comp = s.fnResultShape(fn, resultSel)
+	}
+	var row *introspect.Table
+	if !fn.ReturnsSet {
+		row = s.c.Built.Catalog.Table(fn.ReturnTypeSchema, fn.ReturnType)
 	}
 	// Pick the row source (always containing the call) and the result
 	// expression per return shape.
-	var from, resultExpr string
+	var from, resultExpr, alias string
+	var laterals []string
 	switch {
 	case fn.ReturnsSet:
 		switch shape {
 		case fnRows:
-			alias := s.alias("t")
-			jsonExpr, laterals, err := s.rowJSONAs(s.rowsTypeName(fn, resultField), resultField.SelectionSet, alias, 1)
+			rowAlias := s.alias("t")
+			jsonExpr, lats, err := s.rowJSONAs(s.rowsTypeName(fn, resultField), resultSel, rowAlias, 1)
 			if err != nil {
 				return "", err
 			}
 			sub := s.alias("s")
 			from = fmt.Sprintf("(SELECT coalesce(json_agg(%s.data), '[]'::json) AS data FROM (\n%s\n) AS %s) AS __agg",
-				sub, indent(fmt.Sprintf("SELECT %s AS data\nFROM %s AS %s%s", jsonExpr, call, alias, joinLaterals(laterals))), sub)
+				sub, indent(fmt.Sprintf("SELECT %s AS data\nFROM %s AS %s%s", jsonExpr, call, rowAlias, joinLaterals(lats))), sub)
 		case fnComposite:
-			expr, err := s.fnCompositeJSON("__v.v", fn, comp, resultField.SelectionSet, 1)
+			expr, err := s.fnCompositeJSON("__v.v", fn, comp, resultSel, 1)
 			if err != nil {
 				return "", err
 			}
@@ -302,32 +291,69 @@ func (s *stmt) functionMutation(meta *schema.FieldMeta, f *ast.Field) (string, e
 				s.fnValueJSON("__v", fn, resultSel), call)
 		}
 		resultExpr = "__agg.data"
-	case fn.ReturnType == "void":
-		from = fmt.Sprintf("(SELECT %s AS v) AS __fn", call)
-		resultExpr = "to_json(true)"
-	case shape == fnRows:
-		alias := s.alias("t")
-		jsonExpr, laterals, err := s.rowJSONAs(s.rowsTypeName(fn, resultField), resultField.SelectionSet, alias, 1)
-		if err != nil {
-			return "", err
+	case row != nil || shape == fnRows:
+		alias = s.alias("t")
+		from = call + " AS " + alias
+		if resultField != nil {
+			jsonExpr, lats, err := s.rowJSONAs(s.rowsTypeName(fn, resultField), resultSel, alias, 1)
+			if err != nil {
+				return "", err
+			}
+			laterals = append(laterals, lats...)
+			resultExpr = nullRow(alias, jsonExpr)
 		}
-		from = fmt.Sprintf("%s AS %s%s", call, alias, joinLaterals(laterals))
-		// NULL row -> result: null, payload row still present.
-		resultExpr = fmt.Sprintf("CASE WHEN %s IS NULL THEN NULL ELSE %s END", alias, jsonExpr)
 	case shape == fnComposite:
 		from = fmt.Sprintf("(SELECT %s AS v) AS __fn", call)
-		resultExpr, err = s.fnCompositeJSON("__fn.v", fn, comp, resultField.SelectionSet, 1)
+		resultExpr, err = s.fnCompositeJSON("__fn.v", fn, comp, resultSel, 1)
 		if err != nil {
 			return "", err
 		}
 	default:
 		from = fmt.Sprintf("(SELECT %s AS v) AS __fn", call)
-		resultExpr = s.fnValueJSON("__fn.v", fn, resultSel)
+		if fn.ReturnType != "void" {
+			resultExpr = s.fnValueJSON("__fn.v", fn, resultSel)
+		}
 	}
-	if resultField != nil {
-		pairs = append(pairs, quoteLiteral(resultField.Alias), resultExpr)
+
+	var pairs []string
+	for _, sub := range fields {
+		key := quoteLiteral(sub.Alias)
+		if sub.Name == "__typename" {
+			pairs = append(pairs, key, quoteLiteral(payloadType)+"::text")
+			continue
+		}
+		subMeta := s.fieldMeta(payloadType, sub.Name)
+		if subMeta == nil {
+			continue
+		}
+		switch subMeta.Kind {
+		case schema.KindPayloadResult:
+			pairs = append(pairs, key, resultExpr)
+		case schema.KindPayloadEdge:
+			expr, lats, err := s.payloadEdge(row, sub, alias)
+			if err != nil {
+				return "", err
+			}
+			pairs = append(pairs, key, nullRow(alias, expr))
+			laterals = append(laterals, lats...)
+		default:
+			expr, lats, ok, err := s.payloadCommon(subMeta, f, sub, alias)
+			if err != nil {
+				return "", err
+			}
+			if ok {
+				pairs = append(pairs, key, expr)
+				laterals = append(laterals, lats...)
+			}
+		}
 	}
-	return fmt.Sprintf("SELECT %s AS data\nFROM %s", buildJSONObject(pairs), from), nil
+	return fmt.Sprintf("SELECT %s AS data\nFROM %s%s", buildJSONObject(pairs), from, joinLaterals(laterals)), nil
+}
+
+// nullRow yields NULL instead of expr when the function row at alias is
+// NULL (a function returning a NULL row yields one all-null row).
+func nullRow(alias, expr string) string {
+	return fmt.Sprintf("CASE WHEN %s IS NULL THEN NULL ELSE %s END", alias, expr)
 }
 
 // computedJSON compiles a computed-column field: the row-type function called

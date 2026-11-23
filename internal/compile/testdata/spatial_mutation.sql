@@ -4,11 +4,8 @@ WITH __mut AS (
   VALUES ((CASE WHEN left($1, 1) = '{' THEN ST_GeomFromGeoJSON($1) ELSE ST_GeomFromEWKT($1) END)::geography, CASE WHEN left($2, 1) = '{' THEN ST_Transform(ST_GeomFromGeoJSON($2), 4326) ELSE ST_GeomFromEWKT($2) END, $3)
   RETURNING "id", "name", "location", "area"
 )
-SELECT json_build_object('place', __row.data) AS data
-FROM (
-  SELECT json_build_object('id', __t_1."id", 'name', __t_1."name", 'location', ST_AsGeoJSON(__t_1."location")::json, 'areaArea', ST_Area(__t_1."area")) AS data
-  FROM __mut AS __t_1
-) AS __row
+SELECT json_build_object('place', json_build_object('id', __t_1."id", 'name', __t_1."name", 'location', ST_AsGeoJSON(__t_1."location")::json, 'areaArea', ST_Area(__t_1."area"))) AS data
+FROM __mut AS __t_1
 -- args: ["SRID=4326;POLYGON((-0.130 51.507,-0.126 51.507,-0.126 51.509,-0.130 51.507))","{\"coordinates\":[-0.1281,51.508],\"type\":\"Point\"}","Trafalgar Square"]
 
 -- field: updatePlaceById
@@ -18,10 +15,7 @@ WITH __mut AS (
   WHERE "public"."places"."id" = $2
   RETURNING "id", "location"
 )
-SELECT json_build_object('place', __row.data) AS data
-FROM (
-  SELECT json_build_object('id', __t_1."id", 'location', ST_AsGeoJSON(__t_1."location")::json) AS data
-  FROM __mut AS __t_1
-) AS __row
+SELECT json_build_object('place', json_build_object('id', __t_1."id", 'location', ST_AsGeoJSON(__t_1."location")::json)) AS data
+FROM __mut AS __t_1
 -- args: ["SRID=4326;POINT(1 2)",1]
 

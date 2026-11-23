@@ -221,51 +221,131 @@ func (s *stmt) clientMutationID(f *ast.Field) (string, bool) {
 	return "", false
 }
 
-// payloadSelect compiles the payload selection (the row field, __typename,
-// and clientMutationId passthrough) against the __mut CTE.
+// payloadSelect compiles a single-row payload selection against the __mut
+// CTE: the row field, its forward relations and edge all read the mutated
+// row under one alias, so __mut yielding no row (an update or delete that
+// matched nothing) yields no payload row either.
 func (s *stmt) payloadSelect(t *introspect.Table, f *ast.Field) (string, error) {
-	payloadType := ""
-	if f.Definition != nil {
-		payloadType = f.Definition.Type.Name()
-	}
-	cmid, hasCmid := s.clientMutationID(f)
-	var rowField *ast.Field
-	var pairs []string
+	payloadType := fieldTypeName(f)
+	alias := s.alias("t")
+	s.mutAliases = append(s.mutAliases, alias)
+	var pairs, laterals []string
 	for _, sub := range s.expandFor(f.SelectionSet, payloadType) {
+		key := quoteLiteral(sub.Alias)
 		if sub.Name == "__typename" {
-			pairs = append(pairs, quoteLiteral(sub.Alias), quoteLiteral(payloadType)+"::text")
+			pairs = append(pairs, key, quoteLiteral(payloadType)+"::text")
 			continue
 		}
 		meta := s.fieldMeta(payloadType, sub.Name)
 		if meta == nil {
 			continue
 		}
+		var expr string
+		var lats []string
+		var err error
 		switch meta.Kind {
 		case schema.KindPayloadRow:
-			rowField = sub
-			pairs = append(pairs, quoteLiteral(sub.Alias), "__row.data")
-		case schema.KindClientMutationID:
-			expr := "NULL::text"
-			if hasCmid {
-				expr = s.param(cmid) + "::text"
+			expr, lats, err = s.rowJSON(t, sub.SelectionSet, alias, 1)
+		case schema.KindPayloadEdge:
+			expr, lats, err = s.payloadEdge(t, sub, alias)
+		default:
+			var ok bool
+			expr, lats, ok, err = s.payloadCommon(meta, f, sub, alias)
+			if !ok {
+				continue
 			}
-			pairs = append(pairs, quoteLiteral(sub.Alias), expr)
+		}
+		if err != nil {
+			return "", err
+		}
+		pairs = append(pairs, key, expr)
+		laterals = append(laterals, lats...)
+	}
+	return fmt.Sprintf("SELECT %s AS data\nFROM __mut AS %s%s", buildJSONObject(pairs), alias, joinLaterals(laterals)), nil
+}
+
+// payloadCommon compiles the field f of the payload of mutation field root
+// when its kind does not depend on the mutation: clientMutationId, query,
+// and the forward relations of the payload row read at alias. ok is false
+// for any other field.
+func (s *stmt) payloadCommon(meta *schema.FieldMeta, root, f *ast.Field, alias string) (string, []string, bool, error) {
+	switch meta.Kind {
+	case schema.KindClientMutationID:
+		return s.clientMutationIDExpr(root), nil, true, nil
+	case schema.KindPayloadQuery:
+		expr, err := s.payloadQuery(f)
+		return expr, nil, true, err
+	case schema.KindRelationForward:
+		expr, lat, err := s.forwardRelation(meta, f, alias, 2)
+		return expr, []string{lat}, true, err
+	}
+	return "", nil, false, nil
+}
+
+// payloadEdge compiles a payload's <row>Edge over the row of t at alias.
+// The cursor is the row's nodeId, which is the keyset cursor of every
+// ordering of t's connections, so the edge's orderBy argument does not
+// change it.
+func (s *stmt) payloadEdge(t *introspect.Table, f *ast.Field, alias string) (string, []string, error) {
+	typeName := s.c.Built.TypeForTable[t.Schema+"."+t.Name]
+	edgeType := typeName + "Edge"
+	var pairs, laterals []string
+	for _, ef := range s.expandFor(f.SelectionSet, edgeType) {
+		key := quoteLiteral(ef.Alias)
+		switch ef.Name {
+		case "__typename":
+			pairs = append(pairs, key, quoteLiteral(edgeType)+"::text")
+		case "cursor":
+			pairs = append(pairs, key, nodeIDSQL(typeName, t, alias))
+		case "node":
+			expr, lats, err := s.rowJSON(t, ef.SelectionSet, alias, 2)
+			if err != nil {
+				return "", nil, err
+			}
+			pairs = append(pairs, key, expr)
+			laterals = append(laterals, lats...)
 		}
 	}
-	if rowField == nil {
-		// Payload selected no row — still execute the DML CTE.
-		return fmt.Sprintf("SELECT %s AS data FROM __mut", buildJSONObject(pairs)), nil
+	return buildJSONObject(pairs), laterals, nil
+}
+
+// payloadQuery compiles a payload's query field: each Query field it
+// selects compiles as it would at the root and is embedded as a scalar
+// subquery (a lookup matching no row yields null), so the payload reads it
+// in the mutation's own statement. Those reads honour the statement's
+// overrides, so a table mutation's query field sees the mutated table as
+// it stands after the DML, like the payload's relations do.
+func (s *stmt) payloadQuery(f *ast.Field) (string, error) {
+	var pairs []string
+	for _, sub := range s.expandFor(f.SelectionSet, "Query") {
+		key := quoteLiteral(sub.Alias)
+		if sub.Name == "__typename" {
+			pairs = append(pairs, key, "'Query'::text")
+			continue
+		}
+		meta := s.fieldMeta("Query", sub.Name)
+		if meta == nil {
+			return "", errUser("%s.%s cannot be selected in a mutation payload", f.Alias, sub.Name)
+		}
+		sql, err := s.rootField(meta, sub)
+		if err != nil {
+			return "", err
+		}
+		q := s.alias("q")
+		pairs = append(pairs, key, fmt.Sprintf("(SELECT %s.data FROM (\n%s\n) AS %s)", q, indent(sql), q))
 	}
-	alias := s.alias("t")
-	s.mutAliases = append(s.mutAliases, alias)
-	jsonExpr, laterals, err := s.rowJSONFromCTE(t, rowField.SelectionSet, alias)
-	if err != nil {
-		return "", err
+	return buildJSONObject(pairs), nil
+}
+
+// clientMutationIDExpr renders the clientMutationId the client sent with
+// mutation field f (see clientMutationID) as a text parameter, or a NULL
+// literal.
+func (s *stmt) clientMutationIDExpr(f *ast.Field) string {
+	id, ok := s.clientMutationID(f)
+	if !ok {
+		return "NULL::text"
 	}
-	return fmt.Sprintf("SELECT %s AS data\nFROM (\n%s\n) AS __row",
-		buildJSONObject(pairs),
-		indent(fmt.Sprintf("SELECT %s AS data\nFROM __mut AS %s%s", jsonExpr, alias, joinLaterals(laterals))),
-	), nil
+	return s.param(id) + "::text"
 }
 
 // payloadSelectMany compiles a bulk-mutation payload against the __mut CTE:
@@ -273,11 +353,7 @@ func (s *stmt) payloadSelect(t *introspect.Table, f *ast.Field) (string, error) 
 // Aggregates without GROUP BY always yield one row, so a bulk statement never
 // maps to "no row matched" even when nothing was affected.
 func (s *stmt) payloadSelectMany(t *introspect.Table, f *ast.Field) (string, error) {
-	payloadType := ""
-	if f.Definition != nil {
-		payloadType = f.Definition.Type.Name()
-	}
-	cmid, hasCmid := s.clientMutationID(f)
+	payloadType := fieldTypeName(f)
 	var pairs []string
 	for _, sub := range s.expandFor(f.SelectionSet, payloadType) {
 		if sub.Name == "__typename" {
@@ -304,12 +380,14 @@ func (s *stmt) payloadSelectMany(t *introspect.Table, f *ast.Field) (string, err
 				sub2))
 		case schema.KindPayloadCount:
 			pairs = append(pairs, quoteLiteral(sub.Alias), "(SELECT count(*) FROM __mut)")
-		case schema.KindClientMutationID:
-			expr := "NULL::text"
-			if hasCmid {
-				expr = s.param(cmid) + "::text"
+		default:
+			expr, _, ok, err := s.payloadCommon(meta, f, sub, "")
+			if err != nil {
+				return "", err
 			}
-			pairs = append(pairs, quoteLiteral(sub.Alias), expr)
+			if ok {
+				pairs = append(pairs, quoteLiteral(sub.Alias), expr)
+			}
 		}
 	}
 	return fmt.Sprintf("SELECT %s AS data", buildJSONObject(pairs)), nil
@@ -443,11 +521,6 @@ func (s *stmt) bulkFilterCond(t *introspect.Table, f *ast.Field) (string, error)
 		cond = "TRUE"
 	}
 	return cond, nil
-}
-
-// rowJSONFromCTE is rowJSON but with the row source being the __mut CTE.
-func (s *stmt) rowJSONFromCTE(t *introspect.Table, sel ast.SelectionSet, alias string) (string, []string, error) {
-	return s.rowJSON(t, sel, alias, 1)
 }
 
 func (s *stmt) insertCTE(t *introspect.Table, f *ast.Field) (string, error) {

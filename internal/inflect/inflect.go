@@ -8,6 +8,7 @@ package inflect
 
 import (
 	"strings"
+	"unicode"
 
 	"github.com/suprbdev/pdbcore/inflect"
 )
@@ -57,6 +58,12 @@ const (
 	KindComputedField          Kind = "computed_field"            // row-type function -> field on the row's type (postCount)
 	KindFunctionRecord         Kind = "function_record"           // OUT/TABLE-parameter function -> its row object type (SearchStatsRecord)
 	KindDomainTypeName         Kind = "domain_type_name"          // pg domain -> custom scalar (Email)
+	// KindFunctionResultField names the result field of a volatile function's
+	// payload (post, integer, posts). Column carries the function's single
+	// output parameter, if it has exactly one; Value the result's named
+	// GraphQL type, empty for a record of several output parameters; IsList
+	// whether the result is a list (SETOF or an array).
+	KindFunctionResultField Kind = "function_result_field"
 )
 
 // Default is the built-in PostGraphile-flavoured verbose naming.
@@ -116,6 +123,12 @@ func Default(kind Kind, in Input) string {
 		return inflect.UpperCamel(in.Function) + "Input"
 	case KindFunctionPayload:
 		return inflect.UpperCamel(in.Function) + "Payload"
+	case KindFunctionResultField:
+		name := functionResultBase(in)
+		if in.IsList {
+			return inflect.Pluralize(name)
+		}
+		return name
 	case KindComputedField:
 		return inflect.LowerCamel(strings.TrimPrefix(in.Function, in.Table+"_"))
 	case KindFunctionRecord:
@@ -123,3 +136,74 @@ func Default(kind Kind, in Input) string {
 	}
 	return inflect.LowerCamel(in.Table)
 }
+
+// functionResultBase is PostGraphile's singular result field name: the
+// single output parameter's name, a word for the built-in scalars Int,
+// Float, Boolean and String, result for a record, and otherwise the
+// lowerCamel type name.
+func functionResultBase(in Input) string {
+	if in.Column != "" {
+		return inflect.LowerCamel(in.Column)
+	}
+	switch in.Value {
+	case "":
+		return "result"
+	case "Int":
+		return "integer"
+	case "Float":
+		return "float"
+	case "Boolean":
+		return "boolean"
+	case "String":
+		return "string"
+	}
+	return CamelWords(in.Value)
+}
+
+// CamelWords lowerCamel-cases an identifier by its words, splitting at case
+// changes, so acronyms fold like other words: GeoJSON -> geoJson, UUID ->
+// uuid, BigInt -> bigInt, KeyValueHash -> keyValueHash.
+func CamelWords(s string) string {
+	var words []string
+	runes := []rune(s)
+	start := 0
+	for i := 1; i <= len(runes); i++ {
+		if i < len(runes) && !wordBreak(runes, i) {
+			continue
+		}
+		if w := strings.Trim(string(runes[start:i]), "_- "); w != "" {
+			words = append(words, w)
+		}
+		start = i
+	}
+	var b strings.Builder
+	for i, w := range words {
+		w = strings.ToLower(w)
+		if i > 0 {
+			w = strings.ToUpper(w[:1]) + w[1:]
+		}
+		b.WriteString(w)
+	}
+	return b.String()
+}
+
+// wordBreak reports whether a new word starts at runes[i]: after a
+// separator, at a lower-to-upper or letter-digit change, and before the last
+// capital of an acronym followed by a lowercase letter (JSONData -> JSON
+// Data).
+func wordBreak(runes []rune, i int) bool {
+	prev, cur := runes[i-1], runes[i]
+	switch {
+	case isSep(prev) || isSep(cur):
+		return true
+	case unicode.IsLower(prev) && unicode.IsUpper(cur):
+		return true
+	case unicode.IsDigit(prev) != unicode.IsDigit(cur):
+		return true
+	case unicode.IsUpper(prev) && unicode.IsUpper(cur) && i+1 < len(runes) && unicode.IsLower(runes[i+1]):
+		return true
+	}
+	return false
+}
+
+func isSep(r rune) bool { return r == '_' || r == '-' || r == ' ' }

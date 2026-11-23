@@ -103,8 +103,10 @@ func buildAggregates(t testing.TB) *schema.Built {
 
 // functionFixtures are functions the shared pdbcore fixture lacks, added to
 // the golden catalog for the function-call surface: DEFAULT and VARIADIC
-// parameters, OUT/TABLE records, composite returns and arguments, and PostGIS
-// arguments. test/e2e_test.go creates the same functions in a real database.
+// parameters, OUT/TABLE records, composite returns and arguments, PostGIS
+// arguments, and the volatile result shapes of mutation payloads.
+// test/e2e_test.go creates the same functions in a real database, and
+// test/payloads_e2e_test.go equivalents of the volatile ones.
 func functionFixtures() []*introspect.Function {
 	in := func(name, typ, typeSchema string) introspect.FuncArg {
 		return introspect.FuncArg{Name: name, PGType: typ, TypeSchema: typeSchema, Mode: introspect.ArgModeIn}
@@ -160,6 +162,23 @@ func functionFixtures() []*introspect.Function {
 		Args:          []introspect.FuncArg{out("spot", "geometry", "public", introspect.ArgModeInOut), withDefault(in("note", "jsonb", "pg_catalog"), "NULL::jsonb")},
 		ReturnColumns: []introspect.FuncArg{out("visit_id", "int4", "pg_catalog", introspect.ArgModeOut), out("spot", "geometry", "public", introspect.ArgModeInOut)},
 		ReturnType:    "record", ReturnTypeSchema: "pg_catalog", Volatility: introspect.VolatilityVolatile,
+	}, {
+		Schema: "public", Name: "publish_posts",
+		Args:       []introspect.FuncArg{in("post_ids", "_int4", "pg_catalog")},
+		ReturnType: "posts", ReturnTypeSchema: "public", ReturnsSet: true, Volatility: introspect.VolatilityVolatile,
+	}, {
+		Schema: "public", Name: "touch_post",
+		Args:       []introspect.FuncArg{in("post_id", "int4", "pg_catalog")},
+		ReturnType: "void", ReturnTypeSchema: "pg_catalog", Volatility: introspect.VolatilityVolatile,
+	}, {
+		Schema: "public", Name: "bump_balance",
+		Args:          []introspect.FuncArg{in("user_id", "int4", "pg_catalog")},
+		ReturnColumns: []introspect.FuncArg{out("new_balance", "int8", "pg_catalog", introspect.ArgModeOut)},
+		ReturnType:    "int8", ReturnTypeSchema: "pg_catalog", Volatility: introspect.VolatilityVolatile,
+	}, {
+		Schema: "public", Name: "post_title_list",
+		Args:       []introspect.FuncArg{in("post_ids", "_int4", "pg_catalog")},
+		ReturnType: "_text", ReturnTypeSchema: "pg_catalog", Volatility: introspect.VolatilityVolatile,
 	}, {
 		Schema: "public", Name: "users_greeting",
 		Args: []introspect.FuncArg{

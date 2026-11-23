@@ -170,7 +170,7 @@ func TestFunctionMutationShape(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Volatile functions get the Relay-classic mutation shape.
+	// Volatile functions get the PostGraphile mutation shape.
 	for _, want := range []string{
 		"addNumbers(input: AddNumbersInput!): AddNumbersPayload!",
 		"publishPost(input: PublishPostInput!): PublishPostPayload!",
@@ -188,14 +188,32 @@ func TestFunctionMutationShape(t *testing.T) {
 		}
 	}
 	pay := sdlType(built.SDL, "type AddNumbersPayload")
-	for _, want := range []string{"result: Int", "clientMutationId: String"} {
+	for _, want := range []string{"integer: Int", "clientMutationId: String", "query: Query"} {
 		if !strings.Contains(pay, want) {
 			t.Errorf("AddNumbersPayload missing %q:\n%s", want, pay)
 		}
 	}
-	// Table-returning volatile function: result is the table's object type.
-	if !strings.Contains(sdlType(built.SDL, "type PublishPostPayload"), "result: Post") {
-		t.Error("PublishPostPayload result should be Post")
+	// A table-returning volatile function's payload carries the row: named
+	// after its type, with the row's forward relations and edge.
+	pay = sdlType(built.SDL, "type PublishPostPayload")
+	for _, want := range []string{
+		"post: Post", "clientMutationId: String", "query: Query", "author: User",
+		"postEdge(orderBy: [PostsOrderBy!]): PostEdge",
+	} {
+		if !strings.Contains(pay, want) {
+			t.Errorf("PublishPostPayload missing %q:\n%s", want, pay)
+		}
+	}
+	// Table mutation payloads get the same fields; bulk ones only query.
+	pay = sdlType(built.SDL, "type CreatePostPayload")
+	for _, want := range []string{"post: Post", "query: Query", "author: User", "postEdge(orderBy: [PostsOrderBy!]): PostEdge"} {
+		if !strings.Contains(pay, want) {
+			t.Errorf("CreatePostPayload missing %q:\n%s", want, pay)
+		}
+	}
+	pay = sdlType(built.SDL, "type CreateManyPostPayload")
+	if !strings.Contains(pay, "query: Query") || strings.Contains(pay, "postEdge") || strings.Contains(pay, "author") {
+		t.Errorf("CreateManyPostPayload should carry query only:\n%s", pay)
 	}
 	// Stable functions keep flat args on Query.
 	if !strings.Contains(built.SDL, "searchPosts(term: String): [Post!]!") {
@@ -204,8 +222,11 @@ func TestFunctionMutationShape(t *testing.T) {
 	if m := built.Meta["Mutation"]["addNumbers"]; m == nil || m.Kind != schema.KindFunction {
 		t.Error("missing KindFunction metadata on Mutation.addNumbers")
 	}
-	if m := built.Meta["AddNumbersPayload"]["result"]; m == nil || m.Kind != schema.KindPayloadResult {
-		t.Error("missing KindPayloadResult metadata on AddNumbersPayload.result")
+	if m := built.Meta["AddNumbersPayload"]["integer"]; m == nil || m.Kind != schema.KindPayloadResult {
+		t.Error("missing KindPayloadResult metadata on AddNumbersPayload.integer")
+	}
+	if m := built.Meta["PublishPostPayload"]["postEdge"]; m == nil || m.Kind != schema.KindPayloadEdge {
+		t.Error("missing KindPayloadEdge metadata on PublishPostPayload.postEdge")
 	}
 }
 
@@ -418,5 +439,43 @@ func TestSubscriptionsSchema(t *testing.T) {
 	stripped = strings.Replace(stripped, `"""The payload of a listen subscription event."""`+"\n"+payload+"\n\n", "", 1)
 	if stripped != off.SDL {
 		t.Error("enabling subscriptions changed the rest of the schema")
+	}
+}
+
+// TestPayloadRelationFallsBackOnCollision covers a forward relation whose
+// name is taken on the payload (here by query): it takes the
+// <referencedTable>By<Columns> form there, keeping its name on the row type.
+func TestPayloadRelationFallsBackOnCollision(t *testing.T) {
+	cat := testutil.FixtureCatalog()
+	privs := introspect.Privileges{Select: true, Insert: true}
+	cat.Tables = append(cat.Tables, &introspect.Table{
+		Schema: "public", Name: "saved_queries", Kind: introspect.RelTable, Privileges: privs,
+		Columns:    []*introspect.Column{{Name: "id", Position: 1, PGType: "int4", TypeSchema: "pg_catalog", NotNull: true}},
+		PrimaryKey: &introspect.Constraint{Name: "saved_queries_pkey", Columns: []string{"id"}},
+	}, &introspect.Table{
+		Schema: "public", Name: "runs", Kind: introspect.RelTable, Privileges: privs,
+		Columns: []*introspect.Column{
+			{Name: "id", Position: 1, PGType: "int4", TypeSchema: "pg_catalog", NotNull: true},
+			{Name: "query_id", Position: 2, PGType: "int4", TypeSchema: "pg_catalog", NotNull: true},
+		},
+		PrimaryKey: &introspect.Constraint{Name: "runs_pkey", Columns: []string{"id"}},
+		ForeignKeys: []*introspect.ForeignKey{{
+			Name: "runs_query_id_fkey", Columns: []string{"query_id"},
+			RefSchema: "public", RefTable: "saved_queries", RefColumns: []string{"id"},
+		}},
+	})
+	built, err := schema.New(cat, inflect.Default, schema.Options{}).Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run := sdlType(built.SDL, "type Run "); !strings.Contains(run, "query: SavedQuery") {
+		t.Errorf("Run should keep the query relation:\n%s", run)
+	}
+	pay := sdlType(built.SDL, "type CreateRunPayload")
+	if !strings.Contains(pay, "query: Query") || !strings.Contains(pay, "savedQueryByQueryId: SavedQuery") {
+		t.Errorf("CreateRunPayload should keep query and rename the relation:\n%s", pay)
+	}
+	if m := built.Meta["CreateRunPayload"]["savedQueryByQueryId"]; m == nil || m.Kind != schema.KindRelationForward {
+		t.Error("missing relation metadata on CreateRunPayload.savedQueryByQueryId")
 	}
 }
