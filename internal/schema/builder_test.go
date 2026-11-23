@@ -521,3 +521,36 @@ func TestIncrementalDeliverySchema(t *testing.T) {
 		t.Errorf("defer if = %+v", a)
 	}
 }
+
+func TestDeletedNodeIDField(t *testing.T) {
+	build := func(cat *introspect.Catalog) string {
+		t.Helper()
+		b := schema.New(cat, inflect.Default, schema.Options{FilterIndexedOnly: true})
+		built, err := b.Build()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return built.SDL
+	}
+	sdl := build(testutil.FixtureCatalog())
+	for _, typ := range []string{"type DeleteUserPayload", "type DeletePostPayload"} {
+		name := "deletedUserNodeId: ID"
+		if strings.Contains(typ, "Post") {
+			name = "deletedPostNodeId: ID"
+		}
+		if body := sdlType(sdl, typ); !strings.Contains(body, name) {
+			t.Errorf("%s missing %q:\n%s", typ, name, body)
+		}
+	}
+	for _, typ := range []string{"type CreateUserPayload", "type UpdateUserPayload", "type DeleteUsersPayload"} {
+		if body := sdlType(sdl, typ); strings.Contains(body, "deleted") {
+			t.Errorf("%s must not carry a deleted nodeId:\n%s", typ, body)
+		}
+	}
+
+	cat := testutil.FixtureCatalog()
+	cat.Table("public", "users").PrimaryKey = nil
+	if body := sdlType(build(cat), "type DeleteUserPayload"); strings.Contains(body, "deletedUserNodeId") {
+		t.Errorf("table without a nodeId must not get deletedUserNodeId:\n%s", body)
+	}
+}

@@ -29,6 +29,14 @@ The single-row payloads (`CreatePostPayload`, `UpdatePostPayload`,
 | `query` | `Query` | The query root: read anything alongside the mutation's result. |
 | `author`, … | | The row's forward relations, named as on the row type. |
 | `postEdge(orderBy:)` | `PostEdge` | An edge for adding the row to a Relay connection (tables with a primary key). |
+| `deletedPostNodeId` | `ID` | Delete payloads only: the deleted row's `nodeId`, computed in the same statement from the row's keys (tables with a `nodeId`). |
+
+`deleted<Type>NodeId` (`deletedPostNodeId`, the PostGraphile v4 name) is
+named through `inflect.KindPayloadDeletedNodeID`, follows `@name` on the
+table and is not affected by `simple-names`. It is present on every
+`delete<Type>By<Key>` payload, including the by-unique mutations, and absent
+when the table has no `nodeId` (no primary key, or `@omit read` on a key
+column). A delete that matches no row is still the not-found error.
 
 ```graphql
 mutation {
@@ -82,6 +90,13 @@ The result field is named the way PostGraphile names it:
 | an array of any of these | the plural: `integers: [Int!]`, `strings: [String!]` |
 | `void` | no result field |
 | the `rls.auth.jwt_type` composite | the composite's name (`jwt: String`, the signed token) |
+
+Functions returning an anonymous `record` without `OUT` parameters (or
+`SETOF record`) are not exposed, as in PostGraphile: the shape of the row is
+only known per call (PostgreSQL requires a column definition list to read it),
+so there is no sound GraphQL type, and exposing it as `JSON` would not work
+for `SETOF record`. pdbq logs one `skipping function` line at startup for each
+such function; declare `OUT` parameters or `RETURNS TABLE` to expose it.
 
 The `@resultFieldName <name>` [smart comment](smart-comments.md) on the
 function sets the name explicitly; an `InflectionHook` plugin can override
@@ -155,8 +170,6 @@ before the modification.
 
 - Payload relations use pdbq's relation names (`author`, not
   `userByAuthorId`), the same as on the row type.
-- Delete payloads have no `deleted<Type>NodeId` field; select the deleted
-  row's `nodeId` from the row field instead.
 - `query` fields compile in the core compiler: `CompileHook` plugins do not
   see them, and JWT minting applies to a custom mutation's result field, not
   to a token-returning function selected under `query`.

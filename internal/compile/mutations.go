@@ -248,6 +248,8 @@ func (s *stmt) payloadSelect(t *introspect.Table, f *ast.Field) (string, error) 
 			expr, lats, err = s.rowJSON(t, sub.SelectionSet, alias, 1)
 		case schema.KindPayloadEdge:
 			expr, lats, err = s.payloadEdge(t, sub, alias)
+		case schema.KindPayloadDeletedNodeID:
+			expr = nodeIDSQL(s.c.Built.TypeForTable[t.Schema+"."+t.Name], t, alias)
 		default:
 			var ok bool
 			expr, lats, ok, err = s.payloadCommon(meta, f, sub, alias)

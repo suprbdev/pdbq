@@ -83,6 +83,9 @@ const (
 	// KindPayloadQuery is the query: Query field of a mutation payload; its
 	// selections compile like root query fields, in the same statement.
 	KindPayloadQuery FieldKind = "payload_query"
+	// KindPayloadDeletedNodeID is the deleted<Type>NodeId field of a delete
+	// payload: the nodeId of the row the mutation deleted.
+	KindPayloadDeletedNodeID FieldKind = "payload_deleted_node_id"
 	// KindPayloadEdge is the <row>Edge field of a payload carrying one row of
 	// Table: an edge whose cursor is the row's nodeId.
 	KindPayloadEdge FieldKind = "payload_edge"

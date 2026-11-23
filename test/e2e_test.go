@@ -1133,6 +1133,35 @@ func TestMutationsAndRollback(t *testing.T) {
 	}
 	post(t, hs.URL, fmt.Sprintf(`mutation { deleteUserByEmail(email: %q) { user { id } } }`, email("upsert")), nil)
 
+	// deletedUserNodeId equals the nodeId the row had, by key and by unique.
+	for _, byEmail := range []bool{false, true} {
+		em := email(fmt.Sprintf("delnode%t", byEmail))
+		res = post(t, hs.URL, fmt.Sprintf(`mutation { createUser(input: {email: %q, mood: OK}) { user { id nodeId } } }`, em), nil)
+		requireNoErrors(t, res)
+		var created struct {
+			User struct {
+				ID     int    `json:"id"`
+				NodeID string `json:"nodeId"`
+			} `json:"user"`
+		}
+		mustUnmarshal(t, res.Data["createUser"], &created)
+		var del, field string
+		if byEmail {
+			field, del = "deleteUserByEmail", fmt.Sprintf(`deleteUserByEmail(email: %q)`, em)
+		} else {
+			field, del = "deleteUserById", fmt.Sprintf(`deleteUserById(id: %d)`, created.User.ID)
+		}
+		res = post(t, hs.URL, `mutation { `+del+` { deletedUserNodeId } }`, nil)
+		requireNoErrors(t, res)
+		var got struct {
+			Deleted string `json:"deletedUserNodeId"`
+		}
+		mustUnmarshal(t, res.Data[field], &got)
+		if got.Deleted == "" || got.Deleted != created.User.NodeID {
+			t.Errorf("%s: deletedUserNodeId = %q, want %q", field, got.Deleted, created.User.NodeID)
+		}
+	}
+
 	// Bulk mutations: multi-row insert, filtered update, filtered delete.
 	res = post(t, hs.URL, fmt.Sprintf(`mutation {
 		createUsers(input: [

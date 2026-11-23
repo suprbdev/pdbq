@@ -24,7 +24,7 @@ Checklist of PostgreSQL and GraphQL features pdbq supports. Checked = implemente
 - [x] Domains surfaced as named scalars (`schema.domain_scalars`, on by default as in PostGraphile; described by the domain's comment and CHECK constraints; domains over domains, arrays of domains, composite attributes, function arguments and results) — see [Domains](domains.md)
 - [x] Function argument default values (omitted arguments take the `DEFAULT`; shown in the argument description) and `VARIADIC` arguments (a list)
 - [x] Functions with `OUT`/`INOUT`/`RETURNS TABLE` parameters (generated `<Function>Record` object types)
-- [ ] Functions returning an anonymous `record` without output parameters (skipped)
+- [x] Functions returning an anonymous `record` without output parameters: skipped like PostGraphile, with one startup log line per function
 
 ## Type mapping (Postgres → GraphQL)
 
@@ -110,7 +110,7 @@ Checklist of PostgreSQL and GraphQL features pdbq supports. Checked = implemente
 - [x] Upsert (`ON CONFLICT`) — `upsert<Type>By<Unique>(input:)` per non-generated key target; provided non-key columns update from `EXCLUDED`
 - [x] Bulk mutations (`createUsers(input: [...])`, `updateUsers(filter:, patch:)`, `deleteUsers(filter:)`; payload = mutated rows + `affectedCount`)
 - [x] `clientMutationId` passthrough (Relay classic)
-- [ ] `deleted<Type>NodeId` on delete payloads (select the deleted row's `nodeId` instead)
+- [x] `deleted<Type>NodeId` on delete payloads (PostGraphile v4 name, computed from the deleted row in the same statement; absent when the table has no `nodeId`)
 
 ## Functions as fields
 

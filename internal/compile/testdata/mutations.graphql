@@ -9,6 +9,7 @@ mutation {
   }
   deleteUserById(id: 2, clientMutationId: "cm-3") {
     user { id }
+    deletedUserNodeId
     clientMutationId
   }
 }
