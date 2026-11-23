@@ -16,6 +16,9 @@ server:
   subscriptions: true
 ```
 
+Live queries, which re-send a query's result whenever its data changes, build
+on this transport; see [Live queries](live.md).
+
 ## Schema
 
 ```graphql

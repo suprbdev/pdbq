@@ -22,6 +22,7 @@ import (
 	"github.com/suprbdev/pdbcore/pgexec"
 	"github.com/suprbdev/pdbq/internal/config"
 	"github.com/suprbdev/pdbq/internal/exec"
+	"github.com/suprbdev/pdbq/internal/live"
 	"github.com/suprbdev/pdbq/internal/subscribe"
 	"github.com/vektah/gqlparser/v2/ast"
 )
@@ -55,6 +56,8 @@ type Server struct {
 	// hub and topics serve Subscription.listen (server.subscriptions).
 	hub    *subscribe.Hub
 	topics *subscribe.TopicPolicy
+	// live serves live queries (server.live).
+	live *live.Tracker
 
 	wsInitTimeout time.Duration
 	wsMu          sync.Mutex
@@ -69,12 +72,13 @@ type Server struct {
 	prefix string
 }
 
-// wsLimits counts WebSocket connections, accepted or being accepted, and
-// their running operations.
+// wsLimits counts WebSocket connections, accepted or being accepted, their
+// running operations and, among those, their live queries.
 type wsLimits struct {
 	mu    sync.Mutex
 	conns int
 	ops   atomic.Int64
+	live  atomic.Int64
 }
 
 func New(cfg config.Server, authn *Authenticator, ex *exec.Executor, sdl string, log *slog.Logger) (*Server, error) {

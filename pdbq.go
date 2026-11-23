@@ -333,6 +333,7 @@ func (a *App) BuildSchema(ctx context.Context, cat *introspect.Catalog) (*schema
 		DomainScalars:       a.Config.Schema.DomainScalars,
 		JWTType:             a.Config.RLS.Auth.JWTType,
 		Subscriptions:       a.Config.Server.Subscriptions,
+		Live:                a.Config.Server.Live,
 		IncrementalDelivery: a.Config.Server.IncrementalDelivery,
 		Logger:              a.Log,
 	})

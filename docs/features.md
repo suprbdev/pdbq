@@ -71,7 +71,7 @@ Checklist of PostgreSQL and GraphQL features pdbq supports. Checked = implemente
 - [x] Depth limit and cost limit per operation; document limits (tokens, input nesting, expanded selections, field-merge comparisons) checked before validation
 - [x] Aggregate fields — built-in `aggregates` plugin (opt-in, `@graphile/pg-aggregates` shape): connection `aggregates` (`sum distinctCount min max average stddevSample stddevPopulation varianceSample variancePopulation`), `groupedAggregates(groupBy:, having:)` with `_TRUNCATED_TO_HOUR`/`_DAY` timestamp derivatives, `<REL>_COUNT_*`/`<REL>_<AGGREGATE>_<COLUMN>_*` ordering, `aggregates` in to-many relation filters, PostGIS `stExtent stCentroid` (plus opt-in `stUnion stCollect`); one statement, RLS and cost limits apply — see [Aggregates](aggregates.md)
 - [x] Simple subscriptions (PostGraphile `--simple-subscriptions` parity): `subscription { listen(topic:, initialEvent:) { relatedNodeId relatedNode query } }` over LISTEN/NOTIFY, served over WebSocket (`graphql-transport-ws` and legacy `graphql-ws`); one shared LISTEN connection, events resolved under each subscriber's RLS identity; opt-in via `server.subscriptions` — see [Subscriptions](subscriptions.md)
-- [ ] Live queries
+- [x] Live queries (PostGraphile `--live` parity): every `Query` field repeated on `Subscription`, plus `query @live`; tables found by `EXPLAIN`ing the compiled statements under the subscriber's identity (views and RLS policy tables included), change detection by per-table `NOTIFY` triggers installed opt-in, re-run under each subscriber's RLS identity with throttle, a server-wide concurrency bound and result dedupe; per-connection and server caps; opt-in via `server.live` — see [Live queries](live.md)
 
 ## Filtering & ordering
 

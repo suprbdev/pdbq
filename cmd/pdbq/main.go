@@ -11,6 +11,7 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -56,6 +57,13 @@ func configFlags(cmd *cobra.Command) {
 	fs.Int("server.subscriptions_max_connections", 1000, "maximum WebSocket connections at once")
 	fs.Int("server.subscriptions_max_operations", 10000, "maximum operations running at once over all WebSocket connections")
 	fs.Int("server.subscriptions_subscribe_rate", 100, "subscribe messages per second per WebSocket connection (0 disables)")
+	fs.Bool("server.live", false, "serve live queries (requires server.subscriptions)")
+	fs.String("server.live_channel", "pdbq_live", "LISTEN channel and trigger name of live query change notifications")
+	fs.Bool("server.live_install_triggers", true, "install the live query change triggers at startup")
+	fs.Duration("server.live_throttle", 500*time.Millisecond, "shortest time between two runs of one live query")
+	fs.Int("server.live_concurrency", 4, "live query runs in flight at once across the server")
+	fs.Int("server.live_max_per_connection", 10, "maximum live queries per WebSocket connection")
+	fs.Int("server.live_max_operations", 1000, "maximum live queries over all WebSocket connections")
 	fs.StringSlice("schema.schemas", nil, "PostgreSQL schemas to expose")
 	fs.String("schema.cache_path", "", "boot from schema cache file")
 	fs.Bool("schema.expose_partitions", false, "expose partitions of partitioned tables as tables")

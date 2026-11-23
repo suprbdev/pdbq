@@ -86,6 +86,20 @@ server:
   subscriptions_keepalive: "15s"
   # Notifications queued per subscription while its events are being resolved; a subscriber that falls further behind gets an error and its subscription ends.
   subscriptions_buffer: 32
+  # Serve live queries (requires subscriptions): every Query field is repeated on the Subscription root, and a query operation marked with the live directive is live too; the result is re-sent whenever a table it read changes, re-run under the subscriber's identity. Change detection uses per-table triggers notifying live_channel. Off by default; while off the schema is unchanged.
+  live: false
+  # LISTEN channel the change triggers notify with the changed table's OID; it also names the triggers (<channel>, <channel>_truncate) and their function (<channel>_notify). Letters, digits and underscores.
+  live_channel: "pdbq_live"
+  # Install the change triggers at startup (and after watch-mode rebuilds) on the tables of the exposed schemas and the tables their views read; needs table ownership. Disable to install them yourself (see docs/live.md).
+  live_install_triggers: true
+  # Shortest time between two runs of one live query; changes in between are coalesced into one run at the end of the interval.
+  live_throttle: "500ms"
+  # Live query runs in flight at once across the server; further runs wait, so a burst of changes cannot take every pool connection.
+  live_concurrency: 4
+  # Maximum live queries running at once on one WebSocket connection (they also count against subscriptions_max_per_connection).
+  live_max_per_connection: 10
+  # Maximum live queries running at once over all WebSocket connections (they also count against subscriptions_max_operations).
+  live_max_operations: 1000
 
 schema:
   # PostgreSQL schemas to expose.

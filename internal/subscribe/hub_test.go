@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -208,6 +209,25 @@ func TestHubReconnect(t *testing.T) {
 	d.conn(1).notify("ch", "after")
 	if p := recv(t, l); p != "after" {
 		t.Errorf("got %q", p)
+	}
+}
+
+func TestHubReconnectHook(t *testing.T) {
+	d := &fakeDialer{}
+	h := NewHub(d.dial, nil)
+	defer h.Close()
+	var calls atomic.Int32
+	h.SetReconnectHook(func() { calls.Add(1) })
+	if _, err := h.Subscribe(context.Background(), "ch", 4); err != nil {
+		t.Fatal(err)
+	}
+	if n := calls.Load(); n != 0 {
+		t.Fatalf("hook called %d times on the first connection", n)
+	}
+	close(d.conn(0).broken)
+	eventually(t, "reconnect hook", func() bool { return calls.Load() == 1 })
+	if c := d.conn(1); !slices.Contains(c.statements(), `LISTEN "ch"`) {
+		t.Errorf("hook ran before the channels were LISTENed again: %q", c.statements())
 	}
 }
 

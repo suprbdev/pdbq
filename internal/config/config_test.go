@@ -93,6 +93,15 @@ func TestValidateRejects(t *testing.T) {
 		},
 		"inc deferred": func(c *Config) { c.Server.IncrementalDelivery = true; c.Server.IncrementalMaxDeferred = 0 },
 		"inc batch":    func(c *Config) { c.Server.IncrementalDelivery = true; c.Server.IncrementalStreamBatchSize = 0 },
+		"live no subs": func(c *Config) { c.Server.Live = true },
+		"live channel": func(c *Config) { c.Server.Subscriptions, c.Server.Live, c.Server.LiveChannel = true, true, "pdbq-live" },
+		"live channel length": func(c *Config) {
+			c.Server.Subscriptions, c.Server.Live, c.Server.LiveChannel = true, true, strings.Repeat("c", 55)
+		},
+		"live throttle":    func(c *Config) { c.Server.Subscriptions, c.Server.Live, c.Server.LiveThrottle = true, true, -1 },
+		"live concurrency": func(c *Config) { c.Server.Subscriptions, c.Server.Live, c.Server.LiveConcurrency = true, true, 0 },
+		"live per conn":    func(c *Config) { c.Server.Subscriptions, c.Server.Live, c.Server.LiveMaxPerConnection = true, true, 0 },
+		"live ops":         func(c *Config) { c.Server.Subscriptions, c.Server.Live, c.Server.LiveMaxOperations = true, true, 0 },
 	}
 	for name, mutate := range cases {
 		if err := bad(mutate); err == nil {

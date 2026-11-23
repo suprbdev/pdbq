@@ -84,6 +84,7 @@ type Hub struct {
 	dirty       bool
 	interrupt   context.CancelFunc
 	maxPending  int
+	onReconnect func()
 }
 
 // NewHub returns a hub that opens its LISTEN connection with dial.
@@ -116,6 +117,16 @@ func (h *Hub) SetMaxPending(n int) {
 	}
 	h.mu.Lock()
 	h.maxPending = n
+	h.mu.Unlock()
+}
+
+// SetReconnectHook makes the hub call fn each time a replacement LISTEN
+// connection is in place after the previous one failed: notifications sent
+// in between were lost. fn runs on the hub's goroutine and must not block
+// or call back into the hub.
+func (h *Hub) SetReconnectHook(fn func()) {
+	h.mu.Lock()
+	h.onReconnect = fn
 	h.mu.Unlock()
 }
 
@@ -331,10 +342,22 @@ func (h *Hub) failWaitersLocked(err error) {
 func (h *Hub) run() {
 	defer close(h.done)
 	backoff := minBackoff
+	served := false
 	for {
 		conn, err := h.dial(h.ctx)
 		if err == nil {
-			err = h.serve(conn, func() { backoff = minBackoff })
+			err = h.serve(conn, func() {
+				backoff = minBackoff
+				if served {
+					h.mu.Lock()
+					fn := h.onReconnect
+					h.mu.Unlock()
+					if fn != nil {
+						fn()
+					}
+				}
+				served = true
+			})
 			closeCtx, cancel := context.WithTimeout(context.Background(), time.Second)
 			_ = conn.Close(closeCtx)
 			cancel()
