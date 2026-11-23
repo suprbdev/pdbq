@@ -133,6 +133,12 @@ type Built struct {
 	// FilterComputed maps filter input type name -> field name -> the
 	// computed-column function backing it (advanced-filters plugin).
 	FilterComputed map[string]map[string]*introspect.Function
+	// InputAggregates maps input type name -> field name -> the aggregate a
+	// having or relation-aggregate filter field compares (aggregates plugin).
+	InputAggregates map[string]map[string]*Aggregate
+	// GroupBy maps groupBy enum type name -> value name -> grouping
+	// expression (aggregates plugin).
+	GroupBy map[string]map[string]*GroupBy
 	// ContribTypes is the set of contrib output types (FullText,
 	// KeyValueHash, IntRange, ...) the schema declares. A column whose
 	// contrib type is missing here fell back to String because the name
@@ -717,6 +723,13 @@ func (b *Builder) addCondition(t *introspect.Table) string {
 // ordering).
 func (b *Builder) FilterableColumns(t *introspect.Table) []*introspect.Column {
 	return b.filterableColumns(t)
+}
+
+// GraphQLTypeFor returns the GraphQL output type a column-shaped value maps
+// to (without the non-null marker), e.g. BigInt for int8 or [String!] for a
+// text array — exported for SchemaHook plugins typing derived fields.
+func (b *Builder) GraphQLTypeFor(c *introspect.Column) string {
+	return b.gqlTypeForColumn(c)
 }
 
 // FilterOpsInputFor returns (creating if needed) the operator input type for
@@ -1520,6 +1533,8 @@ func (b *Builder) Build() (*Built, error) {
 		InputColumns:        map[string]map[string]string{},
 		FilterRelations:     map[string]map[string]*FilterRelation{},
 		FilterComputed:      map[string]map[string]*introspect.Function{},
+		InputAggregates:     map[string]map[string]*Aggregate{},
+		GroupBy:             map[string]map[string]*GroupBy{},
 		ContribTypes:        b.contribTypes,
 	}
 	for _, e := range b.Catalog.Enums {
@@ -1540,7 +1555,11 @@ func (b *Builder) Build() (*Built, error) {
 	for name, en := range b.Enums {
 		ordered := map[string]OrderSpec{}
 		values := map[string]string{}
+		groups := map[string]*GroupBy{}
 		for _, v := range en.Values {
+			if v.GroupBy != nil {
+				groups[v.Name] = v.GroupBy
+			}
 			if v.Column != "" || v.Computed != nil || v.Relation != nil {
 				ordered[v.Name] = OrderSpec{
 					Column: v.Column, Desc: v.Desc, Computed: v.Computed, Relation: v.Relation,
@@ -1556,6 +1575,9 @@ func (b *Builder) Build() (*Built, error) {
 		}
 		if len(values) > 0 {
 			built.EnumValues[name] = values
+		}
+		if len(groups) > 0 {
+			built.GroupBy[name] = groups
 		}
 	}
 	for name, in := range b.Inputs {
@@ -1575,6 +1597,12 @@ func (b *Builder) Build() (*Built, error) {
 					built.FilterComputed[name] = map[string]*introspect.Function{}
 				}
 				built.FilterComputed[name][f.Name] = f.Computed
+			}
+			if f.Aggregate != nil {
+				if built.InputAggregates[name] == nil {
+					built.InputAggregates[name] = map[string]*Aggregate{}
+				}
+				built.InputAggregates[name][f.Name] = f.Aggregate
 			}
 		}
 		built.InputColumns[name] = cols

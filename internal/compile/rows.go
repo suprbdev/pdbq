@@ -423,7 +423,7 @@ func (s *stmt) connectionJSON(t *introspect.Table, f *ast.Field, extraCond strin
 
 	fields := s.expandFor(f.SelectionSet, connType)
 	var nodesSel, edgeNodeSel ast.SelectionSet
-	var edgeFields, pageInfoFields []*ast.Field
+	var edgeFields, pageInfoFields, aggFields []*ast.Field
 	wantTotal, wantEdges, wantPageInfo := false, false, false
 	for _, sub := range fields {
 		switch sub.Name {
@@ -442,7 +442,14 @@ func (s *stmt) connectionJSON(t *introspect.Table, f *ast.Field, extraCond strin
 		case "pageInfo":
 			wantPageInfo = true
 			pageInfoFields = s.expandFor(sub.SelectionSet, "PageInfo")
+		default:
+			if m := s.fieldMeta(connType, sub.Name); m != nil && (m.Kind == schema.KindAggregates || m.Kind == schema.KindGroupedAggregates) {
+				aggFields = append(aggFields, sub)
+			}
 		}
+	}
+	if len(aggFields) > 0 && len(dcols) > 0 {
+		return "", errUser("aggregates cannot be combined with distinctOn")
 	}
 
 	// ---- inner paginated scan ----
@@ -661,6 +668,13 @@ func (s *stmt) connectionJSON(t *introspect.Table, f *ast.Field, extraCond strin
 			}
 		}
 		pairs = append(pairs, quoteLiteral("pageInfo"), buildJSONObject(piPairs))
+	}
+	for _, af := range aggFields {
+		expr, err := s.connectionAggregate(t, f, af, s.fieldMeta(connType, af.Name), extraCond, depth+1)
+		if err != nil {
+			return "", err
+		}
+		pairs = append(pairs, quoteLiteral(af.Alias), expr)
 	}
 	for _, sf := range fields {
 		if sf.Name == "__typename" {

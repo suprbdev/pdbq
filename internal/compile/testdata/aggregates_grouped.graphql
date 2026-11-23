@@ -1,0 +1,19 @@
+{
+  allPosts(filter: {title: {notEqualTo: "x"}}) {
+    byAuthor: groupedAggregates(
+      groupBy: [AUTHOR_ID]
+      having: {sum: {id: {greaterThan: "1"}}, OR: [{distinctCount: {title: {greaterThan: "0"}}}, {max: {id: {lessThan: 10}}}]}
+    ) {
+      keys
+      sum { id }
+      distinctCount { title }
+    }
+    totalCount
+  }
+  allUsers {
+    byDay: groupedAggregates(groupBy: [CREATED_AT_TRUNCATED_TO_DAY, MOOD]) { keys sum { balance } }
+    byMoods: groupedAggregates(groupBy: [MOODS, TAGS]) { keys }
+    byHour: groupedAggregates(groupBy: [CREATED_AT_TRUNCATED_TO_HOUR], having: {average: {id: {greaterThanOrEqualTo: "1.5"}}, OR: [{}, {max: {id: {equalTo: 1}}}]}) { keys }
+    bySettings: groupedAggregates(groupBy: [SETTINGS]) { keys }
+  }
+}

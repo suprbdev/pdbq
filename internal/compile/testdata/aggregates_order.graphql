@@ -1,0 +1,5 @@
+# variables: {"after": "WyJVc2VyIiwgMV0="}
+query ($after: Cursor) {
+  allUsers(orderBy: [POSTS_BY_AUTHOR_ID_COUNT_DESC, POSTS_BY_AUTHOR_ID_SUM_ID_ASC]) { nodes { id } }
+  page: allUsers(orderBy: [POSTS_BY_AUTHOR_ID_AVERAGE_ID_DESC], first: 2, after: $after) { nodes { id } pageInfo { hasNextPage } }
+}

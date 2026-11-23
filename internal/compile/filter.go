@@ -48,7 +48,8 @@ func (s *stmt) spatialValueExpr(col *introspect.Column, v any) (string, error) {
 }
 
 // filterCond compiles a <Type>Filter input value into a boolean SQL
-// expression over alias, or "" when the filter is empty.
+// expression over alias, or "" when the filter is empty. An empty filter
+// matches every row, so an or list holding one matches every row too.
 func (s *stmt) filterCond(t *introspect.Table, filterType string, v any, alias string) (string, error) {
 	m, ok := v.(map[string]any)
 	if !ok {
@@ -68,6 +69,7 @@ func (s *stmt) filterCond(t *introspect.Table, filterType string, v any, alias s
 				return "", errUser("filter %s must be a list", key)
 			}
 			var subs []string
+			mark := len(s.args)
 			scope := s.rankScope
 			s.rankScope = scope && key == "and"
 			for _, item := range items {
@@ -80,6 +82,10 @@ func (s *stmt) filterCond(t *introspect.Table, filterType string, v any, alias s
 				}
 			}
 			s.rankScope = scope
+			if key == "or" && len(subs) < len(items) {
+				s.args = s.args[:mark]
+				continue
+			}
 			if len(subs) == 0 {
 				continue
 			}
@@ -106,7 +112,7 @@ func (s *stmt) filterCond(t *introspect.Table, filterType string, v any, alias s
 				// compile to EXISTS subqueries, computed columns to function
 				// calls over the current row.
 				if rel := s.c.Built.FilterRelations[filterType][key]; rel != nil {
-					cond, err := s.relationCond(rel, val, alias)
+					cond, err := s.relationCond(rel, s.inputFieldType(filterType, key), val, alias)
 					if err != nil {
 						return "", err
 					}
@@ -193,8 +199,10 @@ func sortedFilterKeys(m map[string]any) []string {
 // {some|none|every} wrapper over it. Existence variants (<rel>Exists /
 // <rel>Exist) take a Boolean: true compiles to a bare EXISTS over the join,
 // false to NOT EXISTS. Like isNull, the Boolean is part of the query shape,
-// not a parameter.
-func (s *stmt) relationCond(rel *schema.FilterRelation, v any, alias string) (string, error) {
+// not a parameter. The wrapper's aggregates field (aggregates plugin,
+// wrapperType names the wrapper input) compares aggregates over the related
+// rows.
+func (s *stmt) relationCond(rel *schema.FilterRelation, wrapperType string, v any, alias string) (string, error) {
 	if rel.Exists {
 		b, ok := v.(bool)
 		if !ok {
@@ -222,6 +230,14 @@ func (s *stmt) relationCond(rel *schema.FilterRelation, v any, alias string) (st
 		switch quant {
 		case "some", "none", "every":
 			cond, err := s.relationExists(rel, val, alias, quant)
+			if err != nil {
+				return "", err
+			}
+			if cond != "" {
+				conds = append(conds, cond)
+			}
+		case "aggregates":
+			cond, err := s.relationAggregateCond(rel, s.inputFieldType(wrapperType, quant), val, alias)
 			if err != nil {
 				return "", err
 			}

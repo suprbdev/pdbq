@@ -45,7 +45,9 @@ time=... msg=listening addr=:8080 graphiql=true
   instead of `allUsers`), `advanced-filters` (filter across relations and
   filter/order by computed columns), and `nested-mutations` (nested
   `create`/`connect` inputs compiled to multi-CTE statements in a forced
-  transaction).
+  transaction). The opt-in `aggregates` plugin adds
+  `@graphile/pg-aggregates`-style `aggregates`/`groupedAggregates` on
+  connections, see [docs/aggregates.md](docs/aggregates.md).
 - **Pipe-friendly CLI** — `echo '{users {email}}' | pdbq query -` prints
   JSON and exits non-zero on GraphQL errors.
 
@@ -100,6 +102,7 @@ See [docs/quickstart.md](docs/quickstart.md) for the full tour.
 | [docs/filtering.md](docs/filtering.md) | Filter operators, indexed-only policy |
 | [docs/temporal.md](docs/temporal.md) | PostgreSQL 18 temporal keys, PERIOD and NOT ENFORCED foreign keys |
 | [docs/postgis.md](docs/postgis.md) | PostGIS: GeoJSON scalar, spatial filters, distance ordering, opt-in typed geometry |
+| [docs/aggregates.md](docs/aggregates.md) | Opt-in aggregates: `aggregates`, `groupedAggregates`/`having`, ordering and filtering by related aggregates, spatial aggregates |
 | [docs/contrib.md](docs/contrib.md) | Full-text search, pg_trgm, hstore, ltree, citext, ranges, inet: types, filters, rank and similarity ordering |
 | [docs/plugins.md](docs/plugins.md) | Hook surfaces, writing a plugin, built-ins as worked examples |
 | [docs/caching.md](docs/caching.md) | Schema cache and CI/CD gates |

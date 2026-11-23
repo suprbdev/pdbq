@@ -12,6 +12,8 @@ import (
 	"github.com/suprbdev/pdbcore/testutil"
 	"github.com/suprbdev/pdbq/internal/config"
 	"github.com/suprbdev/pdbq/internal/inflect"
+	"github.com/suprbdev/pdbq/internal/plugins/advancedfilters"
+	"github.com/suprbdev/pdbq/internal/plugins/aggregates"
 	postgisplugin "github.com/suprbdev/pdbq/internal/plugins/postgis"
 	"github.com/suprbdev/pdbq/internal/schema"
 )
@@ -59,7 +61,7 @@ func costFor(t *testing.T, cat *introspect.Catalog, postgisSettings map[string]a
 	if verr != nil {
 		t.Fatalf("variables: %v", verr)
 	}
-	_, c := measure(op.SelectionSet, doc.Fragments, vars, 100, 1, built.Meta)
+	_, c := measure(op.SelectionSet, doc.Fragments, vars, 100, 1, built)
 	return c
 }
 
@@ -185,5 +187,58 @@ func TestCostTypedGeometryLists(t *testing.T) {
 	got := costFor(t, testutil.FixtureCatalog(), map[string]any{"typed_geometry": true}, query, nil)
 	if limit := config.DefaultConfig().Server.MaxCost; got > limit {
 		t.Errorf("typed polygon page costs %d, over the default max_cost %d", got, limit)
+	}
+}
+
+// aggregateCost is cost against the fixture schema with the aggregates
+// plugin enabled.
+func aggregateCost(t *testing.T, query string) int {
+	t.Helper()
+	b := schema.New(testutil.FixtureCatalog(), inflect.Default, schema.Options{FilterIndexedOnly: true})
+	if err := advancedfilters.New(nil).TransformSchema(context.Background(), b); err != nil {
+		t.Fatal(err)
+	}
+	if err := aggregates.New(map[string]any{"enabled": true}, nil).TransformSchema(context.Background(), b); err != nil {
+		t.Fatal(err)
+	}
+	built, err := b.Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, perr := parser.ParseQuery(&ast.Source{Input: query})
+	if perr != nil {
+		t.Fatalf("parse: %v", perr)
+	}
+	if errs := validator.ValidateWithRules(built.Schema, doc, nil); len(errs) > 0 {
+		t.Fatalf("validate: %v", errs)
+	}
+	_, c := measure(doc.Operations[0].SelectionSet, doc.Fragments, nil, 100, 1, built)
+	return c
+}
+
+// TestCostAggregates pins the aggregate cost model: an aggregates field adds
+// the scan cost (10) to its selection; groupedAggregates, a list of groups,
+// also multiplies its selection by the page-size cap (100); every aggregate
+// orderBy value (tripled under a cursor) and relation-aggregate comparison
+// adds the scan cost to its field.
+func TestCostAggregates(t *testing.T) {
+	for _, tc := range []struct {
+		query string
+		want  int
+	}{
+		{`{ allPosts(first: 1) { totalCount } }`, 2},
+		{`{ allPosts(first: 1) { aggregates { sum { id } } } }`, 14},
+		{`{ allPosts(first: 1) { groupedAggregates(groupBy: [AUTHOR_ID]) { keys } } }`, 112},
+		{`{ allUsers(first: 1, orderBy: [POSTS_BY_AUTHOR_ID_COUNT_DESC]) { totalCount } }`, 12},
+		{`{ allUsers(first: 1, after: "x", orderBy: [POSTS_BY_AUTHOR_ID_COUNT_DESC]) { totalCount } }`, 32},
+		{`{ allUsers(first: 1, filter: {not: {postsByAuthorId: {aggregates: {
+			filter: {title: {startsWith: "a"}}
+			sum: {id: {greaterThan: "1"}}
+			max: {id: {lessThan: 2}}
+		}}}}) { totalCount } }`, 22},
+	} {
+		if got := aggregateCost(t, tc.query); got != tc.want {
+			t.Errorf("cost(%s) = %d, want %d", tc.query, got, tc.want)
+		}
 	}
 }

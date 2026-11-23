@@ -121,7 +121,13 @@ and the core compiler reads the bindings without a `CompileHook`. See
 [PostGIS](postgis.md). The `contrib` plugin (priority 170) does the same for
 full-text, pg_trgm, hstore, ltree, range and inet columns (vocabulary
 operators, `<field>Rank` fields, rank and similarity ordering); see
-[Contrib types](contrib.md).
+[Contrib types](contrib.md). The `aggregates` plugin (priority 180, opt-in)
+adds `@graphile/pg-aggregates`-style connection, grouped, relational-order and
+relational-filter aggregates the same way: `FieldMeta.Aggregate`,
+`InputField.Aggregate`, `EnumValue.GroupBy` and `OrderRelation.Aggregate`
+bindings carry SQL templates the core compiler renders inside the statement,
+and `FieldMeta.ScanCost` feeds the cost estimate; see
+[Aggregates](aggregates.md).
 
 ## Worked example 3: smart-comments
 

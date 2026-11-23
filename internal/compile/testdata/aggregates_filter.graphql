@@ -1,0 +1,15 @@
+{
+  allUsers(filter: {
+    postsByAuthorId: {
+      some: {title: {startsWith: "N"}}
+      aggregates: {
+        filter: {title: {notEqualTo: "Unpublished draft"}}
+        sum: {id: {greaterThan: "2"}}
+        distinctCount: {title: {in: ["1", "2"]}}
+      }
+    }
+    not: {placesByOwnerId: {aggregates: {max: {id: {isNull: true}}}}}
+  }) {
+    nodes { id }
+  }
+}
