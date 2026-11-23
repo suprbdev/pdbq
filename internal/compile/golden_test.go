@@ -24,6 +24,7 @@ import (
 	"github.com/suprbdev/pdbq/internal/plugins/aggregates"
 	contribplugin "github.com/suprbdev/pdbq/internal/plugins/contrib"
 	postgisplugin "github.com/suprbdev/pdbq/internal/plugins/postgis"
+	"github.com/suprbdev/pdbq/internal/plugins/smartcomments"
 	"github.com/suprbdev/pdbq/internal/schema"
 )
 
@@ -91,6 +92,27 @@ func buildAggregates(t testing.TB) *schema.Built {
 	})
 	reg := plugin.NewRegistry(advancedfilters.New(nil), postgisplugin.New(nil),
 		aggregates.New(map[string]any{"enabled": true, "spatial_union_collect": true}, nil))
+	if err := reg.TransformSchema(context.Background(), nil, b); err != nil {
+		t.Fatalf("plugins: %v", err)
+	}
+	built, err := b.Build()
+	if err != nil {
+		t.Fatalf("build schema: %v", err)
+	}
+	return built
+}
+
+// buildOmit compiles the fixture catalog through the smart-comments plugin
+// with users.full_name tagged @omit update, for the omit_* goldens.
+func buildOmit(t testing.TB) *schema.Built {
+	t.Helper()
+	cat := testutil.FixtureCatalog()
+	cat.Table("public", "users").Column("full_name").Comment = "@omit update"
+	reg := plugin.NewRegistry(smartcomments.New())
+	if err := reg.TransformCatalog(context.Background(), nil, cat); err != nil {
+		t.Fatalf("catalog hooks: %v", err)
+	}
+	b := schema.New(cat, reg.Inflector(nil), schema.Options{FilterIndexedOnly: true})
 	if err := reg.TransformSchema(context.Background(), nil, b); err != nil {
 		t.Fatalf("plugins: %v", err)
 	}
@@ -201,7 +223,7 @@ func functionFixtures() []*introspect.Function {
 // against the catalog extended with temporalTables, through the
 // advanced-filters and nested-mutations plugins (nested_* ones too), contrib_*
 // against the contrib fixture catalog with the contrib plugin, aggregates_*
-// against buildAggregates.
+// against buildAggregates, omit_* against buildOmit.
 func TestGolden(t *testing.T) {
 	plain := build(t)
 	aggBuilt := buildAggregates(t)
@@ -209,6 +231,7 @@ func TestGolden(t *testing.T) {
 	temporal, temporalReg := buildTemporal(t)
 	contribBuilt := buildContrib(t)
 	intervalBuilt := buildInterval(t)
+	omitBuilt := buildOmit(t)
 
 	files, err := filepath.Glob(filepath.Join("testdata", "*.graphql"))
 	if err != nil || len(files) == 0 {
@@ -228,6 +251,9 @@ func TestGolden(t *testing.T) {
 		}
 		if strings.HasPrefix(name, "aggregates") {
 			built = aggBuilt
+		}
+		if strings.HasPrefix(name, "omit_") {
+			built = omitBuilt
 		}
 		compileFn := compile.New(built).Compile
 		if strings.HasPrefix(name, "temporal") || strings.HasPrefix(name, "nested_") {

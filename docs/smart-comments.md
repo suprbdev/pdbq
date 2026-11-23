@@ -25,12 +25,12 @@ Tags may repeat where noted. Disable everything with
 
 | Tag | Effect |
 |---|---|
-| `@omit` | Hide the table entirely (type, queries, mutations, relations). |
-| `@omit read` | No root query fields (`allUsers`, `userById`, …); the type stays reachable through relations — useful for detail/join tables. |
+| `@omit` | Hide the table entirely (type, queries, mutations, relations). Functions returning or taking its rows are not exposed either (a warning is logged), and columns of other tables typed as its row type are omitted. |
+| `@omit read` | No root query fields (`allUsers`, `userById`, …, and root query functions returning its rows); the type stays reachable through relations, computed columns and mutations — useful for detail/join tables. |
 | `@omit all` | No connection query (`allUsers`); by-key lookups stay. |
-| `@omit many` | No one-to-many relation fields listing this table's rows on other types. |
+| `@omit many` | No one-to-many surface over this table's rows on other types: relation fields, nested-mutation inputs, reverse relation filters and orderings, relational aggregates. |
 | `@omit create` / `update` / `delete` | Suppress the corresponding mutation (same effect as missing the SQL privilege). |
-| `@omit filter` / `@omit order` | Drop the table's `<Type>Filter` input / `<Types>OrderBy` enum and every argument referencing them. |
+| `@omit filter` / `@omit order` | Drop the table's `<Type>Filter` and `<Type>Condition` inputs / `<Types>OrderBy` enum, the `<Types>DistinctOn` enum, and every argument referencing them. The bulk `update<Types>` / `delete<Types>`, which require a filter, go with `@omit filter`. |
 | `@name <new_name>` | Rename the table for naming purposes. Give a name shaped like a table name (e.g. snake-case plural); every derived name follows: `@name customers` on `users` yields `Customer`, `allCustomers`, `createCustomer`, `CustomerFilter`, … Composes with `simple-names`. |
 | `@primaryKey col[, col]` | Declare a logical primary key on a view (or PK-less table): enables `nodeId`, the by-key lookup, and keyset pagination. Mutations remain gated by real privileges, so views stay read-only. |
 | `@unique col[, col]` | Declare a logical unique constraint: generates the single-row lookup field (repeatable). |
@@ -44,25 +44,60 @@ Tags may repeat where noted. Disable everything with
 
 | Tag | Effect |
 |---|---|
-| `@omit` | Hide the column everywhere (output, inputs, filter, orderBy). The column may still back PKs/FKs. |
-| `@omit read` / `create` / `update` / `filter` / `order` | Hide it from just that surface. |
-| `@name <new_name>` | Rename the field (and its filter field, orderBy values, input fields, lookup arguments). |
+| `@omit` | Hide the column everywhere: every action below. The column may still back foreign keys (relations join through it). |
+| `@omit read` | Hide its value: the output field, PostGIS derived accessors, full-text rank fields, aggregates and group-by keys, distinctOn, distance / rank / similarity orderings, and every key including the column (see [What `@omit read` hides](#what-omit-read-hides)). Filter and orderBy stay. |
+| `@omit create` / `update` | Leave it out of the create input / update patch, nested-mutation inputs included; an upsert never overwrites a column left out of the patch. |
+| `@omit filter` | No filter or condition field, distinctOn value, `having` or relation-aggregate filter. |
+| `@omit order` | No orderBy values (relational and aggregate ones included), distinctOn or group-by value. |
+| `@name <new_name>` | Rename the field (and its filter field, orderBy and distinctOn values, input fields, lookup arguments). |
 | `@deprecated [reason]` | Emit `@deprecated(reason: …)` on the output field. |
 | `@notNull` / `@nullable` | Override introspected nullability — views lose `NOT NULL`, `@notNull` restores the non-null GraphQL type. |
 | `@filterable` (alias `@sortable`) | Admit the column to filtering **and** ordering despite `filters.indexed_only` — the per-column form of `filters.allow_columns`. Combine with `@omit filter` or `@omit order` to expose only one side. |
 | `@omit aggregates` | Leave the column out of every aggregate (`@behavior -groupBy` only out of `groupBy`). See [Aggregates](aggregates.md#smart-comments). |
+
+Composite type attributes (`COMMENT ON COLUMN address.street IS '@omit'`)
+take `@omit read` (no field on the composite's object type) and `@omit
+create` / `update` (no field on its input type, which serves both; writing
+the composite leaves the attribute NULL).
+
+### What `@omit read` hides
+
+A primary key or unique constraint that includes a column hidden from read
+is dropped from the API, with a warning: no by-key lookup, update, delete or
+upsert, no nested-mutation operation addressing rows by it, and, for a
+primary key, no `nodeId` (the type leaves the `Node` interface) and no
+payload edge; connection cursors fall back to offsets rather than encode
+the key. Looking a row up by the hidden value would tell a client whether
+its guess exists. The key's columns stay filterable (indexed) unless
+tagged `@omit filter` too.
+
+A foreign key referencing such a column keeps its relation fields, but
+nested `connect…` / `create` / `disconnect…` operations setting it are not
+generated: they would copy the hidden value into the referencing row's
+readable column.
+
+`@omit read` does not imply `@omit filter` or `@omit order`, as in
+PostGraphile: a column left filterable can still be matched against, so a
+client can recover its value by bisecting with range operators. Use a bare
+`@omit` to hide a value completely.
+
+A type whose every field is hidden keeps a single `_empty: Boolean`
+placeholder (always null), since GraphQL object types need a field.
 
 ### Constraints (`COMMENT ON CONSTRAINT … ON <table>`)
 
 | Tag | Effect |
 |---|---|
 | `@omit` on a foreign key | Remove both relation fields and the relation filters. |
-| `@omit many` on a foreign key | Remove only the one-to-many side. |
+| `@omit many` on a foreign key | Remove only the one-to-many side (relation field, nested-mutation input, reverse relation filter and orderings, relational aggregates). |
 | `@omit filter` on a foreign key | Keep the relation fields, drop the relation filter (both directions). |
 | `@fieldName <name>` / `@foreignFieldName <name>` | Exact GraphQL names for the many-to-one / one-to-many relation fields. Applied through the shared naming pipeline, so `advanced-filters` filter fields and `nested-mutations` input fields align automatically. |
 | `@filterable` on a foreign key | Opt the relation into filtering when `advanced-filters` runs in opt-in mode (below). |
 | `@costMultiplier <n>` on a foreign key | Expected rows per parent on the one-to-many side, used by the cost estimator instead of the requested page size. See [Cost estimation for recursive relations](#cost-estimation-for-recursive-relations). |
-| `@omit` on a unique constraint | Remove the generated by-unique lookup (`userByEmail`); filtering is unaffected (the backing index remains). |
+| `@omit` on a unique constraint | Remove the generated by-unique lookup (`userByEmail`) and mutations; filtering is unaffected (the backing index remains). |
+
+Tags appended to an `@foreignKey` smart comment (`|@omit many`) apply like
+those on a real constraint.
 
 ### Functions
 
@@ -74,6 +109,11 @@ Tags may repeat where noted. Disable everything with
 | `@deprecated [reason]` | Deprecate the generated field(s). |
 | `@omit filter` / `@omit order` on a computed column | Keep the computed field, drop its `advanced-filters` filter field / orderBy values. |
 | `@filterable` (alias `@sortable`) | Opt the computed column in when `advanced-filters` runs in opt-in mode. |
+
+A function returning or taking rows of a table tagged `@omit`, or of a type
+from a schema outside `schema.schemas` that pdbq cannot resolve (typically
+a table's row type), is not exposed and a warning is logged: it would
+otherwise surface as a `String` returning whole rows as JSON.
 
 ### Enums
 

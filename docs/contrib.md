@@ -222,4 +222,6 @@ plugin's surface.
 | `plugins.settings.contrib.ordering` | `true` | `_RANK_` and `_SIMILARITY_` orderBy values and the `similarTo:` argument |
 
 `@omit filter` / `@omit order` on a column removes its filter / ordering
-surface.
+surface; `@omit read` also removes its rank field and its rank and
+similarity orderings, which sort against a reference of the client's
+choosing.

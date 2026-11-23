@@ -52,8 +52,10 @@
 // surface completely while plain GeoJSON read/write keeps working.
 //
 // Per-object control follows the same smart-comment conventions as the rest of
-// the codebase: "@omit filter" / "@omit order" on a spatial column skips its
-// filter / ordering surface.
+// the codebase (package omit): "@omit filter" on a spatial column skips its
+// filter surface, "@omit order" its distance ordering, and "@omit read" its
+// derived accessors and distance ordering (ordering by distance from a
+// client-chosen point reads the value back).
 package postgis
 
 import (
@@ -63,9 +65,9 @@ import (
 	coreinflect "github.com/suprbdev/pdbcore/inflect"
 	"github.com/suprbdev/pdbcore/introspect"
 	"github.com/suprbdev/pdbcore/postgis"
-	"github.com/suprbdev/pdbcore/smarttags"
 	"github.com/suprbdev/pdbq/internal/geotype"
 	"github.com/suprbdev/pdbq/internal/inflect"
+	"github.com/suprbdev/pdbq/internal/omit"
 	"github.com/suprbdev/pdbq/internal/schema"
 )
 
@@ -160,13 +162,6 @@ func spatialColumns(t *introspect.Table) []*introspect.Column {
 	return out
 }
 
-// omits reports which halves of the surface a smart comment removes.
-func omits(comment string) (skipFilter, skipOrder bool) {
-	tags, _ := smarttags.Parse(comment)
-	om, everything := tags.Omits()
-	return everything || om["filter"], everything || om["order"]
-}
-
 // Shared input type names.
 const (
 	bboxInput    = "BBoxInput"
@@ -231,7 +226,7 @@ func (p *Plugin) addSpatialFilters(b *schema.Builder, t *introspect.Table, cols 
 	p.ensureOpsInput(b)
 	allowed := filterableSet(b, t)
 	for _, c := range cols {
-		if skip, _ := omits(c.Comment); skip {
+		if omit.Column(c, omit.Filter) {
 			continue
 		}
 		// Respect the indexed-only policy exactly like scalar columns: a
@@ -290,6 +285,9 @@ func (p *Plugin) addDerivedFields(b *schema.Builder, t *introspect.Table, cols [
 		return
 	}
 	for _, c := range cols {
+		if omit.Column(c, omit.Read) {
+			continue
+		}
 		base := b.Inflect(inflect.KindFieldName, inflect.Input{Schema: t.Schema, Table: t.Name, Column: c.Name})
 		for _, d := range postgis.Deriveds {
 			if !derivedApplies(d, c) {
@@ -341,7 +339,7 @@ func (p *Plugin) addTypedGeometry(b *schema.Builder) {
 			continue
 		}
 		for _, c := range spatialColumns(t) {
-			if c.IsArray {
+			if c.IsArray || omit.Column(c, omit.Read) {
 				continue
 			}
 			name := b.Inflect(inflect.KindFieldName, inflect.Input{Schema: t.Schema, Table: t.Name, Column: c.Name})
@@ -422,7 +420,7 @@ func (p *Plugin) addProjectionArgs(b *schema.Builder, t *introspect.Table, cols 
 	for _, c := range cols {
 		name := b.Inflect(inflect.KindFieldName, inflect.Input{Schema: t.Schema, Table: t.Name, Column: c.Name})
 		f := obj.Field(name)
-		if f == nil {
+		if f == nil || f.Meta == nil || f.Meta.Kind != schema.KindColumn || f.Meta.Column != c {
 			continue
 		}
 		f.Args = append(f.Args,
@@ -446,7 +444,7 @@ func (p *Plugin) addDistanceOrdering(b *schema.Builder, t *introspect.Table, col
 	allowed := filterableSet(b, t)
 	added := false
 	for _, c := range cols {
-		if _, skip := omits(c.Comment); skip {
+		if omit.Column(c, omit.Order) || omit.Column(c, omit.Read) {
 			continue
 		}
 		if !allowed[c.Name] {

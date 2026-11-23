@@ -145,20 +145,24 @@ and `FieldMeta.ScanCost` feeds the cost estimate; see
   catalog: fully-omitted tables/functions/constraints are removed, mutation
   omits clear privilege flags, `@primaryKey`/`@unique`/`@foreignKey` add
   logical constraints, `@notNull` fixes view nullability, `@filterable` adds
-  a synthetic index (the builder's indexed-only allow set).
+  a synthetic index (the builder's indexed-only allow set). It then drops
+  what an omitted object would leave reachable: keys over a column hidden
+  from read, and functions over an omitted table's rows.
 - **InflectionHook** — `@name` replaces the pg identifier at the *head* of
   the naming chain and delegates to `next`, so downstream naming plugins
   (`simple-names`) and the default inflector derive everything from the new
   name; `@fieldName`/`@foreignFieldName` short-circuit with exact names.
   This is why the plugin runs at priority 50 (before `simple-names` at 100).
 - **SchemaHook** — removes what has no catalog representation (per-action
-  table/column omits, orderBy values), marks fields `@deprecated`, and strips
+  table/column omits, orderBy and distinctOn values), marks fields `@deprecated`, and strips
   tag lines from GraphQL descriptions. It runs before `advanced-filters`
   (150), so a dropped `<Type>Filter` is never referenced by relation filters.
 
 `advanced-filters` reads the same tags straight from the catalog (`@omit
 filter` on a FK, opt-in via `relations_opt_in`/`computed_opt_in` settings), so
-per-object filter tuning works even with `smart-comments` disabled.
+per-object filter tuning works even with `smart-comments` disabled. Every
+plugin decides through `internal/omit`, the one place that maps tags to the
+surfaces they hide.
 
 ## Worked example 4: nested-mutations
 
@@ -219,8 +223,12 @@ mutation {
   `update` its patch, `delete` the `DELETE` privilege; operations that set
   an FK (`connect…`, `create`, `disconnect…`) need its columns in the input
   that would otherwise set them (an FK column hidden by `@omit create` or
-  `@omit update` gets no such operation on that input), and `disconnect…`
-  needs all of them nullable (a `NOT NULL` FK has no disconnect fields).
+  `@omit update` gets no such operation on that input) and the referenced
+  columns readable (an FK referencing a column tagged `@omit read` gets none,
+  since they would copy the hidden value into the readable FK column), and
+  `disconnect…` needs all of them nullable (a `NOT NULL` FK has no
+  disconnect fields). `@omit many` on the FK or the referencing table
+  removes the one-to-many nested field.
 - A forward field takes at most one of `create`, `connect…` and
   `disconnect…` (they set this row's FK), plus any `update…` and
   `delete…`, which only reach the row this row references before the

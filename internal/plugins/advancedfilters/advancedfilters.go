@@ -39,8 +39,10 @@
 // plugin is disabled):
 //
 //   - "@omit filter" on a foreign key skips its relation filter (both
-//     directions); "@omit filter" / "@omit order" on a computed function
-//     skips its filter field / orderBy values.
+//     directions); "@omit many" on the foreign key or on the referencing
+//     table skips the reverse relation filter and orderings; "@omit filter"
+//     / "@omit order" on a computed function skips its filter field /
+//     orderBy values.
 //   - with plugins.settings.advanced-filters.relations_opt_in (or
 //     computed_opt_in) set, the default flips: only foreign keys / computed
 //     functions tagged "@filterable" (alias "@sortable") get filter surface.
@@ -60,6 +62,7 @@ import (
 	"github.com/suprbdev/pdbcore/introspect"
 	"github.com/suprbdev/pdbcore/smarttags"
 	"github.com/suprbdev/pdbq/internal/inflect"
+	"github.com/suprbdev/pdbq/internal/omit"
 	"github.com/suprbdev/pdbq/internal/schema"
 )
 
@@ -98,10 +101,9 @@ func New(settings map[string]any) *Plugin {
 // removes, honoring the opt-in mode.
 func filterOmits(comment string, optIn bool) (skipFilter, skipOrder bool) {
 	tags, _ := smarttags.Parse(comment)
-	omits, everything := tags.Omits()
 	optedOut := optIn && !tags.Has("filterable") && !tags.Has("sortable")
-	skipFilter = everything || optedOut || omits["filter"]
-	skipOrder = everything || optedOut || omits["order"]
+	skipFilter = optedOut || omit.Hides(comment, omit.Filter)
+	skipOrder = optedOut || omit.Hides(comment, omit.Order)
 	return skipFilter, skipOrder
 }
 
@@ -177,7 +179,7 @@ func (p *Plugin) addRelationFilters(b *schema.Builder) {
 				if fk.RefSchema != t.Schema || fk.RefTable != t.Name {
 					continue
 				}
-				if skip, _ := filterOmits(fk.Comment, p.relationsOptIn); skip {
+				if skip, _ := filterOmits(fk.Comment, p.relationsOptIn); skip || omit.ManyHidden(child, fk) {
 					continue
 				}
 				childFilter := filterInput(b, child)
@@ -251,7 +253,7 @@ func (p *Plugin) addRelationOrder(b *schema.Builder) {
 				if fk.RefSchema != t.Schema || fk.RefTable != t.Name {
 					continue
 				}
-				if _, skip := filterOmits(fk.Comment, p.relationsOptIn); skip {
+				if _, skip := filterOmits(fk.Comment, p.relationsOptIn); skip || omit.ManyHidden(child, fk) {
 					continue
 				}
 				relName := b.Inflect(inflect.KindRelationBackward, inflect.Input{

@@ -13,9 +13,11 @@
 //
 //   - @omit [actions] — on tables (bare, read, all, many, create, update,
 //     delete, filter, order), columns (bare, read, create, update, filter,
-//     order), foreign keys (bare, many, filter), unique constraints (bare),
-//     and functions (bare, plus filter/order for computed columns, honored by
-//     advanced-filters).
+//     order), composite type attributes (bare, read, create, update),
+//     foreign keys (bare, many, filter), unique constraints (bare), and
+//     functions (bare, plus filter/order for computed columns, honored by
+//     advanced-filters). Package omit decides which surface each action
+//     covers.
 //   - @name <new_name> — rename a table, column, enum, domain, or function;
 //     the value replaces the pg name at the start of the inflection
 //     pipeline, so every derived name (type, queries, mutations, filters)
@@ -55,6 +57,7 @@ package smartcomments
 import (
 	"context"
 	"log/slog"
+	"slices"
 	"strings"
 
 	coreinflect "github.com/suprbdev/pdbcore/inflect"
@@ -62,6 +65,7 @@ import (
 	"github.com/suprbdev/pdbcore/smartcomments/catalog"
 	"github.com/suprbdev/pdbcore/smarttags"
 	"github.com/suprbdev/pdbq/internal/inflect"
+	"github.com/suprbdev/pdbq/internal/omit"
 	"github.com/suprbdev/pdbq/internal/schema"
 )
 
@@ -70,6 +74,8 @@ import (
 type Plugin struct {
 	*catalog.Hook
 	log *slog.Logger
+	// notices are the catalog-time decisions TransformSchema logs.
+	notices []notice
 }
 
 func New() *Plugin { return &Plugin{Hook: catalog.New(), log: slog.Default()} }
@@ -108,7 +114,7 @@ func (p *Plugin) Inflect(kind inflect.Kind, in inflect.Input, next inflect.Next)
 		in.Table = p.Index().RenamedTable(in.Schema, in.Table)
 	case inflect.KindTypeName, inflect.KindAllRowsField, inflect.KindFilterTypeName,
 		inflect.KindConditionTypeName,
-		inflect.KindOrderByTypeName, inflect.KindCreateMutation, inflect.KindCreateInput,
+		inflect.KindOrderByTypeName, inflect.KindDistinctOnTypeName, inflect.KindCreateMutation, inflect.KindCreateInput,
 		inflect.KindUpdateInput, inflect.KindPayloadTypeName,
 		inflect.KindCreateManyMutation, inflect.KindUpdateManyMutation, inflect.KindDeleteManyMutation:
 		in.Table = p.Index().RenamedTable(in.Schema, in.Table)
@@ -148,11 +154,15 @@ func (p *Plugin) TransformSchema(_ context.Context, b *schema.Builder) error {
 		p.log = b.Options.Logger
 		p.SetLogger(b.Options.Logger)
 	}
+	for _, n := range p.notices {
+		p.log.Warn(n.msg, n.args...)
+	}
 	for _, t := range b.Catalog.Tables {
 		p.applyTableOmits(b, t)
 		p.applyColumnTags(b, t)
 		p.applyRelationOmits(b, t)
 	}
+	p.applyCompositeTags(b)
 	p.applyFunctionTags(b)
 	stripDescriptions(b)
 	return nil
@@ -161,88 +171,110 @@ func (p *Plugin) TransformSchema(_ context.Context, b *schema.Builder) error {
 // applyTableOmits removes generated surface per the table's @omit actions
 // that have no catalog-level representation.
 func (p *Plugin) applyTableOmits(b *schema.Builder, t *introspect.Table) {
-	omits, _ := p.Index().Table(t.Schema, t.Name).Omits()
-	if len(omits) == 0 {
-		return
-	}
-	if omits["read"] || omits["all"] {
+	in := inflect.Input{Schema: t.Schema, Table: t.Name}
+	read, all := omit.Table(t, omit.Read), omit.Table(t, omit.All)
+	if read || all {
 		kept := b.Query.Fields[:0]
 		for _, f := range b.Query.Fields {
 			drop := f.Meta != nil && f.Meta.Table == t &&
 				(f.Meta.Kind == schema.KindConnectionQuery ||
-					(omits["read"] && f.Meta.Kind == schema.KindRowByKey))
+					(read && f.Meta.Kind == schema.KindRowByKey))
+			if read && f.Meta != nil && f.Meta.Kind == schema.KindFunction && returnsRowsOf(f.Meta.Function, t) {
+				p.log.Warn("smart-comments: function not exposed: it returns rows of a table tagged @omit read",
+					"function", f.Meta.Function.Schema+"."+f.Meta.Function.Name, "table", tableKey(t.Schema, t.Name))
+				drop = true
+			}
 			if !drop {
 				kept = append(kept, f)
 			}
 		}
 		b.Query.Fields = kept
 	}
-	if omits["many"] {
+	if omit.Table(t, omit.Many) {
 		removeFields(b, func(f *schema.Field) bool {
 			return f.Meta != nil && f.Meta.Kind == schema.KindRelationBackward && f.Meta.Table == t
 		})
 	}
-	if omits["filter"] {
-		removeInputType(b, b.Inflect(inflect.KindFilterTypeName, inflect.Input{Schema: t.Schema, Table: t.Name}))
-		removeInputType(b, b.Inflect(inflect.KindConditionTypeName, inflect.Input{Schema: t.Schema, Table: t.Name}))
+	if omit.Table(t, omit.Filter) {
+		removeInputType(b, b.Inflect(inflect.KindFilterTypeName, in))
+		removeInputType(b, b.Inflect(inflect.KindConditionTypeName, in))
 	}
-	if omits["order"] {
-		name := b.Inflect(inflect.KindOrderByTypeName, inflect.Input{Schema: t.Schema, Table: t.Name})
-		delete(b.Enums, name)
-		removeArgsOfType(b, name)
+	if omit.Table(t, omit.Order) {
+		removeEnumType(b, b.Inflect(inflect.KindOrderByTypeName, in))
+	}
+	if omit.Table(t, omit.Filter) || omit.Table(t, omit.Order) {
+		removeEnumType(b, b.Inflect(inflect.KindDistinctOnTypeName, in))
 	}
 }
 
-// applyColumnTags handles per-column @omit, @deprecated, and the orderBy enum
-// value rename for @name (the builder derives those value names from the raw
-// pg column name, outside the inflection pipeline).
+// returnsRowsOf reports whether fn returns rows of table t.
+func returnsRowsOf(fn *introspect.Function, t *introspect.Table) bool {
+	return fn != nil && fn.ReturnTypeSchema == t.Schema && strings.TrimPrefix(fn.ReturnType, "_") == t.Name
+}
+
+// applyColumnTags handles per-column @omit, @deprecated, and the orderBy and
+// distinctOn enum value renames for @name (the builder derives those value
+// names from the raw pg column name, outside the inflection pipeline).
 func (p *Plugin) applyColumnTags(b *schema.Builder, t *introspect.Table) {
+	in := inflect.Input{Schema: t.Schema, Table: t.Name}
 	obj := b.Objects[b.TypeForTable[tableKey(t.Schema, t.Name)]]
-	createIn := b.Inputs[b.Inflect(inflect.KindCreateInput, inflect.Input{Schema: t.Schema, Table: t.Name})]
-	updateIn := b.Inputs[b.Inflect(inflect.KindUpdateInput, inflect.Input{Schema: t.Schema, Table: t.Name})]
-	filterIn := b.Inputs[b.Inflect(inflect.KindFilterTypeName, inflect.Input{Schema: t.Schema, Table: t.Name})]
-	conditionIn := b.Inputs[b.Inflect(inflect.KindConditionTypeName, inflect.Input{Schema: t.Schema, Table: t.Name})]
-	orderEnum := b.Enums[b.Inflect(inflect.KindOrderByTypeName, inflect.Input{Schema: t.Schema, Table: t.Name})]
+	createIn := b.Inputs[b.Inflect(inflect.KindCreateInput, in)]
+	updateIn := b.Inputs[b.Inflect(inflect.KindUpdateInput, in)]
+	filterIn := b.Inputs[b.Inflect(inflect.KindFilterTypeName, in)]
+	conditionIn := b.Inputs[b.Inflect(inflect.KindConditionTypeName, in)]
+	orderEnum := b.Enums[b.Inflect(inflect.KindOrderByTypeName, in)]
+	distinctEnum := b.Enums[b.Inflect(inflect.KindDistinctOnTypeName, in)]
 
 	for _, c := range t.Columns {
-		tags := p.Index().Column(t.Schema, t.Name, c.Name)
-		if tags == nil {
-			continue
-		}
-		omits, everything := tags.Omits()
-		omitted := func(action string) bool { return everything || omits[action] }
-
-		if omitted("read") && obj != nil {
+		if omit.Column(c, omit.Read) && obj != nil {
 			p.removeColumnField(obj, c)
 		}
-		if omitted("create") && createIn != nil {
+		if omit.Column(c, omit.Create) && createIn != nil {
 			removeInputColumn(createIn, c.Name)
+			removeFields(b, func(f *schema.Field) bool {
+				return f.Meta != nil && f.Meta.Kind == schema.KindUpsert && f.Meta.Table == t &&
+					slices.Contains(f.Meta.KeyColumns, c.Name)
+			})
 		}
-		if omitted("update") && updateIn != nil {
+		if omit.Column(c, omit.Update) && updateIn != nil {
 			removeInputColumn(updateIn, c.Name)
 		}
-		if omitted("filter") && filterIn != nil {
+		if omit.Column(c, omit.Filter) && filterIn != nil {
 			removeInputColumn(filterIn, c.Name)
 		}
-		if omitted("filter") && conditionIn != nil {
+		if omit.Column(c, omit.Filter) && conditionIn != nil {
 			removeInputColumn(conditionIn, c.Name)
 		}
-		if omitted("order") && orderEnum != nil {
+		if omit.Column(c, omit.Order) && orderEnum != nil {
 			removeOrderValues(orderEnum, c.Name)
 		}
+		if omit.Distinct(c) && distinctEnum != nil {
+			removeOrderValues(distinctEnum, c.Name)
+		}
+		tags := p.Index().Column(t.Schema, t.Name, c.Name)
 		if tags.Has("deprecated") && obj != nil {
 			if f := columnField(obj, c); f != nil {
 				f.Deprecated = deprecationReason(tags)
 			}
 		}
-		if newName := tags.First("name"); newName != "" && orderEnum != nil {
-			renameOrderValues(orderEnum, c.Name, newName)
+		if newName := tags.First("name"); newName != "" {
+			for _, en := range []*schema.Enum{orderEnum, distinctEnum} {
+				if en != nil {
+					renameOrderValues(en, c.Name, newName)
+				}
+			}
 		}
 	}
 	// A condition input holds only column fields (no and/or/not), so omitting
-	// every column would leave an empty input type — invalid SDL. Drop it.
+	// every column would leave an empty input type — invalid SDL. Drop it,
+	// and likewise enums left without values.
 	if conditionIn != nil && len(conditionIn.Fields) == 0 {
 		removeInputType(b, conditionIn.Name)
+	}
+	for _, en := range []*schema.Enum{orderEnum, distinctEnum} {
+		if en != nil && len(en.Values) == 0 {
+			removeEnumType(b, en.Name)
+		}
 	}
 }
 
@@ -250,11 +282,35 @@ func (p *Plugin) applyColumnTags(b *schema.Builder, t *introspect.Table) {
 // resolved at the catalog level; filter omission is advanced-filters' side).
 func (p *Plugin) applyRelationOmits(b *schema.Builder, t *introspect.Table) {
 	for _, fk := range t.ForeignKeys {
-		omits, _ := p.Index().Constraint(t.Schema, fk.Name).Omits()
-		if omits["many"] {
+		if omit.Hides(fk.Comment, omit.Many) {
 			removeFields(b, func(f *schema.Field) bool {
 				return f.Meta != nil && f.Meta.Kind == schema.KindRelationBackward && f.Meta.FK == fk
 			})
+		}
+	}
+}
+
+// applyCompositeTags applies @omit on composite type attributes: read
+// removes the attribute from the composite's object type; create, update
+// (the input type serves both) or a bare @omit remove it from the input
+// type, so writing the composite leaves the attribute NULL.
+func (p *Plugin) applyCompositeTags(b *schema.Builder) {
+	for _, ct := range b.Catalog.Composites {
+		key := tableKey(ct.Schema, ct.Name)
+		obj := b.Objects[b.TypeForComposite[key]]
+		in := b.Inputs[b.InputForComposite[key]]
+		for _, f := range ct.Fields {
+			if omit.Column(f, omit.Read) && obj != nil {
+				p.removeColumnField(obj, f)
+			}
+			if (omit.Column(f, omit.Create) || omit.Column(f, omit.Update)) && in != nil {
+				removeInputColumn(in, f.Name)
+			}
+		}
+		if in != nil && len(in.Fields) == 0 {
+			p.log.Warn("smart-comments: every attribute of the composite is omitted from input; columns of the type are not writable",
+				"type", key)
+			removeInputType(b, in.Name)
 		}
 	}
 }
@@ -278,19 +334,25 @@ func (p *Plugin) applyFunctionTags(b *schema.Builder) {
 	}
 }
 
-// removeColumnField drops the output field bound to c, refusing to empty the
-// type (a fieldless object is invalid SDL).
+// removeColumnField drops the output field bound to c. A type left without
+// fields would be invalid SDL, so its last field gives way to a placeholder
+// that always reads null rather than staying exposed.
 func (p *Plugin) removeColumnField(obj *schema.Object, c *introspect.Column) {
 	f := columnField(obj, c)
 	if f == nil {
 		return
 	}
-	if len(obj.Fields) == 1 {
-		p.log.Warn("smart-comments: @omit would leave type empty, keeping field",
-			"type", obj.Name, "field", f.Name)
-		return
-	}
 	obj.RemoveField(f.Name)
+	if len(obj.Fields) == 0 {
+		p.log.Warn("smart-comments: @omit leaves the type without fields, adding a null placeholder",
+			"type", obj.Name, "field", f.Name)
+		obj.AddField(&schema.Field{
+			Name:        schema.PlaceholderField,
+			Type:        "Boolean",
+			Description: "Always null: every field of this type is hidden by smart comments.",
+			Meta:        &schema.FieldMeta{Kind: schema.KindPlaceholder},
+		})
+	}
 }
 
 func columnField(obj *schema.Object, c *introspect.Column) *schema.Field {
@@ -322,28 +384,58 @@ func removeFields(b *schema.Builder, match func(*schema.Field) bool) {
 	}
 }
 
-// removeInputType deletes an input type and every argument referencing it.
+// removeInputType deletes an input type and every argument and input field
+// referencing it.
 func removeInputType(b *schema.Builder, name string) {
 	if _, ok := b.Inputs[name]; !ok {
 		return
 	}
 	delete(b.Inputs, name)
-	removeArgsOfType(b, name)
+	removeReferences(b, name)
 }
 
-// removeArgsOfType strips arguments whose base type (list/non-null unwrapped)
-// is the given type name from every field.
-func removeArgsOfType(b *schema.Builder, name string) {
+// removeEnumType deletes an enum type and every argument and input field
+// referencing it.
+func removeEnumType(b *schema.Builder, name string) {
+	if _, ok := b.Enums[name]; !ok {
+		return
+	}
+	delete(b.Enums, name)
+	removeReferences(b, name)
+}
+
+// removeReferences strips the arguments and input fields whose base type
+// (list/non-null unwrapped) is the given type name. A field that required
+// the argument (a bulk update or delete's filter) is removed instead: it
+// would otherwise run without the restriction the argument carried.
+func removeReferences(b *schema.Builder, name string) {
 	for _, obj := range b.Objects {
+		fields := obj.Fields[:0]
 		for _, f := range obj.Fields {
-			kept := f.Args[:0]
+			args := f.Args[:0]
+			required := false
 			for _, a := range f.Args {
 				if baseType(a.Type) != name {
-					kept = append(kept, a)
+					args = append(args, a)
+				} else if strings.HasSuffix(a.Type, "!") {
+					required = true
 				}
 			}
-			f.Args = kept
+			f.Args = args
+			if !required {
+				fields = append(fields, f)
+			}
 		}
+		obj.Fields = fields
+	}
+	for _, in := range b.Inputs {
+		kept := in.Fields[:0]
+		for _, f := range in.Fields {
+			if baseType(f.Type) != name {
+				kept = append(kept, f)
+			}
+		}
+		in.Fields = kept
 	}
 }
 
@@ -361,7 +453,8 @@ func removeInputColumn(in *schema.Input, column string) {
 	}
 }
 
-// removeOrderValues drops the ASC/DESC enum values ordering by the column.
+// removeOrderValues drops the enum values ordering (or de-duplicating) by
+// the column.
 func removeOrderValues(en *schema.Enum, column string) {
 	kept := en.Values[:0]
 	for _, v := range en.Values {
