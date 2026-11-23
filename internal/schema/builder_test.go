@@ -326,3 +326,51 @@ func TestPartitionsHiddenByDefault(t *testing.T) {
 		}
 	}
 }
+
+func relnameCatalog() *introspect.Catalog {
+	cat := testutil.FixtureCatalog()
+	cat.Tables = append(cat.Tables, &introspect.Table{
+		Schema: "public", Name: "memos", Kind: introspect.RelTable,
+		Privileges: introspect.Privileges{Select: true, Insert: true},
+		Columns: []*introspect.Column{
+			{Name: "id", Position: 1, PGType: "int4", TypeSchema: "pg_catalog", NotNull: true},
+			{Name: "user_email", Position: 2, PGType: "text", TypeSchema: "pg_catalog", NotNull: true},
+		},
+		PrimaryKey: &introspect.Constraint{Name: "memos_pkey", Columns: []string{"id"}},
+		ForeignKeys: []*introspect.ForeignKey{{
+			Name: "memos_user_email_fkey", Columns: []string{"user_email"},
+			RefSchema: "public", RefTable: "users", RefColumns: []string{"email"},
+		}},
+	})
+	return cat
+}
+
+func TestForwardRelationNameCollidesWithColumn(t *testing.T) {
+	check := func(t *testing.T, b *schema.Builder) {
+		t.Helper()
+		built, err := b.Build()
+		if err != nil {
+			t.Fatal(err)
+		}
+		memo := sdlType(built.SDL, "type Memo ")
+		for _, want := range []string{"userEmail: String!", "userByUserEmail: User"} {
+			if !strings.Contains(memo, want) {
+				t.Errorf("Memo missing %q:\n%s", want, memo)
+			}
+		}
+		if f := built.Meta["Memo"]["userByUserEmail"]; f == nil || f.Kind != schema.KindRelationForward {
+			t.Error("missing forward relation metadata on Memo.userByUserEmail")
+		}
+	}
+	t.Run("default", func(t *testing.T) {
+		check(t, schema.New(relnameCatalog(), inflect.Default, schema.Options{FilterIndexedOnly: true}))
+	})
+	t.Run("simple-names", func(t *testing.T) {
+		reg := plugin.NewRegistry(simplenames.New())
+		cat := relnameCatalog()
+		if err := reg.TransformCatalog(context.Background(), nil, cat); err != nil {
+			t.Fatal(err)
+		}
+		check(t, schema.New(cat, reg.Inflector(nil), schema.Options{FilterIndexedOnly: true}))
+	})
+}

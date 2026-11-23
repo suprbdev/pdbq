@@ -558,12 +558,8 @@ func (b *Builder) addRelations(t *introspect.Table) {
 			})
 			continue
 		}
-		name := b.ForwardRelationName(t, fk)
-		if obj.Field(name) != nil {
-			name += "Row"
-		}
 		b.addRootField(obj, &Field{
-			Name: name,
+			Name: b.ForwardRelationName(t, fk),
 			Type: refType,
 			Meta: &FieldMeta{Kind: KindRelationForward, Table: ref, FK: fk},
 		})
@@ -597,9 +593,30 @@ func (b *Builder) addRelations(t *introspect.Table) {
 // ForwardRelationName returns the name of the relation field following fk
 // from t to the referenced table: [inflect.KindRelationForward] for a key
 // referencing one row, [inflect.KindRelationForwardMany] for a PERIOD key.
-// SchemaHook plugins adding surface keyed by the relation (filters, nested
-// inputs) use it so their names line up with the selection field.
+// When that name equals one of t's column fields or the name of an earlier
+// foreign key's relation, it falls back to <referencedTable>By<Columns>
+// (PostGraphile's default form). SchemaHook plugins adding surface keyed by
+// the relation (filters, nested inputs) use it so their names line up with
+// the selection field.
 func (b *Builder) ForwardRelationName(t *introspect.Table, fk *introspect.ForeignKey) string {
+	name := b.forwardRelationBase(t, fk)
+	taken := map[string]bool{}
+	for _, c := range t.Columns {
+		taken[b.Inflect(inflect.KindFieldName, inflect.Input{Schema: t.Schema, Table: t.Name, Column: c.Name})] = true
+	}
+	for _, other := range t.ForeignKeys {
+		if other == fk {
+			break
+		}
+		taken[b.ForwardRelationName(t, other)] = true
+	}
+	if taken[name] {
+		return coreinflect.LowerCamel(coreinflect.Singularize(fk.RefTable)) + "By" + coreinflect.ByColumns(fk.Columns)
+	}
+	return name
+}
+
+func (b *Builder) forwardRelationBase(t *introspect.Table, fk *introspect.ForeignKey) string {
 	kind := inflect.KindRelationForward
 	if !fk.ReferencesOne() {
 		kind = inflect.KindRelationForwardMany

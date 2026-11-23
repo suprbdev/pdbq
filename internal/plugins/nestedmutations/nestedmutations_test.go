@@ -215,3 +215,38 @@ func setupWith(t *testing.T, reg *plugin.Registry) (*plugin.Registry, *schema.Bu
 	}
 	return reg, built
 }
+
+func TestNestedForwardRelationNameCollidesWithColumn(t *testing.T) {
+	cat := testutil.FixtureCatalog()
+	cat.Tables = append(cat.Tables, &introspect.Table{
+		Schema: "public", Name: "memos", Kind: introspect.RelTable,
+		Privileges: introspect.Privileges{Select: true, Insert: true},
+		Columns: []*introspect.Column{
+			{Name: "id", Position: 1, PGType: "int4", TypeSchema: "pg_catalog", NotNull: true},
+			{Name: "user_email", Position: 2, PGType: "text", TypeSchema: "pg_catalog", NotNull: true},
+		},
+		PrimaryKey: &introspect.Constraint{Name: "memos_pkey", Columns: []string{"id"}},
+		ForeignKeys: []*introspect.ForeignKey{{
+			Name: "memos_user_email_fkey", Columns: []string{"user_email"},
+			RefSchema: "public", RefTable: "users", RefColumns: []string{"email"},
+		}},
+	})
+	reg := plugin.NewRegistry(nestedmutations.New(nil))
+	b := schema.New(cat, inflect.Default, schema.Options{FilterIndexedOnly: true})
+	if err := reg.TransformSchema(context.Background(), nil, b); err != nil {
+		t.Fatal(err)
+	}
+	built, err := b.Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(built.SDL, "userByUserEmail: MemoUserByUserEmailNestedInput") {
+		t.Errorf("nested forward field missing from MemoCreateInput:\n%s", built.SDL)
+	}
+	stmt := compileRoot(t, reg, built, `mutation {
+		createMemo(input: {id: 1, userByUserEmail: {connect: {email: "a@b.c"}}}) { memo { id } }
+	}`)
+	if !strings.Contains(stmt.SQL, `WHERE "email" = $`) {
+		t.Errorf("connect must match on email:\n%s", stmt.SQL)
+	}
+}

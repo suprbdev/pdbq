@@ -2193,3 +2193,39 @@ func TestPartitions(t *testing.T) {
 		t.Errorf("exposed partition: got %s", got)
 	}
 }
+
+// TestRelationNameFallback covers a forward relation whose FK column does
+// not end in _id: the relation falls back to <table>By<Columns> instead of
+// colliding with the column field.
+func TestRelationNameFallback(t *testing.T) {
+	conn := testConn(t)
+	execAll(t, conn,
+		`CREATE TABLE rn_users (email text PRIMARY KEY, name text)`,
+		`CREATE TABLE rn_memos (id integer PRIMARY KEY, user_email text NOT NULL REFERENCES rn_users (email), body text)`,
+		`INSERT INTO rn_users VALUES ('a@b.c', 'Ann')`,
+	)
+	t.Cleanup(func() {
+		_, _ = conn.Exec(context.Background(), `DROP TABLE rn_memos; DROP TABLE rn_users`)
+	})
+	hs := testServer(t, nil)
+
+	res := post(t, hs.URL, `mutation { createRnMemo(input: {id: 1, body: "x", rnUserByUserEmail: {connect: {email: "a@b.c"}}}) { rnMemo { userEmail rnUserByUserEmail { name } } } }`, nil)
+	requireNoErrors(t, res)
+	if got, want := normalize(t, res.Data["createRnMemo"]), normalizeStr(t, `{"rnMemo": {"userEmail": "a@b.c", "rnUserByUserEmail": {"name": "Ann"}}}`); got != want {
+		t.Errorf("nested connect: got %s want %s", got, want)
+	}
+
+	res = post(t, hs.URL, `mutation { createRnMemo(input: {id: 2, body: "y", rnUserByUserEmail: {create: {email: "n@b.c", name: "Nat"}}}) { rnMemo { userEmail } } }`, nil)
+	requireNoErrors(t, res)
+	res = post(t, hs.URL, `{ rnMemoById(id: 2) { userEmail rnUserByUserEmail { name } } }`, nil)
+	requireNoErrors(t, res)
+	if got, want := normalize(t, res.Data["rnMemoById"]), normalizeStr(t, `{"userEmail": "n@b.c", "rnUserByUserEmail": {"name": "Nat"}}`); got != want {
+		t.Errorf("nested create: got %s want %s", got, want)
+	}
+
+	res = post(t, hs.URL, `{ rnUserByEmail(email: "a@b.c") { rnMemosByUserEmail { nodes { id } } } }`, nil)
+	requireNoErrors(t, res)
+	if got, want := normalize(t, res.Data["rnUserByEmail"]), normalizeStr(t, `{"rnMemosByUserEmail": {"nodes": [{"id": 1}]}}`); got != want {
+		t.Errorf("backward relation: got %s want %s", got, want)
+	}
+}
