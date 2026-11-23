@@ -169,35 +169,79 @@ type Object struct {
 	Interfaces []string
 	// IsInterface renders the type as `interface X` instead of `type X`.
 	IsInterface bool
+
+	idx nameIndex
 }
 
-func (o *Object) Field(name string) *Field {
-	for _, f := range o.Fields {
-		if f.Name == name {
-			return f
+// nameIndex maps names to slice positions for the Fields and Values slices
+// of the IR types. It is built lazily and extended on lookup, so plugins may
+// keep appending to or truncating the slice directly: growth is indexed
+// incrementally, a shorter slice triggers a rebuild, and a stale hit is
+// re-verified against the slice. The first element of a name wins, like a
+// linear scan. Replacing an element in place with a differently named one
+// without changing the length is not detected.
+type nameIndex struct {
+	pos map[string]int
+	n   int
+}
+
+func (ix *nameIndex) reset() {
+	ix.pos = nil
+	ix.n = 0
+}
+
+func (ix *nameIndex) sync(n int, nameAt func(int) string) {
+	if ix.pos == nil || n < ix.n {
+		ix.pos = make(map[string]int, n)
+		ix.n = 0
+	}
+	for ; ix.n < n; ix.n++ {
+		name := nameAt(ix.n)
+		if _, ok := ix.pos[name]; !ok {
+			ix.pos[name] = ix.n
 		}
+	}
+}
+
+func (ix *nameIndex) find(n int, nameAt func(int) string, name string) int {
+	ix.sync(n, nameAt)
+	i, ok := ix.pos[name]
+	if !ok {
+		return -1
+	}
+	if i < n && nameAt(i) == name {
+		return i
+	}
+	ix.reset()
+	ix.sync(n, nameAt)
+	if i, ok := ix.pos[name]; ok {
+		return i
+	}
+	return -1
+}
+
+// Field returns the field with the given name, or nil.
+func (o *Object) Field(name string) *Field {
+	if i := o.idx.find(len(o.Fields), func(i int) string { return o.Fields[i].Name }, name); i >= 0 {
+		return o.Fields[i]
 	}
 	return nil
 }
 
 // AddField appends a field, replacing any existing field of the same name.
 func (o *Object) AddField(f *Field) {
-	for i, ex := range o.Fields {
-		if ex.Name == f.Name {
-			o.Fields[i] = f
-			return
-		}
+	if i := o.idx.find(len(o.Fields), func(i int) string { return o.Fields[i].Name }, f.Name); i >= 0 {
+		o.Fields[i] = f
+		return
 	}
 	o.Fields = append(o.Fields, f)
 }
 
 // RemoveField deletes a field by name.
 func (o *Object) RemoveField(name string) {
-	for i, ex := range o.Fields {
-		if ex.Name == name {
-			o.Fields = append(o.Fields[:i], o.Fields[i+1:]...)
-			return
-		}
+	if i := o.idx.find(len(o.Fields), func(i int) string { return o.Fields[i].Name }, name); i >= 0 {
+		o.Fields = append(o.Fields[:i], o.Fields[i+1:]...)
+		o.idx.reset()
 	}
 }
 
@@ -268,34 +312,32 @@ type Input struct {
 	Name        string
 	Description string
 	Fields      []*InputField
+
+	idx nameIndex
 }
 
+// Field returns the field with the given name, or nil.
 func (in *Input) Field(name string) *InputField {
-	for _, f := range in.Fields {
-		if f.Name == name {
-			return f
-		}
+	if i := in.idx.find(len(in.Fields), func(i int) string { return in.Fields[i].Name }, name); i >= 0 {
+		return in.Fields[i]
 	}
 	return nil
 }
 
+// AddField appends a field, replacing any existing field of the same name.
 func (in *Input) AddField(f *InputField) {
-	for i, ex := range in.Fields {
-		if ex.Name == f.Name {
-			in.Fields[i] = f
-			return
-		}
+	if i := in.idx.find(len(in.Fields), func(i int) string { return in.Fields[i].Name }, f.Name); i >= 0 {
+		in.Fields[i] = f
+		return
 	}
 	in.Fields = append(in.Fields, f)
 }
 
 // RemoveField deletes a field by name.
 func (in *Input) RemoveField(name string) {
-	for i, ex := range in.Fields {
-		if ex.Name == name {
-			in.Fields = append(in.Fields[:i], in.Fields[i+1:]...)
-			return
-		}
+	if i := in.idx.find(len(in.Fields), func(i int) string { return in.Fields[i].Name }, name); i >= 0 {
+		in.Fields = append(in.Fields[:i], in.Fields[i+1:]...)
+		in.idx.reset()
 	}
 }
 
@@ -304,6 +346,13 @@ type Enum struct {
 	Name        string
 	Description string
 	Values      []EnumValue
+
+	idx nameIndex
+}
+
+// HasValue reports whether the enum has a value with the given name.
+func (e *Enum) HasValue(name string) bool {
+	return e.idx.find(len(e.Values), func(i int) string { return e.Values[i].Name }, name) >= 0
 }
 
 type EnumValue struct {

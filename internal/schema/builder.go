@@ -1500,6 +1500,25 @@ func (b *Builder) addComputedField(t *introspect.Table, f *introspect.Function) 
 	})
 }
 
+// FieldsByOrderBy indexes every object field that takes an orderBy argument
+// by the argument's enum type name, so plugins extending an orderBy enum's
+// consumers need not rescan the whole schema once per table. The index is a
+// snapshot: fields and arguments added afterwards are not reflected.
+func (b *Builder) FieldsByOrderBy() map[string][]*Field {
+	out := map[string][]*Field{}
+	for _, obj := range b.Objects {
+		for _, f := range obj.Fields {
+			for _, a := range f.Args {
+				if a.Name == "orderBy" {
+					enum := strings.Trim(a.Type, "[]!")
+					out[enum] = append(out[enum], f)
+				}
+			}
+		}
+	}
+	return out
+}
+
 // Build renders SDL, validates it, and returns the executable schema + meta.
 func (b *Builder) Build() (*Built, error) {
 	if len(b.Mutation.Fields) == 0 {

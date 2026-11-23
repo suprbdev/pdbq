@@ -32,6 +32,8 @@ type Plugin struct {
 	specs map[string]map[string]*nestedSpec
 	// inputForTable: "schema.table" -> create input type name.
 	inputForTable map[string]string
+	// colTypes caches column -> GraphQL type for one TransformSchema run.
+	colTypes map[*introspect.Column]string
 }
 
 type nestedSpec struct {
@@ -64,6 +66,8 @@ func (p *Plugin) Priority() int { return 200 }
 // ---- SchemaHook ----
 
 func (p *Plugin) TransformSchema(_ context.Context, b *schema.Builder) error {
+	p.colTypes = nil
+	defer func() { p.colTypes = nil }()
 	for _, t := range b.Catalog.Tables {
 		if !t.Insertable() {
 			continue
@@ -233,7 +237,7 @@ func (p *Plugin) ensureConnectInput(b *schema.Builder, parent *introspect.Table,
 			return ""
 		}
 		fieldName := b.Inflect(inflect.KindFieldName, inflect.Input{Table: parent.Name, Column: col})
-		in.AddField(&schema.InputField{Name: fieldName, Type: gqlTypeRequired(b, c), Column: col})
+		in.AddField(&schema.InputField{Name: fieldName, Type: p.gqlTypeRequired(b, c), Column: col})
 	}
 	b.Inputs[name] = in
 	return name
@@ -252,16 +256,21 @@ func (p *Plugin) ensureChildrenInput(b *schema.Builder, child *introspect.Table,
 	return name
 }
 
-func gqlTypeRequired(b *schema.Builder, c *introspect.Column) string {
-	// Reuse the builder's column typing through a throwaway field on the
-	// parent object type: all catalog columns already have generated fields.
-	// Fall back to String! if not resolvable.
-	for _, obj := range b.Objects {
-		for _, f := range obj.Fields {
-			if f.Meta != nil && f.Meta.Kind == schema.KindColumn && f.Meta.Column == c {
-				return strings.TrimSuffix(f.Type, "!") + "!"
+func (p *Plugin) gqlTypeRequired(b *schema.Builder, c *introspect.Column) string {
+	if p.colTypes == nil {
+		p.colTypes = map[*introspect.Column]string{}
+		for _, obj := range b.Objects {
+			for _, f := range obj.Fields {
+				if f.Meta != nil && f.Meta.Kind == schema.KindColumn && f.Meta.Column != nil {
+					if _, ok := p.colTypes[f.Meta.Column]; !ok {
+						p.colTypes[f.Meta.Column] = strings.TrimSuffix(f.Type, "!") + "!"
+					}
+				}
 			}
 		}
+	}
+	if t, ok := p.colTypes[c]; ok {
+		return t
 	}
 	return "String!"
 }

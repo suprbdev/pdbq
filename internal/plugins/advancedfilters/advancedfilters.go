@@ -271,7 +271,7 @@ func addRelationOrderValues(b *schema.Builder, en *schema.Enum, relName string, 
 	prefix := coreinflect.EnumValue(relName) + "__"
 	for _, c := range orderableColumns(b, related) {
 		base := prefix + coreinflect.EnumValue(c.Name)
-		if hasEnumValue(en, base+"_ASC") || hasEnumValue(en, base+"_DESC") {
+		if en.HasValue(base+"_ASC") || en.HasValue(base+"_DESC") {
 			continue
 		}
 		rel := &schema.OrderRelation{Forward: forward, FK: fk, Table: related, Column: c.Name}
@@ -339,7 +339,7 @@ func (p *Plugin) addComputed(b *schema.Builder) {
 		orderName := b.Inflect(inflect.KindOrderByTypeName, inflect.Input{Schema: t.Schema, Table: t.Name})
 		if en := b.Enums[orderName]; !skipOrder && en != nil {
 			base := coreinflect.EnumValue(fieldName)
-			if !hasEnumValue(en, base+"_ASC") && !hasEnumValue(en, base+"_DESC") {
+			if !en.HasValue(base+"_ASC") && !en.HasValue(base+"_DESC") {
 				en.Values = append(en.Values,
 					schema.EnumValue{Name: base + "_ASC", Computed: f},
 					schema.EnumValue{Name: base + "_DESC", Computed: f, Desc: true},
@@ -372,13 +372,4 @@ func ensureToMany(b *schema.Builder, childType, childFilter string) string {
 		},
 	}
 	return name
-}
-
-func hasEnumValue(e *schema.Enum, name string) bool {
-	for _, v := range e.Values {
-		if v.Name == name {
-			return true
-		}
-	}
-	return false
 }
