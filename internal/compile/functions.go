@@ -41,7 +41,7 @@ func (s *stmt) fnResultShape(fn *introspect.Function, sel ast.SelectionSet) (fnS
 	if s.c.Built.Catalog.Table(fn.ReturnTypeSchema, fn.ReturnType) != nil {
 		return fnRows, nil
 	}
-	if comp := s.c.Built.Catalog.Composite(fn.ReturnTypeSchema, strings.TrimPrefix(fn.ReturnType, "_")); comp != nil {
+	if comp := s.valueComposite(s.fnReturnColumn(fn)); comp != nil {
 		return fnComposite, comp
 	}
 	return fnScalar, nil
@@ -197,7 +197,7 @@ func (s *stmt) fnValueJSON(ref string, fn *introspect.Function, f *ast.Field) (s
 // fnCompositeJSON compiles sel over an already-materialized composite (or
 // composite array) result value ref.
 func (s *stmt) fnCompositeJSON(ref string, fn *introspect.Function, comp *introspect.Composite, sel ast.SelectionSet, depth int) (string, error) {
-	return s.compositeJSON(ref, comp, strings.HasPrefix(fn.ReturnType, "_") && !fn.ReturnsSet, sel, depth)
+	return s.compositeJSON(ref, comp, s.fnReturnColumn(fn).IsArray && !fn.ReturnsSet, sel, depth)
 }
 
 // function compiles a PostgreSQL function field. Scalar returns become

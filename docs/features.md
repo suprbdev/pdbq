@@ -131,6 +131,7 @@ Checklist of PostgreSQL and GraphQL features pdbq supports. Checked = implemente
 - [x] `SETOF <scalar>` returns → scalar lists
 - [x] Single-row table returns with selection support
 - [x] Composite returns → the composite's object type (except `rls.auth.jwt_type`, minted into a token string)
+- [x] Rows nested in other values (`<table>[]` results and columns, composite attributes, `RETURNS TABLE` columns and columns of a row type) → `<Type>Row`, the columns the table's type exposes (no `@omit read` or contract-hidden column, no raster), built with `json_build_object`; values of an omitted or contract-hidden table's row type have no field
 - [x] `OUT`/`RETURNS TABLE` record returns → `<Function>Record` object type (`[<Function>Record!]!` for `SETOF`), compiled in the same statement
 - [x] `void` returns → `Boolean`
 - [x] EXECUTE-privilege gating

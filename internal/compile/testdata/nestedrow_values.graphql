@@ -1,0 +1,53 @@
+{
+  postArr {
+    __typename
+    id
+    title
+  }
+  postTab {
+    n
+    p {
+      id
+      authorId
+    }
+  }
+  vaultBoxes {
+    label
+  }
+  allHolders {
+    nodes {
+      box {
+        label
+        p {
+          title
+          published
+        }
+      }
+      vbox {
+        label
+      }
+      crate {
+        box {
+          p {
+            id
+          }
+        }
+        vb {
+          label
+        }
+      }
+      postList {
+        id
+        title
+      }
+      post {
+        id
+      }
+    }
+  }
+  userById(id: 1) {
+    postArr {
+      id
+    }
+  }
+}

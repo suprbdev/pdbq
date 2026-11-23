@@ -214,10 +214,13 @@ func returnsRowsOf(fn *introspect.Function, t *introspect.Table) bool {
 
 // applyColumnTags handles per-column @omit, @deprecated, and the orderBy and
 // distinctOn enum value renames for @name (the builder derives those value
-// names from the raw pg column name, outside the inflection pipeline).
+// names from the raw pg column name, outside the inflection pipeline). The
+// type of t's nested row values (schema.Builder.RowValueType) loses and
+// deprecates the same column fields as t's own type.
 func (p *Plugin) applyColumnTags(b *schema.Builder, t *introspect.Table) {
 	in := inflect.Input{Schema: t.Schema, Table: t.Name}
 	obj := b.Objects[b.TypeForTable[tableKey(t.Schema, t.Name)]]
+	rowObj := b.Objects[b.TypeForComposite[tableKey(t.Schema, t.Name)]]
 	createIn := b.Inputs[b.Inflect(inflect.KindCreateInput, in)]
 	updateIn := b.Inputs[b.Inflect(inflect.KindUpdateInput, in)]
 	filterIn := b.Inputs[b.Inflect(inflect.KindFilterTypeName, in)]
@@ -229,6 +232,9 @@ func (p *Plugin) applyColumnTags(b *schema.Builder, t *introspect.Table) {
 	for _, c := range t.Columns {
 		if omit.Column(c, omit.Read) && obj != nil {
 			p.removeColumnField(obj, c)
+		}
+		if omit.Column(c, omit.Read) && rowObj != nil {
+			p.removeColumnField(rowObj, c)
 		}
 		if omit.Column(c, omit.Read) && rowIn != nil {
 			removeInputColumn(rowIn, c.Name)
@@ -256,9 +262,14 @@ func (p *Plugin) applyColumnTags(b *schema.Builder, t *introspect.Table) {
 			removeOrderValues(distinctEnum, c.Name)
 		}
 		tags := p.Index().Column(t.Schema, t.Name, c.Name)
-		if tags.Has("deprecated") && obj != nil {
-			if f := columnField(obj, c); f != nil {
-				f.Deprecated = deprecationReason(tags)
+		if tags.Has("deprecated") {
+			for _, o := range []*schema.Object{obj, rowObj} {
+				if o == nil {
+					continue
+				}
+				if f := columnField(o, c); f != nil {
+					f.Deprecated = deprecationReason(tags)
+				}
 			}
 		}
 		if newName := tags.First("name"); newName != "" {

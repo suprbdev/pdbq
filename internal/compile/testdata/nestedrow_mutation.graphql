@@ -1,0 +1,8 @@
+mutation {
+  grabPosts(input: {}) {
+    postRows {
+      id
+      title
+    }
+  }
+}

@@ -90,7 +90,7 @@ Tags apply to:
 
 | Object | Hiding it removes |
 |---|---|
-| Table, view, materialized view | Everything a bare `@omit` on the table removes: the type, its queries, mutations, connections, relation fields both ways, filters and nested inputs referencing it. Also its partitions, every function taking or returning its row type, and every column typed as its row type. |
+| Table, view, materialized view | Everything a bare `@omit` on the table removes: the type, its queries, mutations, connections, relation fields both ways, filters and nested inputs referencing it. Also its partitions, every function taking or returning its row type, every column typed as its row type, and every composite attribute of its row type. |
 | Column | Everything a bare `@omit` on the column removes: the output field, filter and condition fields, orderBy and distinctOn values, aggregates, create and update input fields, and every key containing it (by-key lookups and mutations, `nodeId`, keyset cursors; see [What `@omit read` hides](smart-comments.md#what-omit-read-hides)). |
 | Function | Its root query or mutation field, or its computed column. |
 | Foreign key (`COMMENT ON CONSTRAINT`) | The relation fields in both directions, relation filters and orderings, nested-mutation inputs. |

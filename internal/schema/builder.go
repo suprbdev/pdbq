@@ -106,7 +106,9 @@ type Builder struct {
 
 	// TypeForTable maps "schema.table" to the generated object type name.
 	TypeForTable map[string]string
-	// TypeForComposite maps "schema.type" to the generated object type name.
+	// TypeForComposite maps "schema.type" to the generated object type name
+	// of a composite type, or of a table's row values held in other values
+	// (see RowValueType), generated on first use.
 	TypeForComposite map[string]string
 	// InputForComposite maps "schema.type" to the generated input type name.
 	InputForComposite map[string]string
@@ -133,6 +135,11 @@ type Builder struct {
 	// hidden holds the "schema.table" keys of tables left out of the
 	// catalog (partitions), so functions over their row types are skipped.
 	hidden map[string]bool
+	// relationHidden is the catalog's RelationHidden, kept from the catalog
+	// given to New since withoutPartitions copies it.
+	relationHidden func(schema, name string) bool
+	// tableNames caches tableTypeNames.
+	tableNames map[string]bool
 	// recordTypes caches the object type generated per function returning
 	// OUT/TABLE parameter records.
 	recordTypes map[*introspect.Function]string
@@ -158,7 +165,8 @@ type Built struct {
 	EnumValues map[string]map[string]string
 	// EnumTypeForPG maps "typeschema.typename" -> GraphQL enum type name.
 	EnumTypeForPG map[string]string
-	// CompositeTypeForPG maps "typeschema.typename" -> GraphQL object type name.
+	// CompositeTypeForPG maps "typeschema.typename" -> GraphQL object type name
+	// of a composite type, or of a table's nested row values.
 	CompositeTypeForPG map[string]string
 	// CompositeInputForPG maps "typeschema.typename" -> GraphQL input type name.
 	CompositeInputForPG map[string]string
@@ -232,6 +240,7 @@ func New(cat *introspect.Catalog, inflector inflect.Next, opts Options) *Builder
 		opts.Logger = slog.Default()
 	}
 	hidden := map[string]bool{}
+	relationHidden := cat.RelationHidden
 	if !opts.ExposePartitions {
 		cat, hidden = withoutPartitions(cat)
 	}
@@ -253,6 +262,7 @@ func New(cat *introspect.Catalog, inflector inflect.Next, opts Options) *Builder
 		contribTypes:       map[string]bool{},
 		log:                opts.Logger,
 		hidden:             hidden,
+		relationHidden:     relationHidden,
 		recordTypes:        map[*introspect.Function]string{},
 	}
 	// The GeoJSON scalar is only declared when the database actually has a
@@ -438,12 +448,14 @@ func (b *Builder) addComposites() {
 		for _, f := range ct.Fields {
 			name := b.Inflect(inflect.KindFieldName, inflect.Input{Schema: ct.Schema, Table: ct.Name, Column: f.Name})
 			// Composite attributes cannot carry NOT NULL: always nullable.
-			obj.AddField(&Field{
-				Name:        name,
-				Type:        b.gqlTypeForColumn(f),
-				Description: f.Comment,
-				Meta:        &FieldMeta{Kind: KindCompositeField, Column: f},
-			})
+			if !b.noOutput(f) {
+				obj.AddField(&Field{
+					Name:        name,
+					Type:        b.gqlTypeForColumn(f),
+					Description: f.Comment,
+					Meta:        &FieldMeta{Kind: KindCompositeField, Column: f},
+				})
+			}
 			in.AddField(&InputField{
 				Name:        name,
 				Type:        b.gqlInputTypeForColumn(f),
@@ -451,6 +463,7 @@ func (b *Builder) addComposites() {
 				Column:      f.Name,
 			})
 		}
+		ensureField(obj)
 	}
 }
 
@@ -476,8 +489,10 @@ func (b *Builder) baseTypeForColumn(c *introspect.Column) string {
 		base = b.Inflect(inflect.KindEnumTypeName, inflect.Input{Schema: e.Schema, Enum: e.Name})
 	} else if e := b.Catalog.Enum(c.TypeSchema, pg); e != nil {
 		base = b.Inflect(inflect.KindEnumTypeName, inflect.Input{Schema: e.Schema, Enum: e.Name})
-	} else if tn, ok := b.TypeForComposite[tableKey(c.TypeSchema, pg)]; ok {
+	} else if tn, ok := b.TypeForComposite[tableKey(ValueType(c))]; ok {
 		base = tn
+	} else if t := RowTable(b.Catalog, c); t != nil {
+		base = b.RowValueType(t)
 	} else if ci := b.ContribColumn(c); ci.Owned() {
 		if ci.List() {
 			return "[" + ci.Scalar + "!]"
@@ -656,14 +671,20 @@ func (b *Builder) addLatLonTypes() {
 
 // gqlInputTypeForColumn is gqlTypeForColumn for input positions: composite
 // columns resolve to their generated input type (object types are not valid
-// in argument or input-field position).
+// in argument or input-field position), values of a table's row type to
+// their text form (String).
 func (b *Builder) gqlInputTypeForColumn(c *introspect.Column) string {
-	pg := strings.TrimPrefix(c.PGType, "_")
-	if in, ok := b.InputForComposite[tableKey(c.TypeSchema, pg)]; ok {
+	if in, ok := b.InputForComposite[tableKey(ValueType(c))]; ok {
 		if c.IsArray {
 			return "[" + in + "!]"
 		}
 		return in
+	}
+	if RowTable(b.Catalog, c) != nil || b.HiddenRowType(c) {
+		if c.IsArray {
+			return "[String!]"
+		}
+		return "String"
 	}
 	if ci := b.ContribColumn(c); ci.Kind == contribtype.Range || ci.Kind == contribtype.Earth || (ci.Kind == contribtype.Interval && !ci.Array) {
 		return ci.Input
@@ -690,7 +711,7 @@ func (b *Builder) addTables() {
 		b.TypeForTable[tableKey(t.Schema, t.Name)] = typeName
 		obj := &Object{Name: typeName, Description: t.Comment}
 		for _, c := range t.Columns {
-			if postgis.IsRaster(c.PGType) && !c.IsArray {
+			if postgis.IsRaster(c.PGType) && !c.IsArray || b.HiddenRowType(c) {
 				continue
 			}
 			obj.AddField(&Field{
@@ -927,8 +948,9 @@ func (b *Builder) forwardRelationBase(t *introspect.Table, fk *introspect.Foreig
 }
 
 // filterableColumns applies the indexed-only policy plus config overrides.
-// Composite-typed columns are never filterable: their object types have no
-// meaningful scalar operator set.
+// Composite-typed and row-typed columns are never filterable: their object
+// types have no meaningful scalar operator set, and comparing a row's text
+// form would test the columns it hides.
 func (b *Builder) filterableColumns(t *introspect.Table) []*introspect.Column {
 	allowed := map[string]bool{}
 	if b.Options.FilterIndexedOnly {
@@ -942,7 +964,7 @@ func (b *Builder) filterableColumns(t *introspect.Table) []*introspect.Column {
 		if b.Options.FilterIndexedOnly && !allowed[c.Name] {
 			continue
 		}
-		if _, ok := b.TypeForComposite[tableKey(c.TypeSchema, strings.TrimPrefix(c.PGType, "_"))]; ok {
+		if _, ok := b.TypeForComposite[tableKey(ValueType(c))]; ok || RowTable(b.Catalog, c) != nil || b.HiddenRowType(c) {
 			continue
 		}
 		out = append(out, c)
@@ -1724,6 +1746,9 @@ func (b *Builder) functionReturnBase(f *introspect.Function, mint bool) (string,
 	if tn, ok := b.TypeForComposite[key]; ok && (!mint || key != b.Options.JWTType) {
 		return tn, true
 	}
+	if t := RowTable(b.Catalog, ret); t != nil {
+		return b.RowValueType(t), true
+	}
 	if name := b.DomainScalar(ret); name != "" {
 		return name, true
 	}
@@ -1764,9 +1789,10 @@ func (b *Builder) functionRecordType(f *introspect.Function) string {
 
 // unexposedType returns the "schema.type" of the first type f returns or
 // takes that the schema must not expose, or "": the row type of a table left
-// out of the catalog (a partition, see Options.ExposePartitions; partition
-// is then true), or a type from a schema outside the introspected ones that
-// is no known enum, composite, domain, range or extension type. The latter
+// out of the catalog (a partition, see Options.ExposePartitions, or a table
+// a contract or a bare @omit removed; partition is then true), or a type
+// from a schema outside the introspected ones that is no known enum,
+// composite, domain, range or extension type. The latter
 // is typically the row type of a table in an unexposed schema, which would
 // otherwise be typed String and return whole rows as JSON.
 func (b *Builder) unexposedType(f *introspect.Function) (ref string, partition bool) {
@@ -1774,7 +1800,7 @@ func (b *Builder) unexposedType(f *introspect.Function) (ref string, partition b
 	refs = append(append(refs, f.Args...), f.ReturnColumns...)
 	for _, a := range refs {
 		key := tableKey(a.TypeSchema, strings.TrimPrefix(a.PGType, "_"))
-		if b.hidden[key] {
+		if b.hidden[key] || b.HiddenRowType(FuncArgColumn(b.Catalog, a)) {
 			return key, true
 		}
 		if b.foreignType(a) {

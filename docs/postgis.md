@@ -548,8 +548,10 @@ subquery per row, are); the raster `intersects` filter, which tests the
 convex hull like a geometry predicate, is left unpriced like the spatial
 filters.
 
-Function results and composite attributes of type `raster` keep the text
-form: a function returning a raster is the author's choice to return it.
+Function results of type `raster` keep the text form: a function returning
+a raster is the author's choice to return it. Composite attributes of type
+`raster`, like the raster columns of rows held in other values (`TileRow`),
+have no output field; composite inputs keep the text form.
 
 ## Indexing
 
