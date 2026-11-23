@@ -7,6 +7,8 @@ on:
 permissions:
   contents: write
   packages: write
+  id-token: write
+  attestations: write
 
 jobs:
   binaries:
@@ -37,8 +39,28 @@ jobs:
             fi
             rm "dist/$bin"
           done
+      - name: SBOM (CycloneDX)
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          go install github.com/CycloneDX/cyclonedx-gomod/cmd/cyclonedx-gomod@v1.9.0
+          cyclonedx-gomod app -json -licenses -main cmd/pdbq \
+            -output "dist/pdbq_${VERSION#v}_sbom.cdx.json" .
       - name: Checksums
         run: cd dist && sha256sum -- * > checksums.txt
+      - uses: sigstore/cosign-installer@v3
+        if: ${{ !env.ACT }}
+      - name: Sign checksums (cosign, keyless)
+        if: ${{ !env.ACT }}
+        run: |
+          cosign sign-blob --yes \
+            --bundle dist/checksums.txt.sigstore.json \
+            dist/checksums.txt
+      - name: Attest build provenance
+        if: ${{ !env.ACT }}
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-checksums: dist/checksums.txt
       - name: Create GitHub release
         # Skipped under act (local workflow testing); act sets ACT=true.
         if: ${{ !env.ACT }}
@@ -67,6 +89,8 @@ jobs:
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - uses: sigstore/cosign-installer@v3
+        if: ${{ !env.ACT }}
       - uses: docker/metadata-action@v5
         id: meta
         with:
@@ -77,7 +101,9 @@ jobs:
             type=semver,pattern={{version}}
             type=semver,pattern=v{{version}}
             type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
       - uses: docker/build-push-action@v6
+        id: build
         with:
           context: .
           platforms: linux/amd64,linux/arm64
@@ -85,3 +111,19 @@ jobs:
           build-args: VERSION=${{ github.ref_name }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          sbom: true
+          provenance: mode=max
+      - name: Sign the image (cosign, keyless)
+        if: ${{ !env.ACT }}
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          cosign sign --yes "ghcr.io/${{ github.repository }}@${DIGEST}"
+          cosign sign --yes "suprbdev/pdbq@${DIGEST}"
+      - name: Attest image provenance
+        if: ${{ !env.ACT }}
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ghcr.io/${{ github.repository }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
