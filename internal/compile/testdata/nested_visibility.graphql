@@ -1,0 +1,24 @@
+mutation {
+  createComment(input: {body: "First!", post: {create: {title: "Hello", author: {create: {email: "new@example.com"}}}}}) {
+    comment {
+      body
+      post {
+        title
+        author { email postsByAuthorId { totalCount nodes { title } } }
+        commentsByPostId(filter: {parentId: {isNull: true}}) { totalCount nodes { body } }
+      }
+    }
+  }
+  createUser(input: {email: "kids@example.com", postsByAuthorId: {create: [{title: "One", commentsByPostId: {create: [{body: "a"}, {body: "b"}]}}, {title: "Two"}]}}) {
+    user {
+      email
+      postsByAuthorId(filter: {commentsByPostId: {some: {parentId: {isNull: true}}}}) {
+        totalCount
+        nodes { title author { email } commentsByPostId { totalCount nodes { body } } }
+      }
+    }
+  }
+  createPost(input: {title: "Connected", author: {connect: {id: 1}}, commentsByPostId: {create: [{body: "c"}]}}) {
+    post { title author { email postsByAuthorId { totalCount } } commentsByPostId { nodes { body } } }
+  }
+}

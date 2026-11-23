@@ -290,23 +290,11 @@ func (p *Plugin) WrapCompile(next compile.Func) compile.Func {
 
 		c := compile.New(req.Built)
 		ps := &compile.ParamSet{}
-		g := &cteGen{p: p, req: req, ps: ps, childCTEs: map[string][]string{}}
-		if _, err := g.insertChain(meta.Table, inputType, input, "__mut", 1); err != nil {
+		g := &cteGen{p: p, req: req, ps: ps, insertIdx: map[string]int{}}
+		if _, err := g.insertChain(meta.Table, inputType, input, "__mut", 1, nil); err != nil {
 			return nil, err
 		}
-		// Rows inserted by CTEs are invisible to plain table scans within the
-		// same statement (single-snapshot rule), so the payload reads nested
-		// children from a UNION of their insert CTEs instead of the table.
-		overrides := map[string]string{}
-		for tableKey, names := range g.childCTEs {
-			union := make([]string, len(names))
-			for i, n := range names {
-				union[i] = "SELECT * FROM " + n
-			}
-			vis := g.name("vis")
-			g.ctes = append(g.ctes, fmt.Sprintf("%s AS (\n  %s\n)", vis, strings.Join(union, " UNION ALL ")))
-			overrides[tableKey] = vis
-		}
+		overrides := g.visibility()
 		return c.MutationWithCTEs(req, req.Field, meta, strings.Join(g.ctes, ",\n"), ps, overrides)
 	}
 }
@@ -350,9 +338,58 @@ type cteGen struct {
 	ps   *compile.ParamSet
 	ctes []string
 	n    int
-	// childCTEs collects insert-CTE names per "schema.table" for payload
-	// visibility overrides.
-	childCTEs map[string][]string
+	// inserts lists, in emission order, every table the chain inserts into
+	// with its insert CTEs; insertIdx indexes it by "schema.table".
+	inserts   []tableInserts
+	insertIdx map[string]int
+}
+
+// tableInserts names the insert CTEs holding the rows the chain adds to one
+// table.
+type tableInserts struct {
+	table *introspect.Table
+	ctes  []string
+}
+
+func (g *cteGen) recordInsert(t *introspect.Table, cte string) {
+	key := t.Schema + "." + t.Name
+	i, ok := g.insertIdx[key]
+	if !ok {
+		i = len(g.inserts)
+		g.insertIdx[key] = i
+		g.inserts = append(g.inserts, tableInserts{table: t})
+	}
+	g.inserts[i].ctes = append(g.inserts[i].ctes, cte)
+}
+
+// visibility appends one __vis_n CTE per table the chain inserts into and
+// returns the "schema.table" -> CTE overrides for the payload.
+//
+// Rows written by a data-modifying CTE are invisible to every other table
+// scan of the same statement (they all share its snapshot), so a payload
+// relation reading the table would miss the parents, the children and the
+// main row created here. Each visibility CTE is the table itself (still
+// subject to the role's RLS policies) UNION ALL the RETURNING rows of its
+// inserts: the table as it stands once the statement completes. RETURNING
+// rows already passed the table's SELECT policies, since INSERT ...
+// RETURNING raises an error for a new row they reject.
+//
+// NOT MATERIALIZED inlines the CTE at every reference, so the correlated
+// relation predicates reach the table's indexes instead of a materialized
+// copy of the whole table.
+func (g *cteGen) visibility() map[string]string {
+	overrides := make(map[string]string, len(g.inserts))
+	for _, ins := range g.inserts {
+		parts := make([]string, 0, len(ins.ctes)+1)
+		parts = append(parts, "SELECT * FROM "+compile.TableRefSQL(ins.table.Schema, ins.table.Name))
+		for _, cte := range ins.ctes {
+			parts = append(parts, "SELECT * FROM "+cte)
+		}
+		vis := g.name("vis")
+		g.ctes = append(g.ctes, fmt.Sprintf("%s AS NOT MATERIALIZED (\n  %s\n)", vis, strings.Join(parts, "\n  UNION ALL ")))
+		overrides[ins.table.Schema+"."+ins.table.Name] = vis
+	}
+	return overrides
 }
 
 func (g *cteGen) name(prefix string) string {
@@ -372,10 +409,18 @@ func (g *cteGen) addParam(t *introspect.Table, colName string, v any) (string, e
 	return g.ps.Value(g.req.Built, t.Column(colName), v)
 }
 
+// parentFill wires the FK columns of a child row to the row inserted by its
+// parent's CTE.
+type parentFill struct {
+	fk  *introspect.ForeignKey
+	cte string
+}
+
 // insertChain emits CTEs to insert one row into t from input, resolving
 // forward nested fields (parents first), then emits child CTEs for reverse
-// nested fields. Returns the CTE name holding the inserted row.
-func (g *cteGen) insertChain(t *introspect.Table, inputType string, input map[string]any, cteName string, depth int) (string, error) {
+// nested fields. A non-nil fill copies the FK columns of a child row from its
+// parent's CTE. Returns the CTE name holding the inserted row.
+func (g *cteGen) insertChain(t *introspect.Table, inputType string, input map[string]any, cteName string, depth int, fill *parentFill) (string, error) {
 	if depth > g.p.maxDepth {
 		return "", fmt.Errorf("nested-mutations: nesting depth exceeds limit %d", g.p.maxDepth)
 	}
@@ -396,6 +441,13 @@ func (g *cteGen) insertChain(t *introspect.Table, inputType string, input map[st
 			cols = append(cols, compile.QuoteIdent(col))
 			vals = append(vals, p)
 		}
+	}
+	if fill != nil {
+		for _, pair := range equalityPairs(fill.fk) {
+			cols = append(cols, compile.QuoteIdent(pair.Column))
+			vals = append(vals, fill.cte+"."+compile.QuoteIdent(pair.RefColumn))
+		}
+		fromCTEs = append(fromCTEs, fill.cte)
 	}
 	// Forward nested: resolve/insert parents first.
 	var childrenSpecs []childWork
@@ -433,6 +485,7 @@ func (g *cteGen) insertChain(t *introspect.Table, inputType string, input map[st
 			tableSQL, strings.Join(cols, ", "), strings.Join(vals, ", "), strings.Join(fromCTEs, ", "))
 	}
 	g.ctes = append(g.ctes, fmt.Sprintf("%s AS (\n  %s\n)", cteName, insert))
+	g.recordInsert(t, cteName)
 
 	// Reverse nested: insert children referencing this row.
 	for _, cw := range childrenSpecs {
@@ -490,43 +543,23 @@ func (g *cteGen) resolveParent(spec *nestedSpec, nested map[string]any, depth in
 	if parentInput == "" {
 		return "", fmt.Errorf("nested-mutations: %s is not insertable", spec.FK.RefTable)
 	}
-	return g.insertChain(spec.Target, parentInput, create, g.name("p"), depth+1)
+	return g.insertChain(spec.Target, parentInput, create, g.name("p"), depth+1, nil)
 }
 
-// insertChildren emits one INSERT CTE per nested child row, wiring the FK
-// columns to the parent CTE.
+// insertChildren emits the CTEs of each nested child row (one INSERT CTE
+// per row, preceded by its own nested parents and followed by its own
+// children), wiring the FK columns to the parent CTE.
 func (g *cteGen) insertChildren(spec *nestedSpec, nested map[string]any, parentCTE string, depth int) error {
 	if depth+1 > g.p.maxDepth {
 		return fmt.Errorf("nested-mutations: nesting depth exceeds limit %d", g.p.maxDepth)
 	}
 	rows, _ := nested["create"].([]any)
 	childInput := g.p.inputForTable[spec.Owner.Schema+"."+spec.Owner.Name]
-	binding := g.req.Built.InputColumns[childInput]
 	for _, rowVal := range rows {
 		row, _ := rowVal.(map[string]any)
-		var cols, vals []string
-		for _, fname := range sortedKeys(row) {
-			if row[fname] == nil {
-				continue
-			}
-			if col, ok := binding[fname]; ok {
-				p, err := g.addParam(spec.Owner, col, row[fname])
-				if err != nil {
-					return err
-				}
-				cols = append(cols, compile.QuoteIdent(col))
-				vals = append(vals, p)
-			}
+		if _, err := g.insertChain(spec.Owner, childInput, row, g.name("c"), depth+1, &parentFill{fk: spec.FK, cte: parentCTE}); err != nil {
+			return err
 		}
-		for _, pair := range equalityPairs(spec.FK) {
-			cols = append(cols, compile.QuoteIdent(pair.Column))
-			vals = append(vals, parentCTE+"."+compile.QuoteIdent(pair.RefColumn))
-		}
-		cteName := g.name("c")
-		g.ctes = append(g.ctes, fmt.Sprintf("%s AS (\n  INSERT INTO %s (%s) SELECT %s FROM %s RETURNING *\n)",
-			cteName, compile.TableRefSQL(spec.Owner.Schema, spec.Owner.Name),
-			strings.Join(cols, ", "), strings.Join(vals, ", "), parentCTE))
-		g.childCTEs[spec.Owner.Schema+"."+spec.Owner.Name] = append(g.childCTEs[spec.Owner.Schema+"."+spec.Owner.Name], cteName)
 	}
 	return nil
 }

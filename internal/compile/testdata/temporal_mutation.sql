@@ -4,6 +4,10 @@ WITH __p_1 AS (
 ),
 __mut AS (
   INSERT INTO "public"."booking_notes" ("author_id", "note", "valid_at", "room_id") SELECT $1, $2, daterange($3::date, $4::date, $5::text), __p_1."room_id" FROM __p_1 RETURNING *
+),
+__vis_2 AS NOT MATERIALIZED (
+  SELECT * FROM "public"."booking_notes"
+  UNION ALL SELECT * FROM __mut
 )
 SELECT jsonb_build_object('bookingNote', __row.data) AS data
 FROM (
@@ -30,8 +34,13 @@ WITH __mut AS (
 __c_1 AS (
   INSERT INTO "public"."booking_notes" ("author_id", "note", "valid_at", "room_id") SELECT $6, $7, daterange($8::date, $9::date, $10::text), __mut."room_id" FROM __mut RETURNING *
 ),
-__vis_2 AS (
-  SELECT * FROM __c_1
+__vis_2 AS NOT MATERIALIZED (
+  SELECT * FROM "public"."room_bookings"
+  UNION ALL SELECT * FROM __mut
+),
+__vis_3 AS NOT MATERIALIZED (
+  SELECT * FROM "public"."booking_notes"
+  UNION ALL SELECT * FROM __c_1
 )
 SELECT jsonb_build_object('roomBooking', __row.data) AS data
 FROM (
@@ -41,7 +50,7 @@ FROM (
     SELECT jsonb_build_object('nodes', coalesce(jsonb_agg(__s_3.ndata ORDER BY __s_3.__rn ASC) FILTER (WHERE __s_3.__rn <= $12), '[]'::jsonb)) AS data
     FROM (
       SELECT jsonb_build_object('note', __t_2."note") AS ndata, row_number() OVER (ORDER BY __t_2."id" ASC) AS __rn
-      FROM __vis_2 AS __t_2
+      FROM __vis_3 AS __t_2
       WHERE __t_2."room_id" = __t_1."room_id" AND __t_2."valid_at" && __t_1."valid_at"
       ORDER BY __t_2."id" ASC
       LIMIT $11

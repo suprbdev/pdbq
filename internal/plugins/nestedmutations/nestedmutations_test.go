@@ -250,3 +250,56 @@ func TestNestedForwardRelationNameCollidesWithColumn(t *testing.T) {
 		t.Errorf("connect must match on email:\n%s", stmt.SQL)
 	}
 }
+
+func TestPayloadReadsVisibilityCTEs(t *testing.T) {
+	reg, built := setupWith(t, plugin.NewRegistry(nestedmutations.New(nil)))
+	query := `mutation {
+		createUser(input: {
+			email: "a@b.c",
+			postsByAuthorId: {create: [{title: "One", commentsByPostId: {create: [{body: "x"}]}}]},
+			placesByOwnerId: {create: [{name: "Home"}]}
+		}) {
+			user {
+				postsByAuthorId { totalCount nodes { author { id } commentsByPostId { nodes { body } } } }
+				placesByOwnerId { nodes { name } }
+			}
+		}
+	}`
+	sql := compileRoot(t, reg, built, query).SQL
+	for _, want := range []string{
+		`INSERT INTO "public"."comments" ("body", "post_id") SELECT $4, __c_2."id" FROM __c_2 RETURNING *`,
+		"__vis_4 AS NOT MATERIALIZED (\n  SELECT * FROM \"public\".\"users\"\n  UNION ALL SELECT * FROM __mut\n)",
+		"__vis_5 AS NOT MATERIALIZED (\n  SELECT * FROM \"public\".\"places\"\n  UNION ALL SELECT * FROM __c_1\n)",
+		"__vis_6 AS NOT MATERIALIZED (\n  SELECT * FROM \"public\".\"posts\"\n  UNION ALL SELECT * FROM __c_2\n)",
+		"__vis_7 AS NOT MATERIALIZED (\n  SELECT * FROM \"public\".\"comments\"\n  UNION ALL SELECT * FROM __c_3\n)",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Errorf("SQL missing %q:\n%s", want, sql)
+		}
+	}
+	for _, table := range []string{"users", "posts", "comments", "places"} {
+		if ref := `FROM "public"."` + table + `" AS `; strings.Contains(sql, ref) {
+			t.Errorf("payload reads %s instead of its visibility CTE:\n%s", table, sql)
+		}
+	}
+	for range 10 {
+		if again := compileRoot(t, reg, built, query).SQL; again != sql {
+			t.Fatalf("SQL is not deterministic:\n%s\n---\n%s", sql, again)
+		}
+	}
+}
+
+func TestConnectGetsNoVisibilityCTE(t *testing.T) {
+	reg, built := setupWith(t, plugin.NewRegistry(nestedmutations.New(nil)))
+	sql := compileRoot(t, reg, built, `mutation {
+		createPost(input: {title: "Hi", author: {connect: {id: 7}}}) {
+			post { author { email } }
+		}
+	}`).SQL
+	if strings.Contains(sql, `SELECT * FROM "public"."users"`+"\n  UNION ALL") {
+		t.Errorf("a connected parent's table needs no visibility CTE:\n%s", sql)
+	}
+	if !strings.Contains(sql, `FROM "public"."users" AS `) {
+		t.Errorf("connected parent must be read from its table:\n%s", sql)
+	}
+}

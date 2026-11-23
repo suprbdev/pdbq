@@ -161,8 +161,15 @@ per-object filter tuning works even with `smart-comments` disabled.
   first, then the main row, then children), and hands the CTE chain to
   `compile.MutationWithCTEs`, which reuses the core payload compiler. Rows
   inserted in CTEs are invisible to same-statement table scans, so it also
-  passes row-source overrides mapping the child table to a UNION of its
-  insert CTEs.
+  passes row-source overrides mapping every table that received an insert
+  (created parents, the main row, children) to a visibility CTE,
+  `__vis_n AS NOT MATERIALIZED (SELECT * FROM <table> UNION ALL SELECT *
+  FROM <insert CTE> …)`. Every payload relation, connection, `totalCount`,
+  relation filter and relational `orderBy` over that table reads the CTE, so
+  the payload sees the table as it stands after the statement. The table
+  half stays subject to the role's RLS policies, and the `RETURNING` rows
+  already passed them (an `INSERT … RETURNING` whose new row fails a
+  `SELECT` policy is an error, rolling back the whole statement).
 - **RequestHook** — detects nested inputs in the operation and sets
   `op.ForceTx`, so nested mutations are atomic even when
   `transactions.mutations: false`
