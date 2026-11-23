@@ -41,7 +41,8 @@
 //     return `@graphile/postgis`-style objects (GeometryInterface,
 //     GeometryPoint {x y}, GeometryPolygon {exterior interiors}, ...; see
 //     package geotype) instead of the GeoJSON scalar, typed from the column's
-//     typmod. Inputs stay GeoJSON.
+//     typmod; computed columns, function results and composite attributes
+//     too, with GeometryInterface when no typmod is known. Inputs stay GeoJSON.
 //
 // Geometry and geography are both supported. They share the operator
 // vocabulary but differ in units: geography measures in metres, geometry in
@@ -327,27 +328,22 @@ func derivedApplies(d postgis.Derived, c *introspect.Column) bool {
 }
 
 // addTypedGeometry declares the geometry object types of each flavour in use
-// and retypes the spatial column fields of every table type to the type their
-// typmod implies. A flavour whose type names collide with an existing type is
-// left on the GeoJSON scalar.
+// and retypes every non-array spatial output field to the type its typmod
+// implies: table column fields, composite attributes, the output parameters
+// of record-returning functions, computed columns, and the results of query
+// and mutation functions. A function result has no typmod, so it takes the
+// top-level interface. A flavour whose type names collide with an existing
+// type is left on the GeoJSON scalar.
 func (p *Plugin) addTypedGeometry(b *schema.Builder) {
 	type target struct {
 		field *schema.Field
 		typ   geotype.Type
 	}
 	byFlavour := map[postgis.Flavour][]target{}
-	for _, t := range b.Catalog.Tables {
-		obj, ok := b.Objects[b.TypeForTable[t.Schema+"."+t.Name]]
-		if !ok {
-			continue
-		}
-		for _, c := range spatialColumns(t) {
-			if c.IsArray || omit.Column(c, omit.Read) {
-				continue
-			}
-			name := b.Inflect(inflect.KindFieldName, inflect.Input{Schema: t.Schema, Table: t.Name, Column: c.Name})
-			f := obj.Field(name)
-			if f == nil || f.Meta == nil || f.Meta.Kind != schema.KindColumn || f.Meta.Column != c {
+	for _, obj := range b.Objects {
+		for _, f := range obj.Fields {
+			c := spatialOutput(b, f)
+			if c == nil {
 				continue
 			}
 			gt, ok := geotype.ForColumn(c)
@@ -375,6 +371,28 @@ func (p *Plugin) addTypedGeometry(b *schema.Builder) {
 			tg.field.Type = strings.Replace(tg.field.Type, postgis.TypeName, tg.typ.Name(), 1)
 		}
 	}
+}
+
+// spatialOutput returns the column describing the spatial value f reads when
+// f is a non-array output field currently typed as the GeoJSON scalar, or
+// nil.
+func spatialOutput(b *schema.Builder, f *schema.Field) *introspect.Column {
+	if f.Meta == nil || strings.Trim(f.Type, "[]!") != postgis.TypeName {
+		return nil
+	}
+	var c *introspect.Column
+	switch f.Meta.Kind {
+	case schema.KindColumn, schema.KindCompositeField:
+		c = f.Meta.Column
+	case schema.KindFunction, schema.KindComputed, schema.KindPayloadResult:
+		if f.Meta.Function != nil {
+			c = schema.FuncReturnColumn(b.Catalog, f.Meta.Function)
+		}
+	}
+	if c == nil || c.IsArray || !postgis.IsSpatial(c.PGType) {
+		return nil
+	}
+	return c
 }
 
 // typeClash returns the first of types whose name an existing output, input

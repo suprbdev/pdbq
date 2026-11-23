@@ -46,6 +46,20 @@ func buildWith(t testing.TB, settings map[string]any) *schema.Built {
 	t.Helper()
 	cat := testutil.FixtureCatalog()
 	cat.Functions = append(cat.Functions, functionFixtures()...)
+	cat.Composites = append(cat.Composites, &introspect.Composite{
+		Schema: "public", Name: "site",
+		Fields: []*introspect.Column{
+			{Name: "label", Position: 1, PGType: "text", TypeSchema: "pg_catalog", BaseTypeSchema: "pg_catalog"},
+			{Name: "spot", Position: 2, PGType: "geometry", TypeSchema: "public", BaseTypeSchema: "public",
+				Spatial: &introspect.SpatialType{Subtype: introspect.SpatialPoint, SRID: 4326}},
+			{Name: "extent", Position: 3, PGType: "geography", TypeSchema: "public", BaseTypeSchema: "public"},
+		},
+	})
+	cat.Functions = append(cat.Functions, &introspect.Function{
+		Schema: "public", Name: "make_site",
+		Args:       []introspect.FuncArg{{Name: "label", PGType: "text", TypeSchema: "pg_catalog", Mode: introspect.ArgModeIn}},
+		ReturnType: "site", ReturnTypeSchema: "public", Volatility: introspect.VolatilityStable,
+	})
 	return buildCatalog(t, cat, settings)
 }
 
@@ -197,6 +211,26 @@ func functionFixtures() []*introspect.Function {
 			withDefault(in("max_dist", "float8", "pg_catalog"), "1000"),
 		},
 		ReturnType: "places", ReturnTypeSchema: "public", ReturnsSet: true, Volatility: stable,
+	}, {
+		Schema: "public", Name: "places_centroid",
+		Args:       []introspect.FuncArg{in("p", "places", "public")},
+		ReturnType: "geometry", ReturnTypeSchema: "public", Volatility: stable,
+	}, {
+		Schema: "public", Name: "places_outline",
+		Args:       []introspect.FuncArg{in("p", "places", "public")},
+		ReturnType: "geometry", ReturnTypeSchema: "public", ReturnsSet: true, Volatility: stable,
+	}, {
+		Schema: "public", Name: "make_point",
+		Args:       []introspect.FuncArg{in("x", "float8", "pg_catalog"), in("y", "float8", "pg_catalog")},
+		ReturnType: "geometry", ReturnTypeSchema: "public", Volatility: stable,
+	}, {
+		Schema: "public", Name: "grid_points",
+		Args:       []introspect.FuncArg{in("n", "int4", "pg_catalog")},
+		ReturnType: "geography", ReturnTypeSchema: "public", ReturnsSet: true, Volatility: stable,
+	}, {
+		Schema: "public", Name: "snap_point",
+		Args:       []introspect.FuncArg{in("pt", "geometry", "public")},
+		ReturnType: "geometry", ReturnTypeSchema: "public", Volatility: introspect.VolatilityVolatile,
 	}, {
 		Schema: "public", Name: "record_visit",
 		Args:          []introspect.FuncArg{out("spot", "geometry", "public", introspect.ArgModeInOut), withDefault(in("note", "jsonb", "pg_catalog"), "NULL::jsonb")},

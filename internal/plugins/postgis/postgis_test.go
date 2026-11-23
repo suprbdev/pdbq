@@ -490,3 +490,89 @@ func TestDistanceFields(t *testing.T) {
 		t.Error("the distance field shadowed a real column")
 	}
 }
+
+func geometryOutputs(cat *introspect.Catalog) {
+	cat.Composites = append(cat.Composites, &introspect.Composite{
+		Schema: "public", Name: "site",
+		Fields: []*introspect.Column{
+			{Name: "spot", Position: 1, PGType: "geometry", TypeSchema: "public",
+				Spatial: &introspect.SpatialType{Subtype: introspect.SpatialPoint, SRID: 4326}},
+			{Name: "extent", Position: 2, PGType: "geography", TypeSchema: "public"},
+			{Name: "trail", Position: 3, PGType: "_geometry", TypeSchema: "public", IsArray: true},
+			{Name: "arc", Position: 4, PGType: "geometry", TypeSchema: "public",
+				Spatial: &introspect.SpatialType{Subtype: "CircularString", SRID: 4326}},
+		},
+	})
+	in := func(name, typ string) introspect.FuncArg {
+		return introspect.FuncArg{Name: name, PGType: typ, TypeSchema: "public", Mode: introspect.ArgModeIn}
+	}
+	stable, volatile := introspect.VolatilityStable, introspect.VolatilityVolatile
+	cat.Functions = append(cat.Functions,
+		&introspect.Function{Schema: "public", Name: "places_centroid", Args: []introspect.FuncArg{in("p", "places")},
+			ReturnType: "geometry", ReturnTypeSchema: "public", Volatility: stable},
+		&introspect.Function{Schema: "public", Name: "places_outline", Args: []introspect.FuncArg{in("p", "places")},
+			ReturnType: "geometry", ReturnTypeSchema: "public", ReturnsSet: true, Volatility: stable},
+		&introspect.Function{Schema: "public", Name: "places_trail", Args: []introspect.FuncArg{in("p", "places")},
+			ReturnType: "_geometry", ReturnTypeSchema: "public", Volatility: stable},
+		&introspect.Function{Schema: "public", Name: "make_point",
+			ReturnType: "geometry", ReturnTypeSchema: "public", Volatility: stable},
+		&introspect.Function{Schema: "public", Name: "grid_points",
+			ReturnType: "geography", ReturnTypeSchema: "public", ReturnsSet: true, Volatility: stable},
+		&introspect.Function{Schema: "public", Name: "snap_point", Args: []introspect.FuncArg{in("pt", "geometry")},
+			ReturnType: "geometry", ReturnTypeSchema: "public", Volatility: volatile},
+		&introspect.Function{Schema: "public", Name: "make_site",
+			ReturnType: "site", ReturnTypeSchema: "public", Volatility: stable},
+	)
+}
+
+func TestTypedGeometryFunctionOutputs(t *testing.T) {
+	b := buildWith(t, map[string]any{"typed_geometry": true}, geometryOutputs)
+	for _, tc := range []struct {
+		obj, field, want string
+	}{
+		{"Place", "centroid", "GeometryInterface"},
+		{"Place", "outline", "[GeometryInterface!]!"},
+		{"Place", "trail", "[GeoJSON!]"},
+		{"Query", "makePoint", "GeometryInterface"},
+		{"Query", "gridPoints", "[GeographyInterface!]!"},
+		{"SnapPointPayload", "geoJson", "GeometryInterface"},
+		{"Site", "spot", "GeometryPoint"},
+		{"Site", "extent", "GeographyInterface"},
+		{"Site", "trail", "[GeoJSON!]"},
+		{"Site", "arc", "GeoJSON"},
+	} {
+		f := b.Objects[tc.obj].Field(tc.field)
+		if f == nil {
+			t.Errorf("%s.%s missing", tc.obj, tc.field)
+			continue
+		}
+		if f.Type != tc.want {
+			t.Errorf("%s.%s type = %q, want %q", tc.obj, tc.field, f.Type, tc.want)
+		}
+	}
+}
+
+// Without typed_geometry the new outputs stay on the GeoJSON scalar and the
+// schema is the same as with the setting explicitly off.
+func TestTypedGeometryFunctionOutputsOffIsIdentical(t *testing.T) {
+	sdl := func(settings map[string]any) string {
+		t.Helper()
+		built, err := buildWith(t, settings, geometryOutputs).Build()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return built.SDL
+	}
+	def := sdl(nil)
+	if off := sdl(map[string]any{"typed_geometry": false}); off != def {
+		t.Error("typed_geometry: false changed the schema")
+	}
+	for _, want := range []string{"  centroid: GeoJSON\n", "makePoint: GeoJSON", "gridPoints: [GeoJSON!]!", "  spot: GeoJSON\n"} {
+		if !strings.Contains(def, want) {
+			t.Errorf("default SDL missing %q", want)
+		}
+	}
+	if strings.Contains(def, "GeometryInterface") {
+		t.Error("typed geometry types generated without typed_geometry")
+	}
+}

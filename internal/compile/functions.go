@@ -9,6 +9,8 @@ import (
 
 	"github.com/suprbdev/pdbcore/inflect"
 	"github.com/suprbdev/pdbcore/introspect"
+	"github.com/suprbdev/pdbcore/postgis"
+	"github.com/suprbdev/pdbq/internal/geotype"
 	"github.com/suprbdev/pdbq/internal/schema"
 )
 
@@ -157,21 +159,39 @@ func (s *stmt) fnReturnColumn(fn *introspect.Function) *introspect.Column {
 	return schema.FuncReturnColumn(s.c.Built.Catalog, fn)
 }
 
+// fnTypedGeometry reports whether the non-array geometry or geography result
+// of fn is declared on result field f as a geometry object type
+// (typed_geometry) rather than the GeoJSON scalar.
+func (s *stmt) fnTypedGeometry(fn *introspect.Function, f *ast.Field) (geotype.Type, bool) {
+	ret := s.fnReturnColumn(fn)
+	if f == nil || f.Definition == nil || ret.IsArray || !postgis.IsSpatial(ret.PGType) {
+		return geotype.Type{}, false
+	}
+	return geotype.Parse(f.Definition.Type.Name())
+}
+
 // fnValueJSON renders an already-materialized function result value (a stable
-// reference such as "__fn.v", not a call expression) as response JSON; sel
-// is the result field's selection (range objects).
-func (s *stmt) fnValueJSON(ref string, fn *introspect.Function, sel ast.SelectionSet) string {
+// reference such as "__fn.v", not a call expression) as response JSON; f is
+// the result field, whose selection set shapes range and geometry objects.
+func (s *stmt) fnValueJSON(ref string, fn *introspect.Function, f *ast.Field) (string, error) {
+	var sel ast.SelectionSet
+	if f != nil {
+		sel = f.SelectionSet
+	}
+	if gt, ok := s.fnTypedGeometry(fn, f); ok {
+		return s.typedGeometrySQL(ref, gt, sel, 1)
+	}
 	ret := s.fnReturnColumn(fn)
 	if expr, ok := s.contribJSON(ref, ret, sel); ok {
-		return expr
+		return expr, nil
 	}
 	if ret.IsArray {
 		if expr, ok := s.enumArrayJSON(ref, ret); ok {
-			return expr
+			return expr, nil
 		}
-		return arrayJSON(ref, ret)
+		return arrayJSON(ref, ret), nil
 	}
-	return "to_json(" + s.exprJSON(ref, ret) + ")"
+	return "to_json(" + s.exprJSON(ref, ret) + ")", nil
 }
 
 // fnCompositeJSON compiles sel over an already-materialized composite (or
@@ -217,8 +237,11 @@ func (s *stmt) function(meta *schema.FieldMeta, f *ast.Field) (string, error) {
 			}
 			return fmt.Sprintf("SELECT coalesce(json_agg(%s), '[]'::json) AS data FROM (SELECT %s AS v) AS __v", expr, call), nil
 		}
-		return fmt.Sprintf("SELECT coalesce(json_agg(%s), '[]'::json) AS data FROM %s AS __v",
-			s.fnValueJSON("__v", fn, f.SelectionSet), call), nil
+		value, err := s.fnValueJSON("__v", fn, f)
+		if err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("SELECT coalesce(json_agg(%s), '[]'::json) AS data FROM %s AS __v", value, call), nil
 	}
 	switch shape {
 	case fnRows:
@@ -244,8 +267,11 @@ func (s *stmt) function(meta *schema.FieldMeta, f *ast.Field) (string, error) {
 	// Materialize the call first: fnValueJSON may subscript the value (enum
 	// arrays), and subscripting the call directly would re-evaluate it per
 	// element.
-	return fmt.Sprintf("SELECT %s AS data FROM (SELECT %s AS v) AS __fn",
-		s.fnValueJSON("__fn.v", fn, f.SelectionSet), call), nil
+	value, err := s.fnValueJSON("__fn.v", fn, f)
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("SELECT %s AS data FROM (SELECT %s AS v) AS __fn", value, call), nil
 }
 
 // functionMutation compiles a volatile function with PostGraphile's payload
@@ -515,8 +541,11 @@ func (s *stmt) functionPayload(fn *introspect.Function, call string, f *ast.Fiel
 			}
 			from = fmt.Sprintf("(SELECT coalesce(json_agg(%s), '[]'::json) AS data FROM (SELECT %s AS v) AS __v) AS __agg", expr, call)
 		default:
-			from = fmt.Sprintf("(SELECT coalesce(json_agg(%s), '[]'::json) AS data FROM %s AS __v) AS __agg",
-				s.fnValueJSON("__v", fn, resultSel), call)
+			value, err := s.fnValueJSON("__v", fn, resultField)
+			if err != nil {
+				return "", err
+			}
+			from = fmt.Sprintf("(SELECT coalesce(json_agg(%s), '[]'::json) AS data FROM %s AS __v) AS __agg", value, call)
 		}
 		resultExpr = "__agg.data"
 	case row != nil || shape == fnRows:
@@ -540,7 +569,11 @@ func (s *stmt) functionPayload(fn *introspect.Function, call string, f *ast.Fiel
 	default:
 		from = fmt.Sprintf("(SELECT %s AS v) AS __fn", call)
 		if fn.ReturnType != "void" {
-			resultExpr = s.fnValueJSON("__fn.v", fn, resultSel)
+			var err error
+			resultExpr, err = s.fnValueJSON("__fn.v", fn, resultField)
+			if err != nil {
+				return "", err
+			}
 		}
 	}
 
@@ -631,14 +664,23 @@ func (s *stmt) computedJSON(meta *schema.FieldMeta, f *ast.Field, alias string, 
 		}
 		return fmt.Sprintf("(SELECT %s FROM (SELECT %s AS v) AS %s)", expr, call, sub), nil
 	}
+	gt, typed := s.fnTypedGeometry(fn, f)
 	if fn.ReturnsSet {
 		elem := s.alias("v")
 		value, ok := s.contribJSON(elem+".v", ret, f.SelectionSet)
-		if !ok {
+		switch {
+		case typed:
+			if value, err = s.typedGeometrySQL(elem+".v", gt, f.SelectionSet, depth); err != nil {
+				return "", err
+			}
+		case !ok:
 			value = s.exprJSON(elem+".v", ret)
 		}
 		return fmt.Sprintf("(SELECT coalesce(json_agg(%s), '[]'::json) FROM %s AS %s(v))",
 			value, call, elem), nil
+	}
+	if typed {
+		return s.typedGeometrySQL(call, gt, f.SelectionSet, depth)
 	}
 	if expr, ok := s.contribJSON(call, ret, f.SelectionSet); ok {
 		return expr, nil

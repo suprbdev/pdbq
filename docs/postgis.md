@@ -420,12 +420,38 @@ JSON operators, so only the selected fields are built. Interface fields
 dispatch on `__typename` with a `CASE` that has an arm only for the types
 whose selections differ.
 
-**Unchanged:** inputs (filters, `createX`, `updateX`) still take GeoJSON or
-WKT, derived accessors (`locationCentroid`, …) still return `GeoJSON`, and
-spatial arrays, composite-type attributes and function results stay on the
-scalar. If a table or composite type already uses one of the generated names
-(say a `geometry_points` table, whose type is `GeometryPoint`), that flavour
-keeps the scalar and pdbq logs a warning.
+**Function results and composite attributes.** The same typing applies to
+every other non-array geometry or geography output, as in
+`@graphile/postgis`:
+
+| Output | Field type |
+|---|---|
+| computed column (`places_centroid(p places) RETURNS geometry`) | `GeometryInterface` |
+| query function (`RETURNS geometry`, `RETURNS SETOF geography`) | `GeometryInterface`, `[GeographyInterface!]!` |
+| mutation function's result field | `GeometryInterface` |
+| `OUT`/`TABLE` parameter of a record-returning function | by flavour, interface |
+| composite attribute `spot geometry(Point, 4326)` | `GeometryPoint` |
+| composite attribute `extent geography` | `GeographyInterface` |
+
+A function declares `geometry` without a type modifier, so its result is
+unconstrained and dispatches on `__typename` like an unconstrained column
+(select subtype fields with inline fragments). A composite attribute keeps
+its typmod, so it resolves to the same concrete type a table column would.
+Names are unchanged: a volatile function returning `geometry` still has the
+result field `geoJson`. Curve and surface subtypes, and NULL results, behave
+as for columns (`null` for a NULL value).
+
+The `transform:` and `simplify:` arguments exist only on table column fields.
+Function results, computed columns and composite attributes take none, so
+they are encoded as the value comes out of the database; reproject or
+simplify inside the function when needed.
+
+**Unchanged:** inputs (filters, `createX`, `updateX`, function arguments)
+still take GeoJSON or WKT, derived accessors (`locationCentroid`, …) still
+return `GeoJSON`, and spatial arrays (`geometry[]` columns, attributes and
+function results) stay on the scalar. If a table or composite type already
+uses one of the generated names (say a `geometry_points` table, whose type
+is `GeometryPoint`), that flavour keeps the scalar and pdbq logs a warning.
 
 ## Indexing
 

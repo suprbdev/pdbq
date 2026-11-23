@@ -1,0 +1,13 @@
+# Typed geometry in mutation payloads: a volatile function returning geometry
+# and one with a geometry OUT parameter both take the typed object.
+mutation {
+  snap: snapPoint(input: {pt: {type: "Point", coordinates: [1, 2]}}) {
+    geoJson { __typename srid ... on GeometryPoint { x y } }
+  }
+  visit: recordVisit(input: {spot: {type: "Point", coordinates: [1, 2]}}) {
+    result {
+      visitId
+      spot { __typename srid }
+    }
+  }
+}

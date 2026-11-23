@@ -105,7 +105,7 @@ $ pdbq config example   # print the full annotated reference
 | `plugins.settings.nested-mutations.force_transactions` | `true` | run operations using nested mutation fields in a transaction even when `transactions.mutations` is false; see [Plugins](plugins.md#worked-example-4-nested-mutations) |
 | `plugins.settings.nested-mutations.max_depth` | `3` | nesting levels of nested mutation fields per root field |
 | `plugins.settings.nested-mutations.max_operations` | `50` | nested operations per root field (each list item counts once); more is a client error |
-| `plugins.settings.postgis.typed_geometry` | `false` | spatial columns read as typed geometry objects (`GeometryPoint { x y }`, …) instead of the `GeoJSON` scalar; see [PostGIS](postgis.md#typed-geometry) |
+| `plugins.settings.postgis.typed_geometry` | `false` | spatial columns, computed columns, function results and composite attributes read as typed geometry objects (`GeometryPoint { x y }`, …) instead of the `GeoJSON` scalar; see [PostGIS](postgis.md#typed-geometry) |
 | `log.level` | `info` | `debug`, `info`, `warn`, `error` |
 | `log.format` | `text` | `text` or `json` |
 | `metrics.enabled` | `false` | serve Prometheus metrics; see [Metrics](metrics.md) |
