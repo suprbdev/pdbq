@@ -42,5 +42,5 @@ require (
 
 require (
 	github.com/coder/websocket v1.8.15
-	github.com/suprbdev/pdbcore v0.7.0
+	github.com/suprbdev/pdbcore v0.7.1
 )
