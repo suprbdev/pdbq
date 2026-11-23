@@ -34,19 +34,19 @@ LEFT JOIN LATERAL (
   ) AS __l_3 ON true
   LEFT JOIN LATERAL (
     SELECT json_build_object('totalCount', (SELECT count(*) FROM __vis_5 AS __c_6
-    WHERE __c_6."post_id" = __t_1."id")::int, 'nodes', coalesce(json_agg(__s_5.ndata ORDER BY __s_5.__rn ASC) FILTER (WHERE __s_5.__rn <= $8), '[]'::json)) AS data
+    WHERE __c_6."post_id" = __t_1."id")::int, 'nodes', coalesce(json_agg(__s_5.ndata ORDER BY __s_5.__rn ASC) FILTER (WHERE __s_5.__rn <= $7), '[]'::json)) AS data
     FROM (
       SELECT json_build_object('body', __t_4."body") AS ndata, row_number() OVER (ORDER BY __t_4."id" ASC) AS __rn
       FROM __vis_5 AS __t_4
       WHERE __t_4."post_id" = __t_1."id"
       ORDER BY __t_4."id" ASC
-      LIMIT $7
+      LIMIT 101
     ) AS __s_5
     GROUP BY ()
   ) AS __l_7 ON true
 ) AS __guarded ON true
 WHERE __guard.ok
--- args: [1,"T","ada@example.com",3,"2","edited",101,100]
+-- args: [1,"T","ada@example.com",3,"2","edited",100]
 
 -- field: updateCommentById
 WITH __mut AS (
@@ -74,19 +74,19 @@ LEFT JOIN LATERAL (
   SELECT json_build_object('comment', json_build_object('parentId', __t_1."parent_id", 'commentsByParentId', __l_4.data)) AS data
   FROM __mut AS __t_1
   LEFT JOIN LATERAL (
-    SELECT json_build_object('nodes', coalesce(json_agg(__s_3.ndata ORDER BY __s_3.__rn ASC) FILTER (WHERE __s_3.__rn <= $6), '[]'::json)) AS data
+    SELECT json_build_object('nodes', coalesce(json_agg(__s_3.ndata ORDER BY __s_3.__rn ASC) FILTER (WHERE __s_3.__rn <= $5), '[]'::json)) AS data
     FROM (
       SELECT json_build_object('id', __t_2."id") AS ndata, row_number() OVER (ORDER BY __t_2."id" ASC) AS __rn
       FROM __vis_3 AS __t_2
       WHERE __t_2."parent_id" = __t_1."id"
       ORDER BY __t_2."id" ASC
-      LIMIT $5
+      LIMIT 101
     ) AS __s_3
     GROUP BY ()
   ) AS __l_4 ON true
 ) AS __guarded ON true
 WHERE __guard.ok
--- args: [5,4,6,7,101,100]
+-- args: [5,4,6,7,100]
 
 -- field: updateUserById
 WITH __mut AS (
@@ -115,13 +115,13 @@ LEFT JOIN LATERAL (
       FROM __vis_2 AS __t_2
       WHERE __t_2."owner_id" = __t_1."id"
       ORDER BY __t_2."id" ASC
-      LIMIT $3
+      LIMIT 101
     ) AS __s_3
     GROUP BY ()
   ) AS __l_5 ON true
 ) AS __guarded ON true
 WHERE __guard.ok
--- args: [1,"Home",101]
+-- args: [1,"Home"]
 
 -- field: updatePlaceById
 WITH __d_1 AS (

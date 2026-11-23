@@ -14,19 +14,19 @@ LEFT JOIN LATERAL (
   SELECT json_build_object('bookingNote', json_build_object('id', __t_1."id", 'roomBookingsByRoomIdAndValidAt', __l_4.data)) AS data
   FROM __mut AS __t_1
   LEFT JOIN LATERAL (
-    SELECT json_build_object('nodes', coalesce(json_agg(__s_3.ndata ORDER BY __s_3.__rn ASC) FILTER (WHERE __s_3.__rn <= $8), '[]'::json)) AS data
+    SELECT json_build_object('nodes', coalesce(json_agg(__s_3.ndata ORDER BY __s_3.__rn ASC) FILTER (WHERE __s_3.__rn <= $7), '[]'::json)) AS data
     FROM (
       SELECT json_build_object('guest', __t_2."guest") AS ndata, row_number() OVER (ORDER BY __t_2."room_id" ASC, __t_2."valid_at" ASC) AS __rn
       FROM "public"."room_bookings" AS __t_2
       WHERE __t_2."room_id" = __t_1."room_id" AND __t_2."valid_at" && __t_1."valid_at"
       ORDER BY __t_2."room_id" ASC, __t_2."valid_at" ASC
-      LIMIT $7
+      LIMIT 101
     ) AS __s_3
     GROUP BY ()
   ) AS __l_4 ON true
 ) AS __guarded ON true
 WHERE __guard.ok
--- args: [1,"Late arrival","2026-03-02","2026-03-04","[)",1,101,100]
+-- args: [1,"Late arrival","2026-03-02","2026-03-04","[)",1,100]
 
 -- field: createRoomBooking
 WITH __mut AS (
@@ -42,17 +42,17 @@ __vis_3 AS NOT MATERIALIZED (
 SELECT json_build_object('roomBooking', json_build_object('guest', __t_1."guest", 'bookingNotesByRoomIdAndValidAt', __l_4.data)) AS data
 FROM __mut AS __t_1
 LEFT JOIN LATERAL (
-  SELECT json_build_object('nodes', coalesce(json_agg(__s_3.ndata ORDER BY __s_3.__rn ASC) FILTER (WHERE __s_3.__rn <= $12), '[]'::json)) AS data
+  SELECT json_build_object('nodes', coalesce(json_agg(__s_3.ndata ORDER BY __s_3.__rn ASC) FILTER (WHERE __s_3.__rn <= $11), '[]'::json)) AS data
   FROM (
     SELECT json_build_object('note', __t_2."note") AS ndata, row_number() OVER (ORDER BY __t_2."id" ASC) AS __rn
     FROM __vis_3 AS __t_2
     WHERE __t_2."room_id" = __t_1."room_id" AND __t_2."valid_at" && __t_1."valid_at"
     ORDER BY __t_2."id" ASC
-    LIMIT $11
+    LIMIT 101
   ) AS __s_3
   GROUP BY ()
 ) AS __l_4 ON true
--- args: ["Ada",3,"2026-05-01","2026-05-10","[)",1,"Early","2026-05-02","2026-05-03","[)",101,100]
+-- args: ["Ada",3,"2026-05-01","2026-05-10","[)",1,"Early","2026-05-02","2026-05-03","[)",100]
 
 -- field: updateRoomBookingByRoomIdAndValidAt
 WITH __mut AS (

@@ -456,6 +456,12 @@ func (s *stmt) connectionQuery(meta *schema.FieldMeta, f *ast.Field) (string, er
 //     reverses the scan and the outer aggregates re-reverse.
 //   - offset (PK-less tables, or legacy "o:<n>" cursors): the original
 //     row_number()+OFFSET shapes.
+//
+// When the rows embed relations (and no distinctOn applies), the page is
+// cut in a subquery reading only the columns the selection needs, and the
+// relation laterals join onto that page, so they run once per returned row
+// rather than for every row the sort reads. LIMIT is a literal, which lets
+// PostgreSQL reuse a generic plan for the prepared statement.
 func (s *stmt) connectionJSON(t *introspect.Table, f *ast.Field, extraCond string, depth int) (string, error) {
 	typeName := s.c.Built.TypeForTable[t.Schema+"."+t.Name]
 	connType := typeName + "Connection"
@@ -549,7 +555,6 @@ func (s *stmt) connectionJSON(t *introspect.Table, f *ast.Field, extraCond strin
 	if o := s.renderOrder(t, terms, alias, plan.reversed); o != "" {
 		rn = "row_number() OVER (" + strings.TrimPrefix(o, "\n") + ") AS " + rnName
 	}
-	selectCols = append(selectCols, rn)
 	conds := []string{}
 	if extraCond != "" {
 		conds = append(conds, strings.ReplaceAll(extraCond, "%%ALIAS%%", alias))
@@ -577,9 +582,9 @@ func (s *stmt) connectionJSON(t *introspect.Table, f *ast.Field, extraCond strin
 	trimParam := "" // placeholder trimming the +1 detection row (keyset mode)
 	if plan.limit >= 0 {
 		if plan.predKeyset {
-			limit = "\nLIMIT " + s.param(plan.limit+1)
+			limit = "\nLIMIT " + strconv.Itoa(plan.limit+1)
 		} else {
-			limit = "\nLIMIT " + s.param(plan.limit)
+			limit = "\nLIMIT " + strconv.Itoa(plan.limit)
 		}
 	}
 	pageOffset := ""
@@ -594,9 +599,27 @@ func (s *stmt) connectionJSON(t *introspect.Table, f *ast.Field, extraCond strin
 		}
 		distinct = "DISTINCT ON (" + strings.Join(refs, ", ") + ") "
 	}
-	inner := fmt.Sprintf("SELECT %s%s\nFROM %s AS %s%s%s%s%s%s",
-		distinct, strings.Join(selectCols, ", "), s.sourceRef(t, alias), alias,
-		joinLaterals(innerLaterals), where, order, limit, pageOffset)
+	var pageCols []string
+	if len(innerLaterals) > 0 && distinct == "" {
+		pageCols = s.pageColumns(t, alias, strings.Join(selectCols, ", ")+joinLaterals(innerLaterals))
+	}
+	var inner string
+	if len(pageCols) > 0 {
+		refs := make([]string, 0, len(pageCols)+1)
+		for _, c := range pageCols {
+			refs = append(refs, alias+"."+quoteIdent(c))
+		}
+		page := fmt.Sprintf("SELECT %s\nFROM %s AS %s%s%s%s%s",
+			strings.Join(append(refs, rn), ", "), s.sourceRef(t, alias), alias, where, order, limit, pageOffset)
+		selectCols = append(selectCols, alias+"."+rnName)
+		inner = fmt.Sprintf("SELECT %s\nFROM (\n%s\n) AS %s%s",
+			strings.Join(selectCols, ", "), indent(page), alias, joinLaterals(innerLaterals))
+	} else {
+		selectCols = append(selectCols, rn)
+		inner = fmt.Sprintf("SELECT %s%s\nFROM %s AS %s%s%s%s%s%s",
+			distinct, strings.Join(selectCols, ", "), s.sourceRef(t, alias), alias,
+			joinLaterals(innerLaterals), where, order, limit, pageOffset)
+	}
 	if len(dcols) > 0 {
 		// Renumber the distinct survivors so offset cursors stay dense.
 		w := s.alias("d")
@@ -757,6 +780,17 @@ func (s *stmt) connectionJSON(t *introspect.Table, f *ast.Field, extraCond strin
 	// no aggregate calls, and without it an empty page would compile to zero
 	// rows and surface as JSON null instead of a connection object.
 	return fmt.Sprintf("SELECT %s AS data\nFROM (\n%s\n) AS %s\nGROUP BY ()", buildJSONObject(pairs), indent(inner), sub), nil
+}
+
+// pageColumns returns, in table order, the columns of t that sql reads
+// through alias, counting the column behind each pending rank marker in sql.
+func (s *stmt) pageColumns(t *introspect.Table, alias, sql string) []string {
+	for i, r := range s.rankRefs {
+		if strings.Contains(sql, rankMarkerText(i)) {
+			sql += "\n" + r.render
+		}
+	}
+	return referencedColumns(t, sql, []string{alias})
 }
 
 // trimOrParam reuses the trim placeholder when aggFilter already created one,

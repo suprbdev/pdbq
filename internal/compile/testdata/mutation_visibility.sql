@@ -15,20 +15,20 @@ LEFT JOIN LATERAL (
   FROM "public"."users" AS __t_2
   LEFT JOIN LATERAL (
     SELECT json_build_object('totalCount', (SELECT count(*) FROM __vis AS __c_5
-    WHERE __c_5."author_id" = __t_2."id" AND __c_5."title" LIKE $6)::int, 'nodes', coalesce(json_agg(__s_4.ndata ORDER BY __s_4.__rn ASC) FILTER (WHERE __s_4.__rn <= $5), '[]'::json)) AS data
+    WHERE __c_5."author_id" = __t_2."id" AND __c_5."title" LIKE $5)::int, 'nodes', coalesce(json_agg(__s_4.ndata ORDER BY __s_4.__rn ASC) FILTER (WHERE __s_4.__rn <= $4), '[]'::json)) AS data
     FROM (
       SELECT json_build_object('title', __t_3."title") AS ndata, row_number() OVER (ORDER BY __t_3."id" ASC) AS __rn
       FROM __vis AS __t_3
       WHERE __t_3."author_id" = __t_2."id" AND __t_3."title" LIKE $3
       ORDER BY __t_3."id" ASC
-      LIMIT $4
+      LIMIT 101
     ) AS __s_4
     GROUP BY ()
   ) AS __l_6 ON true
   WHERE __t_2."id" = __t_1."author_id"
   LIMIT 1
 ) AS __l_7 ON true
--- args: [1,"New","N%",101,100,"N%"]
+-- args: [1,"New","N%",100,"N%"]
 
 -- field: createComment
 WITH __mut AS (
@@ -53,14 +53,14 @@ LEFT JOIN LATERAL (
       FROM __vis AS __t_3
       WHERE __t_3."parent_id" = __t_2."id"
       ORDER BY __t_3."id" ASC
-      LIMIT $4
+      LIMIT 101
     ) AS __s_4
     GROUP BY ()
   ) AS __l_6 ON true
   WHERE __t_2."id" = __t_1."parent_id"
   LIMIT 1
 ) AS __l_7 ON true
--- args: ["Reply",3,1,101]
+-- args: ["Reply",3,1]
 
 -- field: updatePostById
 WITH __mut AS (
@@ -79,20 +79,20 @@ LEFT JOIN LATERAL (
   SELECT json_build_object('postsByAuthorId', __l_5.data) AS data
   FROM "public"."users" AS __t_2
   LEFT JOIN LATERAL (
-    SELECT json_build_object('nodes', coalesce(json_agg(__s_4.ndata ORDER BY __s_4.__rn ASC) FILTER (WHERE __s_4.__rn <= $4), '[]'::json)) AS data
+    SELECT json_build_object('nodes', coalesce(json_agg(__s_4.ndata ORDER BY __s_4.__rn ASC) FILTER (WHERE __s_4.__rn <= $3), '[]'::json)) AS data
     FROM (
       SELECT json_build_object('id', __t_3."id", 'title', __t_3."title") AS ndata, row_number() OVER (ORDER BY __t_3."title" ASC, __t_3."id" ASC) AS __rn
       FROM __vis AS __t_3
       WHERE __t_3."author_id" = __t_2."id"
       ORDER BY __t_3."title" ASC, __t_3."id" ASC
-      LIMIT $3
+      LIMIT 101
     ) AS __s_4
     GROUP BY ()
   ) AS __l_5 ON true
   WHERE __t_2."id" = __t_1."author_id"
   LIMIT 1
 ) AS __l_6 ON true
--- args: ["Renamed",1,101,100]
+-- args: ["Renamed",1,100]
 
 -- field: updateUserByEmail
 WITH __mut AS (
@@ -108,23 +108,26 @@ __vis AS NOT MATERIALIZED (
 SELECT json_build_object('user', json_build_object('email', __t_1."email", 'postsByAuthorId', __l_6.data)) AS data
 FROM __mut AS __t_1
 LEFT JOIN LATERAL (
-  SELECT json_build_object('nodes', coalesce(json_agg(__s_5.ndata ORDER BY __s_5.__rn ASC) FILTER (WHERE __s_5.__rn <= $4), '[]'::json)) AS data
+  SELECT json_build_object('nodes', coalesce(json_agg(__s_5.ndata ORDER BY __s_5.__rn ASC) FILTER (WHERE __s_5.__rn <= $3), '[]'::json)) AS data
   FROM (
-    SELECT json_build_object('author', __l_4.data) AS ndata, row_number() OVER (ORDER BY __t_2."id" ASC) AS __rn
-    FROM "public"."posts" AS __t_2
+    SELECT json_build_object('author', __l_4.data) AS ndata, __t_2.__rn
+    FROM (
+      SELECT __t_2."author_id", row_number() OVER (ORDER BY __t_2."id" ASC) AS __rn
+      FROM "public"."posts" AS __t_2
+      WHERE __t_2."author_id" = __t_1."id"
+      ORDER BY __t_2."id" ASC
+      LIMIT 101
+    ) AS __t_2
     LEFT JOIN LATERAL (
       SELECT json_build_object('email', __t_3."email") AS data
       FROM __vis AS __t_3
       WHERE __t_3."id" = __t_2."author_id"
       LIMIT 1
     ) AS __l_4 ON true
-    WHERE __t_2."author_id" = __t_1."id"
-    ORDER BY __t_2."id" ASC
-    LIMIT $3
   ) AS __s_5
   GROUP BY ()
 ) AS __l_6 ON true
--- args: ["z@b.c","a@b.c",101,100]
+-- args: ["z@b.c","a@b.c",100]
 
 -- field: upsertUserByEmail
 WITH __mut AS (
@@ -141,23 +144,26 @@ __vis AS NOT MATERIALIZED (
 SELECT json_build_object('user', json_build_object('email', __t_1."email", 'postsByAuthorId', __l_6.data)) AS data
 FROM __mut AS __t_1
 LEFT JOIN LATERAL (
-  SELECT json_build_object('nodes', coalesce(json_agg(__s_5.ndata ORDER BY __s_5.__rn ASC) FILTER (WHERE __s_5.__rn <= $4), '[]'::json)) AS data
+  SELECT json_build_object('nodes', coalesce(json_agg(__s_5.ndata ORDER BY __s_5.__rn ASC) FILTER (WHERE __s_5.__rn <= $3), '[]'::json)) AS data
   FROM (
-    SELECT json_build_object('author', __l_4.data) AS ndata, row_number() OVER (ORDER BY __t_2."id" ASC) AS __rn
-    FROM "public"."posts" AS __t_2
+    SELECT json_build_object('author', __l_4.data) AS ndata, __t_2.__rn
+    FROM (
+      SELECT __t_2."author_id", row_number() OVER (ORDER BY __t_2."id" ASC) AS __rn
+      FROM "public"."posts" AS __t_2
+      WHERE __t_2."author_id" = __t_1."id"
+      ORDER BY __t_2."id" ASC
+      LIMIT 101
+    ) AS __t_2
     LEFT JOIN LATERAL (
       SELECT json_build_object('fullName', __t_3."full_name") AS data
       FROM __vis AS __t_3
       WHERE __t_3."id" = __t_2."author_id"
       LIMIT 1
     ) AS __l_4 ON true
-    WHERE __t_2."author_id" = __t_1."id"
-    ORDER BY __t_2."id" ASC
-    LIMIT $3
   ) AS __s_5
   GROUP BY ()
 ) AS __l_6 ON true
--- args: ["a@b.c","Ada",101,100]
+-- args: ["a@b.c","Ada",100]
 
 -- field: deletePostById
 WITH __mut AS (
@@ -181,14 +187,14 @@ LEFT JOIN LATERAL (
       FROM __vis AS __t_3
       WHERE __t_3."author_id" = __t_2."id"
       ORDER BY __t_3."id" ASC
-      LIMIT $2
+      LIMIT 101
     ) AS __s_4
     GROUP BY ()
   ) AS __l_6 ON true
   WHERE __t_2."id" = __t_1."author_id"
   LIMIT 1
 ) AS __l_7 ON true
--- args: [1,101]
+-- args: [1]
 
 -- field: createPosts
 WITH __mut AS (
@@ -215,7 +221,7 @@ SELECT json_build_object('posts', (SELECT coalesce(json_agg(__s_8.data), '[]'::j
         FROM __vis AS __t_3
         WHERE __t_3."author_id" = __t_2."id"
         ORDER BY __t_3."id" ASC
-        LIMIT $5
+        LIMIT 101
       ) AS __s_4
       GROUP BY ()
     ) AS __l_6 ON true
@@ -223,7 +229,7 @@ SELECT json_build_object('posts', (SELECT coalesce(json_agg(__s_8.data), '[]'::j
     LIMIT 1
   ) AS __l_7 ON true
 ) AS __s_8)) AS data
--- args: [1,"A",1,"B",101]
+-- args: [1,"A",1,"B"]
 
 -- field: updatePosts
 WITH __mut AS (
@@ -244,13 +250,13 @@ SELECT json_build_object('posts', (SELECT coalesce(json_agg(__s_8.data), '[]'::j
     FROM "public"."users" AS __t_2
     LEFT JOIN LATERAL (
       SELECT json_build_object('totalCount', (SELECT count(*) FROM __vis AS __c_5
-      WHERE __c_5."author_id" = __t_2."id" AND __c_5."title" LIKE $5)::int) AS data
+      WHERE __c_5."author_id" = __t_2."id" AND __c_5."title" LIKE $4)::int) AS data
       FROM (
         SELECT row_number() OVER (ORDER BY __t_3."id" ASC) AS __rn
         FROM __vis AS __t_3
         WHERE __t_3."author_id" = __t_2."id" AND __t_3."title" LIKE $3
         ORDER BY __t_3."id" ASC
-        LIMIT $4
+        LIMIT 101
       ) AS __s_4
       GROUP BY ()
     ) AS __l_6 ON true
@@ -258,7 +264,7 @@ SELECT json_build_object('posts', (SELECT coalesce(json_agg(__s_8.data), '[]'::j
     LIMIT 1
   ) AS __l_7 ON true
 ) AS __s_8)) AS data
--- args: [true,1,"P%",101,"P%"]
+-- args: [true,1,"P%","P%"]
 
 -- field: deletePosts
 WITH __mut AS (
@@ -283,7 +289,7 @@ SELECT json_build_object('posts', (SELECT coalesce(json_agg(__s_8.data), '[]'::j
         FROM __vis AS __t_3
         WHERE __t_3."author_id" = __t_2."id"
         ORDER BY __t_3."id" ASC
-        LIMIT $2
+        LIMIT 101
       ) AS __s_4
       GROUP BY ()
     ) AS __l_6 ON true
@@ -291,7 +297,7 @@ SELECT json_build_object('posts', (SELECT coalesce(json_agg(__s_8.data), '[]'::j
     LIMIT 1
   ) AS __l_7 ON true
 ) AS __s_8), 'affectedCount', (SELECT count(*) FROM __mut)) AS data
--- args: ["Draft%",101]
+-- args: ["Draft%"]
 
 -- field: updateCommentById
 WITH __mut AS (

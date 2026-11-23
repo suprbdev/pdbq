@@ -734,7 +734,7 @@ func (s *stmt) pageClause(f *ast.Field, extraOffset int) (string, error) {
 			limit = int(n)
 		}
 	}
-	out := "\nLIMIT " + s.param(limit)
+	out := "\nLIMIT " + strconv.Itoa(limit)
 	off := extraOffset
 	if v, ok := s.argValue(f, "offset"); ok {
 		if n, ok := toInt(v); ok {

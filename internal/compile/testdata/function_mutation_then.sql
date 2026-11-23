@@ -30,11 +30,11 @@ SELECT json_build_object('integer', ($1::json -> 'integer'), 'again', ($1::json 
     SELECT row_number() OVER (ORDER BY __t_1."id" ASC) AS __rn
     FROM "public"."posts" AS __t_1
     ORDER BY __t_1."id" ASC
-    LIMIT $3
+    LIMIT 2
   ) AS __s_2
   GROUP BY ()
 ) AS __q_4))) AS data
--- args: ["cm",2]
+-- args: ["cm"]
 
 -- field: publishPosts
 SELECT coalesce(json_agg(__t_1::text), '[]'::json) AS data
