@@ -8,10 +8,11 @@ import (
 // Defaults of the document limits, used when the corresponding Options field
 // is 0.
 const (
-	DefaultMaxQueryTokens      = 15000
-	DefaultMaxInputDepth       = 32
-	DefaultMaxSelections       = 10000
-	DefaultMaxFieldComparisons = 100000
+	DefaultMaxQueryTokens        = 15000
+	DefaultMaxInputDepth         = 32
+	DefaultMaxSelections         = 10000
+	DefaultMaxIntrospectionBytes = 16 << 20
+	DefaultMaxFieldComparisons   = 100000
 )
 
 // docLimits bounds what a document may cost before it is validated.

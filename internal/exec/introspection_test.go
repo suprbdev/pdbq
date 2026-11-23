@@ -3,6 +3,7 @@ package exec_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -232,5 +233,48 @@ func TestDisableIntrospectionKeepsTypename(t *testing.T) {
 	}
 	if string(res.Data["__typename"]) != `"Query"` {
 		t.Errorf("__typename = %s, want "+`"Query"`, res.Data["__typename"])
+	}
+}
+
+func introspectionBytesExecutor(t *testing.T, limit int) *exec.Executor {
+	t.Helper()
+	built, err := schema.New(testutil.FixtureCatalog(), inflect.Default, schema.Options{FilterIndexedOnly: true, Functions: true}).Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return exec.New(nil, built, compile.New(built).Compile, nil, exec.Options{MaxIntrospectionBytes: limit})
+}
+
+func TestIntrospectionQueryFitsDefaultLimit(t *testing.T) {
+	e := introspectionBytesExecutor(t, 0)
+	res := e.Execute(context.Background(), exec.Request{Query: exec.IntrospectionQuery})
+	if len(res.Errors) > 0 {
+		t.Fatalf("standard introspection query rejected: %v", res.Errors)
+	}
+	t.Logf("standard introspection response: %d bytes", len(res.Data["__schema"]))
+}
+
+func TestIntrospectionAliasAmplificationBounded(t *testing.T) {
+	var b strings.Builder
+	b.WriteString("{__schema{types{fields{")
+	for i := range 2000 {
+		fmt.Fprintf(&b, "a%d:name ", i)
+	}
+	b.WriteString("}}}}")
+	e := introspectionBytesExecutor(t, 1<<20)
+	res := e.Execute(context.Background(), exec.Request{Query: b.String()})
+	if len(res.Errors) == 0 || !strings.Contains(res.Errors[0].Message, "introspection response exceeds") {
+		t.Fatalf("errors = %v, want introspection size rejection", res.Errors)
+	}
+
+	var roots strings.Builder
+	roots.WriteString("{")
+	for i := range 200 {
+		fmt.Fprintf(&roots, "r%d:__schema{types{name description fields{name description}}} ", i)
+	}
+	roots.WriteString("}")
+	res = e.Execute(context.Background(), exec.Request{Query: roots.String()})
+	if len(res.Errors) == 0 {
+		t.Fatal("repeated root introspection fields were not bounded across the operation")
 	}
 }

@@ -38,6 +38,8 @@ server:
   max_input_depth: 32
   # Maximum selections (fields, fragment spreads, inline fragments) in a GraphQL document with every fragment spread expanded; rejects fragment bombs before they are walked.
   max_selections: 10000
+  # Maximum estimated JSON size in bytes of the __schema / __type fields of one operation; aliases multiply every type and field they select, so larger introspection responses are rejected while they are built.
+  max_introspection_bytes: 16777216
   # Maximum field pairs validation compares to check that fields sharing a response key at one position (fragments expanded) can be merged; that check is quadratic in such repeated fields.
   max_field_comparisons: 100000
   # Number of parsed and validated GraphQL documents cached by query text (least recently used evicted first, within document_cache_bytes). 0 disables the cache.

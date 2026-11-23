@@ -44,6 +44,8 @@ type Operation struct {
 	Role string
 	// ForceTx forces a transaction even when the global policy would skip it.
 	ForceTx bool
+
+	introBytes int64
 }
 
 // Result is the GraphQL response for one operation.
@@ -183,6 +185,11 @@ type Options struct {
 	// 0 means DefaultMaxSelections. Every walk of an accepted operation's
 	// selections is bounded by it.
 	MaxSelections int
+	// MaxIntrospectionBytes bounds the estimated JSON size of the
+	// introspection root fields (__schema, __type) of one operation; 0 means
+	// DefaultMaxIntrospectionBytes. Aliases multiply the output of every
+	// type and field they select, which the cost check does not see.
+	MaxIntrospectionBytes int
 	// MaxFieldComparisons bounds the field pairs validation compares to
 	// check that fields sharing a response key can be merged; 0 means
 	// DefaultMaxFieldComparisons.

@@ -301,6 +301,7 @@ func (a *App) Executor(built *schema.Built) *exec.Executor {
 		MaxQueryTokens:             a.Config.Server.MaxQueryTokens,
 		MaxInputDepth:              a.Config.Server.MaxInputDepth,
 		MaxSelections:              a.Config.Server.MaxSelections,
+		MaxIntrospectionBytes:      a.Config.Server.MaxIntrospectionBytes,
 		MaxFieldComparisons:        a.Config.Server.MaxFieldComparisons,
 		Metrics:                    a.instruments,
 		Logger:                     a.Log,
