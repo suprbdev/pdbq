@@ -231,6 +231,7 @@ func (a *App) Executor(built *schema.Built) *exec.Executor {
 		StrictErrors:         a.Config.Errors.Detail == "strict",
 		DisableIntrospection: a.Config.Server.DisableIntrospection,
 		Mint:                 mint,
+		DocumentCacheSize:    a.Config.Server.DocumentCacheSize,
 		Logger:               a.Log,
 		ReadOnly:             &a.readOnly,
 	})

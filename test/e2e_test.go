@@ -354,7 +354,7 @@ func TestQueries(t *testing.T) {
 		if !strings.Contains(string(res.Data["allUsers"]), "alan@example.com") {
 			t.Errorf("cursor page should contain remaining users: %s", res.Data["allUsers"])
 		}
-		if !strings.Contains(string(res.Data["allUsers"]), `"hasPreviousPage":true`) {
+		if !strings.Contains(normalize(t, res.Data["allUsers"]), `"hasPreviousPage":true`) {
 			t.Errorf("page after a cursor should report hasPreviousPage: %s", res.Data["allUsers"])
 		}
 	})

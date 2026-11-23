@@ -40,6 +40,7 @@ func TestValidateRejects(t *testing.T) {
 		"no schemas":    func(c *Config) { c.Schema.Schemas = nil },
 		"log level":     func(c *Config) { c.Log.Level = "loud" },
 		"max page size": func(c *Config) { c.Server.MaxPageSize = 0 },
+		"doc cache":     func(c *Config) { c.Server.DocumentCacheSize = -1 },
 		"anon role":     func(c *Config) { c.RLS.AnonymousRole = "" },
 		"watch channel": func(c *Config) { c.Watch.Enabled = true; c.Watch.Channel = "bad$$chan" },
 		"trusted proxy": func(c *Config) { c.RLS.Auth.TrustedProxies = []string{"10.0.0.0/8", "not-an-ip"} },

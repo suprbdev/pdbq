@@ -28,7 +28,7 @@ func apqServer(t *testing.T, cfg config.Server) *Server {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ex := exec.New(nil, built, nil, nil, exec.Options{})
+	ex := exec.New(nil, built, nil, nil, exec.Options{DocumentCacheSize: 100})
 	s, err := New(cfg, testAuth(), ex, built.SDL, slog.Default())
 	if err != nil {
 		t.Fatal(err)

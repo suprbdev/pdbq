@@ -39,6 +39,7 @@ $ pdbq config example   # print the full annotated reference
 | `server.max_body_bytes` | 1048576 | maximum request body size (1 MiB) |
 | `server.max_depth` / `max_cost` | 15 / 10000 | per-operation limits; recursive relations can tune the cost estimate with `@costMultiplier` (see [smart comments](smart-comments.md#cost-estimation-for-recursive-relations)) |
 | `server.max_page_size` | 100 | largest accepted `first`/`last` (a larger value errors); also the default page size when neither is given |
+| `server.document_cache_size` | 1000 | parsed and validated documents cached by query text (LRU, at most 32 MiB of query text; validation errors are cached too); `0` disables; dropped with the schema on a watch-mode swap |
 | `server.cors_origins` | `[]` | allowed CORS origins (exact match, or `*`); empty disables CORS headers |
 | `server.compression` | `false` | gzip responses when the client sends `Accept-Encoding: gzip` |
 | `server.apq` | `false` | Apollo automatic persisted queries (in-memory, register-on-miss) |
