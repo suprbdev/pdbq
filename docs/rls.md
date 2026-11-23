@@ -67,7 +67,12 @@ Two consequences for generated mutations:
   mutations as long as its selections stay within that subset. The exception
   is selecting a **computed column**: the underlying function takes the whole
   row type, so the statement must return every column and the role needs
-  `SELECT` on all of them.
+  `SELECT` on all of them. A payload relation that leads back to the mutated
+  table (`createPost { post { author { postsByAuthorId { … } } } }`) reads a
+  visibility CTE merging the table with the mutation's own rows; it projects
+  the columns those relations read, plus, for bulk updates and deletes, the
+  primary-key (or other `NOT NULL` unique key) columns that identify the
+  affected rows.
 
 - **`SELECT` policies apply to rows returned by the mutation itself.** This
   matters for nested creates (the `nested-mutations` plugin): all inserts run

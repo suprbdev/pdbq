@@ -32,7 +32,7 @@ func (s *stmt) connectionAggregate(t *introspect.Table, conn, f *ast.Field, meta
 	if err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("(SELECT %s FROM %s AS %s%s)", obj, s.sourceRef(t), alias, where), nil
+	return fmt.Sprintf("(SELECT %s FROM %s AS %s%s)", obj, s.sourceRef(t, alias), alias, where), nil
 }
 
 // groupedAggregates renders groupedAggregates: one aggregates object per
@@ -86,7 +86,7 @@ func (s *stmt) groupedAggregates(t *introspect.Table, f *ast.Field, alias, where
 		return "", err
 	}
 	inner := fmt.Sprintf("SELECT %s AS data, %s\nFROM %s AS %s%s\nGROUP BY %s%s\nORDER BY %s\nLIMIT %s",
-		obj, strings.Join(cols, ", "), s.sourceRef(t), alias, where,
+		obj, strings.Join(cols, ", "), s.sourceRef(t, alias), alias, where,
 		strings.Join(exprs, ", "), having, strings.Join(inOrder, ", "), s.param(s.maxPageSize))
 	return fmt.Sprintf("(SELECT coalesce(json_agg(%s.data ORDER BY %s), '[]'::json) FROM (\n%s\n) AS %s)",
 		g, strings.Join(order, ", "), indent(inner), g), nil
@@ -293,7 +293,7 @@ func (s *stmt) relationAggregateCond(rel *schema.FilterRelation, filterType stri
 		return "", nil
 	}
 	return fmt.Sprintf("coalesce((SELECT %s FROM %s AS %s WHERE %s), false)",
-		strings.Join(conds, " AND "), s.sourceRef(rel.Table), sub, where), nil
+		strings.Join(conds, " AND "), s.sourceRef(rel.Table, sub), sub, where), nil
 }
 
 // inputFieldType returns the named type of field on the input object

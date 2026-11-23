@@ -41,5 +41,5 @@ func (s *stmt) nodeQuery(f *ast.Field) (string, error) {
 		return "", err
 	}
 	return fmt.Sprintf("SELECT %s AS data\nFROM %s AS %s%s\nWHERE %s\nLIMIT 1",
-		jsonExpr, s.sourceRef(t), alias, joinLaterals(laterals), strings.Join(conds, " AND ")), nil
+		jsonExpr, s.sourceRef(t, alias), alias, joinLaterals(laterals), strings.Join(conds, " AND ")), nil
 }

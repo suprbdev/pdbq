@@ -17,29 +17,35 @@ import (
 // The RETURNING list projects only the columns the payload references:
 // RETURNING requires SELECT privilege per projected column, so RETURNING *
 // would break every mutation on tables using column-level grants.
+//
+// Every table scan of the statement shares its snapshot, so a payload
+// relation leading back to the mutated table would read it as it stood
+// before the DML. When the payload reads the table that way, those reads go
+// through a visibility CTE instead (see visibilityCTE).
 func (s *stmt) mutation(meta *schema.FieldMeta, f *ast.Field) (string, error) {
 	t := meta.Table
-	var cte string
+	var d dml
 	var err error
 	switch meta.Kind {
 	case schema.KindCreate:
-		cte, err = s.insertCTE(t, f)
+		d.sql, err = s.insertCTE(t, f)
 	case schema.KindUpdate:
-		cte, err = s.updateCTE(t, meta, f)
+		d, err = s.updateCTE(t, meta, f)
 	case schema.KindDelete:
-		cte, err = s.deleteCTE(t, meta, f)
+		d, err = s.deleteCTE(t, meta, f)
 	case schema.KindUpsert:
-		cte, err = s.upsertCTE(t, meta, f)
+		d, err = s.upsertCTE(t, meta, f)
 	case schema.KindCreateMany:
-		cte, err = s.createManyCTE(t, f)
+		d.sql, err = s.createManyCTE(t, f)
 	case schema.KindUpdateMany:
-		cte, err = s.updateManyCTE(t, f)
+		d, err = s.updateManyCTE(t, f)
 	case schema.KindDeleteMany:
-		cte, err = s.deleteManyCTE(t, f)
+		d, err = s.deleteManyCTE(t, f)
 	}
 	if err != nil {
 		return "", err
 	}
+	s.overrides = map[string]string{t.Schema + "." + t.Name: visCTE}
 	bulk := meta.Kind == schema.KindCreateMany || meta.Kind == schema.KindUpdateMany || meta.Kind == schema.KindDeleteMany
 	var payload string
 	if bulk {
@@ -50,31 +56,148 @@ func (s *stmt) mutation(meta *schema.FieldMeta, f *ast.Field) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	cte += "\nRETURNING " + returningList(t, payload, s.mutAliases)
-	return fmt.Sprintf("WITH __mut AS (\n%s\n)\n%s", indent(cte), payload), nil
+	returning := referencedColumns(t, payload, s.mutAliases)
+	var vis string
+	if aliases := s.overrideAliases[visCTE]; len(aliases) > 0 {
+		cols := referencedColumns(t, payload, aliases)
+		var keyCols []string
+		vis, keyCols = s.visibilityCTE(t, meta.Kind, d, cols)
+		if !removes(meta.Kind) {
+			returning = append(returning, cols...)
+		}
+		returning = append(returning, keyCols...)
+	}
+	ctes := fmt.Sprintf("__mut AS (\n%s\n)", indent(d.sql+"\nRETURNING "+columnList(t, returning)))
+	if vis != "" {
+		ctes += ",\n" + vis
+	}
+	return fmt.Sprintf("WITH %s\n%s", ctes, payload), nil
 }
 
-// returningList renders the DML RETURNING list: exactly the table columns the
-// compiled payload references through a __mut alias. Every payload column
-// reference is rendered as `<alias>.<quoted column>` (columnJSON, nodeIDSQL,
-// rowParamSQL, relation correlation conditions), so a substring scan is exact.
-// A payload reading no columns (e.g. only clientMutationId or affectedCount)
-// falls back to a bare literal so the DML still yields its row count.
-func returningList(t *introspect.Table, payload string, aliases []string) string {
+// visCTE names the visibility CTE of a mutation statement.
+const visCTE = "__vis"
+
+// dml is the data-modifying statement of a mutation's __mut CTE.
+type dml struct {
+	sql string
+	// replaced matches, over the bare table reference, the rows the
+	// statement updates or deletes as they stood before it ran: the key
+	// lookup of a single-row update or delete, the conflict key of an
+	// upsert, the filter of a bulk update or delete. Empty for an insert.
+	replaced string
+	// patched holds the columns an update sets.
+	patched map[string]bool
+}
+
+// removes reports whether a mutation kind deletes its rows.
+func removes(kind schema.FieldKind) bool {
+	return kind == schema.KindDelete || kind == schema.KindDeleteMany
+}
+
+// visibilityCTE renders the __vis CTE standing in for the mutated table in
+// the payload: the table as it stands once the statement completes,
+// projected to cols. It is the table itself (still subject to the role's RLS
+// policies) minus the pre-statement versions of the rows the DML replaced,
+// UNION ALL the RETURNING rows of __mut unless the DML deleted them.
+// RETURNING rows already passed the table's SELECT policies: INSERT and
+// UPDATE ... RETURNING raise an error for a new row they reject.
+//
+// The replaced rows are excluded by the lookup that found them (d.replaced),
+// which still matches their old versions when the update changed the key.
+// A bulk update or delete may have skipped rows its filter matched (an
+// UPDATE or DELETE policy narrower than the SELECT one), so it excludes the
+// rows whose key __mut returned instead, by a NOT NULL key the patch leaves
+// alone; only when every such key is patched does it fall back to the
+// filter. It returns the key columns that exclusion reads from __mut, which
+// the RETURNING list must project.
+//
+// NOT MATERIALIZED inlines the CTE at every reference, so the correlated
+// relation predicates reach the table's indexes instead of a materialized
+// copy of the whole table.
+func (s *stmt) visibilityCTE(t *introspect.Table, kind schema.FieldKind, d dml, cols []string) (string, []string) {
+	proj := columnList(t, cols)
+	table := "SELECT " + proj + " FROM " + tableRef(t)
+	var keyCols []string
+	bulk := kind == schema.KindUpdateMany || kind == schema.KindDeleteMany
+	if key := stableKey(t, d.patched); bulk && key != nil {
+		m := s.alias("m")
+		conds := make([]string, len(key))
+		for i, cn := range key {
+			q := quoteIdent(cn)
+			conds[i] = fmt.Sprintf("%s.%s %s %s.%s", m, q, s.contrib(t.Column(cn)).Operator("="), tableRef(t), q)
+		}
+		table += fmt.Sprintf(" WHERE NOT EXISTS (SELECT 1 FROM __mut AS %s WHERE %s)", m, strings.Join(conds, " AND "))
+		keyCols = key
+	} else if d.replaced != "" {
+		table += " WHERE (" + d.replaced + ") IS NOT TRUE"
+	}
+	parts := []string{table}
+	if !removes(kind) {
+		parts = append(parts, "SELECT "+proj+" FROM __mut")
+	}
+	return fmt.Sprintf("%s AS NOT MATERIALIZED (\n  %s\n)", visCTE, strings.Join(parts, "\n  UNION ALL ")), keyCols
+}
+
+// stableKey returns the columns of the first row key of t (primary key, then
+// unique constraints) that are all NOT NULL and untouched by patched, or nil.
+func stableKey(t *introspect.Table, patched map[string]bool) []string {
+	keys := append([]*introspect.Constraint{t.PrimaryKey}, t.Uniques...)
+	for _, con := range keys {
+		if con == nil || len(con.Columns) == 0 {
+			continue
+		}
+		ok := true
+		for _, cn := range con.Columns {
+			c := t.Column(cn)
+			if c == nil || patched[cn] || (!c.NotNull && con != t.PrimaryKey) {
+				ok = false
+				break
+			}
+		}
+		if ok {
+			return con.Columns
+		}
+	}
+	return nil
+}
+
+// referencedColumns returns, in table order, the columns of t that sql
+// references through one of aliases. Every column reference is rendered as
+// `<alias>.<quoted column>` (columnJSON, nodeIDSQL, rowParamSQL, relation
+// correlation conditions), so a substring scan is exact.
+func referencedColumns(t *introspect.Table, sql string, aliases []string) []string {
 	var cols []string
 	for _, c := range t.Columns {
 		q := quoteIdent(c.Name)
 		for _, a := range aliases {
-			if strings.Contains(payload, a+"."+q) {
-				cols = append(cols, q)
+			if strings.Contains(sql, a+"."+q) {
+				cols = append(cols, c.Name)
 				break
 			}
 		}
 	}
-	if len(cols) == 0 {
+	return cols
+}
+
+// columnList renders the distinct columns of t named in cols as a select
+// list in table order. An empty list falls back to a bare literal, so a
+// DML whose payload reads no columns (e.g. only clientMutationId or
+// affectedCount) still yields its row count.
+func columnList(t *introspect.Table, cols []string) string {
+	want := make(map[string]bool, len(cols))
+	for _, c := range cols {
+		want[c] = true
+	}
+	var out []string
+	for _, c := range t.Columns {
+		if want[c.Name] {
+			out = append(out, quoteIdent(c.Name))
+		}
+	}
+	if len(out) == 0 {
 		return "1"
 	}
-	return strings.Join(cols, ", ")
+	return strings.Join(out, ", ")
 }
 
 // clientMutationID extracts the clientMutationId sent by the client, if any.
@@ -262,40 +385,45 @@ func (s *stmt) createManyCTE(t *introspect.Table, f *ast.Field) (string, error) 
 		tableRef(t), strings.Join(cols, ", "), strings.Join(valueRows, ",\n       ")), nil
 }
 
-func (s *stmt) updateManyCTE(t *introspect.Table, f *ast.Field) (string, error) {
+func (s *stmt) updateManyCTE(t *introspect.Table, f *ast.Field) (dml, error) {
 	patchVal, ok := s.argValue(f, "patch")
 	if !ok {
-		return "", errUser("%s: missing patch", f.Name)
+		return dml{}, errUser("%s: missing patch", f.Name)
 	}
 	patch, ok := patchVal.(map[string]any)
 	if !ok || len(patch) == 0 {
-		return "", errUser("%s: patch must set at least one column", f.Name)
+		return dml{}, errUser("%s: patch must set at least one column", f.Name)
 	}
 	cols, params, err := s.inputColumns(t, argTypeName(f, "patch"), patch)
 	if err != nil {
-		return "", err
+		return dml{}, err
 	}
 	if len(cols) == 0 {
-		return "", errUser("%s: patch must set at least one column", f.Name)
+		return dml{}, errUser("%s: patch must set at least one column", f.Name)
 	}
 	sets := make([]string, len(cols))
+	patched := make(map[string]bool, len(cols))
 	for i, c := range cols {
 		sets[i] = quoteIdent(c) + " = " + params[i]
+		patched[c] = true
 	}
 	cond, err := s.bulkFilterCond(t, f)
 	if err != nil {
-		return "", err
+		return dml{}, err
 	}
-	return fmt.Sprintf("UPDATE %s\nSET %s\nWHERE %s",
-		tableRef(t), strings.Join(sets, ", "), cond), nil
+	return dml{
+		sql:      fmt.Sprintf("UPDATE %s\nSET %s\nWHERE %s", tableRef(t), strings.Join(sets, ", "), cond),
+		replaced: cond,
+		patched:  patched,
+	}, nil
 }
 
-func (s *stmt) deleteManyCTE(t *introspect.Table, f *ast.Field) (string, error) {
+func (s *stmt) deleteManyCTE(t *introspect.Table, f *ast.Field) (dml, error) {
 	cond, err := s.bulkFilterCond(t, f)
 	if err != nil {
-		return "", err
+		return dml{}, err
 	}
-	return fmt.Sprintf("DELETE FROM %s\nWHERE %s", tableRef(t), cond), nil
+	return dml{sql: fmt.Sprintf("DELETE FROM %s\nWHERE %s", tableRef(t), cond), replaced: cond}, nil
 }
 
 // bulkFilterCond resolves the required filter argument of a bulk mutation to
@@ -385,32 +513,35 @@ func (s *stmt) inputColumns(t *introspect.Table, inputType string, vals map[stri
 // provided input column except the conflict target is updated from EXCLUDED;
 // when only target columns are provided, the target updates to itself so the
 // statement still returns the existing row instead of DO NOTHING's zero rows.
-func (s *stmt) upsertCTE(t *introspect.Table, meta *schema.FieldMeta, f *ast.Field) (string, error) {
+func (s *stmt) upsertCTE(t *introspect.Table, meta *schema.FieldMeta, f *ast.Field) (dml, error) {
 	input, ok := s.argValue(f, "input")
 	if !ok {
-		return "", errUser("%s: missing input", f.Name)
+		return dml{}, errUser("%s: missing input", f.Name)
 	}
 	vals, ok := input.(map[string]any)
 	if !ok {
-		return "", errUser("%s: input must be an object", f.Name)
+		return dml{}, errUser("%s: input must be an object", f.Name)
 	}
 	inputType := argTypeName(f, "input")
 	cols, params, err := s.inputColumns(t, inputType, vals)
 	if err != nil {
-		return "", err
+		return dml{}, err
 	}
 	target := map[string]bool{}
 	for _, kc := range meta.KeyColumns {
 		target[kc] = true
 	}
-	provided := map[string]bool{}
-	for _, c := range cols {
-		provided[c] = true
+	provided := map[string]string{}
+	for i, c := range cols {
+		provided[c] = params[i]
 	}
-	for _, kc := range meta.KeyColumns {
-		if !provided[kc] {
-			return "", fmt.Errorf("compile: %s: input must set conflict column %q", f.Name, kc)
+	keyConds := make([]string, len(meta.KeyColumns))
+	for i, kc := range meta.KeyColumns {
+		p, ok := provided[kc]
+		if !ok {
+			return dml{}, fmt.Errorf("compile: %s: input must set conflict column %q", f.Name, kc)
 		}
+		keyConds[i] = fmt.Sprintf("%s.%s %s %s", tableRef(t), quoteIdent(kc), s.contrib(t.Column(kc)).Operator("="), p)
 	}
 	var sets []string
 	for _, c := range cols {
@@ -431,27 +562,30 @@ func (s *stmt) upsertCTE(t *introspect.Table, meta *schema.FieldMeta, f *ast.Fie
 	for i, kc := range meta.KeyColumns {
 		targetCols[i] = quoteIdent(kc)
 	}
-	return fmt.Sprintf("INSERT INTO %s (%s)\nVALUES (%s)\nON CONFLICT (%s) DO UPDATE\nSET %s",
-		tableRef(t), strings.Join(quoted, ", "), strings.Join(params, ", "),
-		strings.Join(targetCols, ", "), strings.Join(sets, ", ")), nil
+	return dml{
+		sql: fmt.Sprintf("INSERT INTO %s (%s)\nVALUES (%s)\nON CONFLICT (%s) DO UPDATE\nSET %s",
+			tableRef(t), strings.Join(quoted, ", "), strings.Join(params, ", "),
+			strings.Join(targetCols, ", "), strings.Join(sets, ", ")),
+		replaced: strings.Join(keyConds, " AND "),
+	}, nil
 }
 
-func (s *stmt) updateCTE(t *introspect.Table, meta *schema.FieldMeta, f *ast.Field) (string, error) {
+func (s *stmt) updateCTE(t *introspect.Table, meta *schema.FieldMeta, f *ast.Field) (dml, error) {
 	patchVal, ok := s.argValue(f, "patch")
 	if !ok {
-		return "", errUser("%s: missing patch", f.Name)
+		return dml{}, errUser("%s: missing patch", f.Name)
 	}
 	patch, ok := patchVal.(map[string]any)
 	if !ok || len(patch) == 0 {
-		return "", errUser("%s: patch must set at least one column", f.Name)
+		return dml{}, errUser("%s: patch must set at least one column", f.Name)
 	}
 	patchType := argTypeName(f, "patch")
 	cols, params, err := s.inputColumns(t, patchType, patch)
 	if err != nil {
-		return "", err
+		return dml{}, err
 	}
 	if len(cols) == 0 {
-		return "", errUser("%s: patch must set at least one column", f.Name)
+		return dml{}, errUser("%s: patch must set at least one column", f.Name)
 	}
 	sets := make([]string, len(cols))
 	for i, c := range cols {
@@ -459,17 +593,20 @@ func (s *stmt) updateCTE(t *introspect.Table, meta *schema.FieldMeta, f *ast.Fie
 	}
 	conds, err := s.keyConds(t, meta.KeyColumns, f, tableRef(t))
 	if err != nil {
-		return "", err
+		return dml{}, err
 	}
-	return fmt.Sprintf("UPDATE %s\nSET %s\nWHERE %s",
-		tableRef(t), strings.Join(sets, ", "), strings.Join(conds, " AND ")), nil
+	cond := strings.Join(conds, " AND ")
+	return dml{
+		sql:      fmt.Sprintf("UPDATE %s\nSET %s\nWHERE %s", tableRef(t), strings.Join(sets, ", "), cond),
+		replaced: cond,
+	}, nil
 }
 
-func (s *stmt) deleteCTE(t *introspect.Table, meta *schema.FieldMeta, f *ast.Field) (string, error) {
+func (s *stmt) deleteCTE(t *introspect.Table, meta *schema.FieldMeta, f *ast.Field) (dml, error) {
 	conds, err := s.keyConds(t, meta.KeyColumns, f, tableRef(t))
 	if err != nil {
-		return "", err
+		return dml{}, err
 	}
-	return fmt.Sprintf("DELETE FROM %s\nWHERE %s",
-		tableRef(t), strings.Join(conds, " AND ")), nil
+	cond := strings.Join(conds, " AND ")
+	return dml{sql: fmt.Sprintf("DELETE FROM %s\nWHERE %s", tableRef(t), cond), replaced: cond}, nil
 }

@@ -411,7 +411,7 @@ func (s *stmt) forwardRelation(meta *schema.FieldMeta, f *ast.Field, parentAlias
 	latAlias := s.alias("l")
 	lat := fmt.Sprintf("LEFT JOIN LATERAL (\n%s\n) AS %s ON true",
 		indent(fmt.Sprintf("SELECT %s AS data\nFROM %s AS %s%s\nWHERE %s\nLIMIT 1",
-			jsonExpr, s.sourceRef(ref), alias, joinLaterals(laterals), s.fkJoinSQL(meta.FK, parentAlias, alias, true))),
+			jsonExpr, s.sourceRef(ref, alias), alias, joinLaterals(laterals), s.fkJoinSQL(meta.FK, parentAlias, alias, true))),
 		latAlias)
 	return latAlias + ".data", lat, nil
 }
@@ -584,7 +584,7 @@ func (s *stmt) connectionJSON(t *introspect.Table, f *ast.Field, extraCond strin
 		distinct = "DISTINCT ON (" + strings.Join(refs, ", ") + ") "
 	}
 	inner := fmt.Sprintf("SELECT %s%s\nFROM %s AS %s%s%s%s%s%s",
-		distinct, strings.Join(selectCols, ", "), s.sourceRef(t), alias,
+		distinct, strings.Join(selectCols, ", "), s.sourceRef(t, alias), alias,
 		joinLaterals(innerLaterals), where, order, limit, pageOffset)
 	if len(dcols) > 0 {
 		// Renumber the distinct survivors so offset cursors stay dense.
@@ -638,9 +638,9 @@ func (s *stmt) connectionJSON(t *introspect.Table, f *ast.Field, extraCond strin
 				refs[i] = countAlias + "." + quoteIdent(c)
 			}
 			countSQL = fmt.Sprintf("(SELECT count(*) FROM (SELECT DISTINCT %s FROM %s AS %s%s) AS %s)",
-				strings.Join(refs, ", "), s.sourceRef(t), countAlias, countWhere, s.alias("c"))
+				strings.Join(refs, ", "), s.sourceRef(t, countAlias), countAlias, countWhere, s.alias("c"))
 		} else {
-			countSQL = fmt.Sprintf("(SELECT count(*) FROM %s AS %s%s)", s.sourceRef(t), countAlias, countWhere)
+			countSQL = fmt.Sprintf("(SELECT count(*) FROM %s AS %s%s)", s.sourceRef(t, countAlias), countAlias, countWhere)
 		}
 	}
 

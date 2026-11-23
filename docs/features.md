@@ -99,6 +99,7 @@ Checklist of PostgreSQL and GraphQL features pdbq supports. Checked = implemente
 - [x] `update<Type>ByPk(patch:)` per updatable table with PK
 - [x] `delete<Type>ByPk` per deletable table with PK
 - [x] Payload types with the mutated row selectable (relations included, compiled against the DML CTE)
+- [x] Payload relations back to the mutated table see it as it stands after the statement (created and updated rows included, deleted rows excluded) via a visibility CTE, emitted only when the payload reads the table that way
 - [x] Generated/identity columns excluded from inputs; defaulted columns optional
 - [x] Privilege-gated generation (no INSERT grant → no create mutation)
 - [x] Not-found update/delete → GraphQL error, transaction rolled back
