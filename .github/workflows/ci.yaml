@@ -55,7 +55,7 @@ jobs:
           go-version: "1.26"
       - name: Load fixture schema
         run: |
-          sudo apt-get install -y --no-install-recommends postgresql-client
+          command -v psql >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends postgresql-client; }
           PGPASSWORD=pdbq psql -h localhost -p 5433 -U pdbq -d pdbq_test -f db/init/01-schema.sql
       - name: E2E tests
         env:
