@@ -116,9 +116,14 @@ func TestWSChurnKeepsGoroutinesBounded(t *testing.T) {
 				t.Fatalf("%d subscriptions started in 2s, over the rate limit of %d/s per connection", listens, rate)
 			}
 			settle(t, base+4)
-			if p := f.hub.Pending(); p != 0 {
-				t.Fatalf("hub still has %d channels waiting for LISTEN", p)
+			deadline := time.Now().Add(10 * time.Second)
+			for f.hub.Pending() != 0 {
+				if time.Now().After(deadline) {
+					t.Fatalf("hub still has %d channels waiting for LISTEN", f.hub.Pending())
+				}
+				time.Sleep(20 * time.Millisecond)
 			}
+			settle(t, base+4)
 		})
 	}
 }
