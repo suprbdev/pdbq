@@ -17,15 +17,16 @@ import (
 // never appear in the SQL text, only in the parameter list. It runs against
 // the contrib fixture so the contrib vocabulary operators (full-text,
 // pg_trgm, unaccent, hstore, ltree, citext, ranges, inet), the codec-typed
-// generic comparisons, rank, similarity and vector distance ordering and
-// vector inputs are covered too, and against
+// generic comparisons, rank, similarity and vector distance ordering, the
+// similarity and distance score fields, the vector and bit distance
+// thresholds and vector inputs are covered too, and against
 // the aggregates schema for having and relation-aggregate filters, and
 // through a custom mutation whose payload compiles to a Then statement.
 func FuzzFilter(f *testing.F) {
 	built := buildContrib(f)
 	aggBuilt := buildAggregates(f)
 
-	const query = `query ($e: String, $tag: [String!], $n: Int!, $h: KeyValueHash, $b: Boolean!, $d: Datetime, $ip: InternetAddress, $ips: [InternetAddress!], $cfg: String, $vec: [Float!]) {
+	const query = `query ($e: String, $tag: [String!], $n: Int!, $h: KeyValueHash, $b: Boolean!, $d: Datetime, $ip: InternetAddress, $ips: [InternetAddress!], $cfg: String, $vec: [Float!], $fl: Float!, $sv: String!, $vv: [Float!]!) {
 		allUsers(filter: {
 			and: [
 				{email: {like: $e, startsWith: $e}}
@@ -48,14 +49,22 @@ func FuzzFilter(f *testing.F) {
 				notes: {unaccentEqualTo: $e, unaccentLike: $e, unaccentIncludes: $e, unaccentStartsWith: $e}
 			}
 			condition: {slug: $e, attrs: $h}
-			similarTo: {label: $e}
+			similarTo: {label: $e, title: $e}
 			orderBy: [SEARCH_RANK_DESC, LABEL_SIMILARITY_DESC]
-		) { nodes { id searchRank attrs span { start { value inclusive } } } }
+		) { nodes { id searchRank attrs span { start { value inclusive } } labelSimilarity titleWordSimilarity } }
 		allEmbeddings(
-			nearVector: {embedding: $vec, half: $vec, sparse: $cfg}
-			orderBy: [EMBEDDING_COSINE_DISTANCE_ASC, HALF_L2_DISTANCE_DESC, SPARSE_NEGATIVE_INNER_PRODUCT_ASC, EMBEDDING_L1_DISTANCE_ASC]
+			filter: {
+				embedding: {cosineDistanceLessThan: {vector: $vv, distance: $fl}, l2DistanceLessThan: {vector: $vv, distance: $fl}}
+				sparse: {negativeInnerProductLessThan: {vector: $sv, distance: $fl}}
+				code: {hammingDistanceLessThan: {vector: "101", distance: $fl}}
+			}
+			nearVector: {embedding: $vec, half: $vec, sparse: $cfg, code: "011"}
+			orderBy: [EMBEDDING_COSINE_DISTANCE_ASC, HALF_L2_DISTANCE_DESC, SPARSE_NEGATIVE_INNER_PRODUCT_ASC, EMBEDDING_L1_DISTANCE_ASC, CODE_HAMMING_DISTANCE_ASC]
 			first: 3
-		) { nodes { id embedding half sparse } }
+		) { nodes { id embedding half sparse embeddingCosineDistance sparseL2Distance codeJaccardDistance } }
+		allPlaces(near: {geometry: "POINT(0 0)"}, orderBy: [LOCATION_DISTANCE_ASC]) {
+			nodes { locationDistance(useSpheroid: true) areaDistance }
+		}
 	}`
 	const aggQuery = `query ($e: String, $tag: [String!], $n: Int!, $big: BigInt, $bigs: [BigInt!], $bf: BigFloat, $d: Datetime) {
 		allPosts(filter: {title: {startsWith: $e}}) {
@@ -114,7 +123,7 @@ func FuzzFilter(f *testing.F) {
 			vars, verr := validator.VariableValues(tg.built.Schema, tg.op, map[string]any{
 				"e": email, "tag": []any{tag}, "n": n, "h": map[string]any{tag: email}, "b": n%2 == 0,
 				"d": email, "ip": email, "ips": []any{tag}, "cfg": "c" + email, "big": tag, "bigs": []any{tag}, "bf": email,
-				"vec": []any{float64(n), 0.5, -float64(n)},
+				"vec": []any{float64(n), 0.5, -float64(n)}, "fl": float64(n) / 4, "sv": "c" + email, "vv": []any{0.5, float64(n)},
 			})
 			if verr != nil {
 				t.Skipf("rejected variables: %v", verr)
@@ -182,7 +191,7 @@ func FuzzSpatial(f *testing.F) {
 				bboxIntersectsND: $wkt
 				bboxIntersects2D: $wkt
 			}
-		}) { nodes { id } }
+		}, near: {geometry: $wkt}, orderBy: [AREA_DISTANCE_ASC]) { nodes { id locationDistance areaDistance } }
 	}`
 	doc, perr := parser.ParseQuery(&ast.Source{Input: query})
 	if perr != nil {

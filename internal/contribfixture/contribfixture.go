@@ -86,8 +86,9 @@ func Documents() *introspect.Table {
 }
 
 // Embeddings is the pgvector table: public.embeddings with a vector column
-// led by an HNSW index, a halfvec column led by an IVFFlat index and an
-// unindexed sparsevec column.
+// led by an HNSW index, a halfvec column led by an IVFFlat index, an
+// unindexed sparsevec column, a bit(3) column led by an HNSW index and an
+// unindexed varbit column.
 func Embeddings() *introspect.Table {
 	col := func(pos int, name, typ, schema string) *introspect.Column {
 		return &introspect.Column{Name: name, Position: pos, PGType: typ, TypeSchema: schema}
@@ -102,9 +103,12 @@ func Embeddings() *introspect.Table {
 			col(2, "embedding", "vector", ExtSchema),
 			col(3, "half", "halfvec", ExtSchema),
 			col(4, "sparse", "sparsevec", ExtSchema),
+			col(5, "code", "bit", "pg_catalog"),
+			col(6, "flags", "varbit", "pg_catalog"),
 		},
 		PrimaryKey: &introspect.Constraint{Name: "embeddings_pkey", Columns: []string{"id"}},
 		Indexes: []*introspect.Index{
+			{Name: "embeddings_code_idx", Columns: []string{"code"}, Method: "hnsw"},
 			{Name: "embeddings_embedding_idx", Columns: []string{"embedding"}, Method: "hnsw"},
 			{Name: "embeddings_half_idx", Columns: []string{"half"}, Method: "ivfflat"},
 			{Name: "embeddings_pkey", Columns: []string{"id"}, Unique: true, Method: "btree"},

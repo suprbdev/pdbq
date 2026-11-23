@@ -48,10 +48,10 @@ Checklist of PostgreSQL and GraphQL features pdbq supports. Checked = implemente
 - [x] `ltree` / `ltree[]` with `ancestorOf descendantOf matchesLquery matchesAnyLquery matchesLtxtquery` (+ `*Any` forms)
 - [x] `inet`/`cidr` → `InternetAddress`/`CidrAddress` with containment operators
 - [x] Full-text search: `tsvector` → `FullText` with `matches matchesPlain matchesPhrase matchesWebsearch` (+ `config`), `<field>Rank` and `<COLUMN>_RANK_*` ordering
-- [x] `pg_trgm`: `StringTrgmFilterOps` (`similarTo wordSimilarTo strictWordSimilarTo`) and index-assisted `<COLUMN>_SIMILARITY_*` ordering via `similarTo:`
+- [x] `pg_trgm`: `StringTrgmFilterOps` (`similarTo wordSimilarTo strictWordSimilarTo`), index-assisted `<COLUMN>_SIMILARITY_*` ordering via `similarTo:` and selectable `<field>Similarity`/`WordSimilarity`/`StrictWordSimilarity` scores against it
 - [x] `unaccent`: accent- and case-insensitive `unaccentEqualTo unaccentLike unaccentIncludes unaccentStartsWith` on text columns (`StringUnaccentFilterOps`/`StringTrgmUnaccentFilterOps`; unindexable, so only on `filters.allow_columns` columns under `indexed_only`), working with the extension off the search_path
-- [x] pgvector: `vector`/`halfvec` → `[Float!]`, `sparsevec` → `String` (inputs, outputs, function arguments and results), `isNull`-only filters, and nearest-first `<COLUMN>_L2_DISTANCE_*`/`_NEGATIVE_INNER_PRODUCT_*`/`_COSINE_DISTANCE_*`/`_L1_DISTANCE_*` ordering via `nearVector:`, offered per HNSW/IVFFlat index under `indexed_only` — see [Contrib types](contrib.md#pgvector)
-- [x] PostGIS `geometry`/`geography` → `GeoJSON` scalar (GeoJSON out; GeoJSON or WKT/EWKT in), with spatial filters (bounding-box incl. directional/n-D/geometry-box `bboxIntersects2D`, DE-9IM, 3D, exact/ordering equality, radius), derived accessors (area, length, perimeter and centroid, native on geography, X/Y/Z/M, start/end point, WKT/EWKT, bounds, …; type-specific ones gated by the column's typmod), projection arguments and distance ordering — see [PostGIS](postgis.md)
+- [x] pgvector: `vector`/`halfvec` → `[Float!]`, `sparsevec` → `String` (inputs, outputs, function arguments and results), `isNull`-only filters, nearest-first `<COLUMN>_L2_DISTANCE_*`/`_NEGATIVE_INNER_PRODUCT_*`/`_COSINE_DISTANCE_*`/`_L1_DISTANCE_*` ordering via `nearVector:`, offered per HNSW/IVFFlat index under `indexed_only`, selectable `<field><Metric>` distance scores, `<distance>LessThan` threshold filters, and Hamming/Jaccard distances on `bit`/`varbit` columns — see [Contrib types](contrib.md#pgvector)
+- [x] PostGIS `geometry`/`geography` → `GeoJSON` scalar (GeoJSON out; GeoJSON or WKT/EWKT in), with spatial filters (bounding-box incl. directional/n-D/geometry-box `bboxIntersects2D`, DE-9IM, 3D, exact/ordering equality, radius), derived accessors (area, length, perimeter and centroid, native on geography, X/Y/Z/M, start/end point, WKT/EWKT, bounds, …; type-specific ones gated by the column's typmod), projection arguments, distance ordering and selectable `<field>Distance` from `near:` — see [PostGIS](postgis.md)
 - [x] Opt-in typed geometry objects (`plugins.settings.postgis.typed_geometry`): `GeometryInterface`/`GeographyInterface`, per-subtype and Z/M/ZM types chosen from the column typmod, `@graphile/postgis`-compatible shape, compiled into the same statement
 
 ## Queries
@@ -90,7 +90,7 @@ Checklist of PostgreSQL and GraphQL features pdbq supports. Checked = implemente
 - [x] Filters/ordering on backward relation fields, not just root lists
 - [x] `jsonb` path operators (`@?`/`@@` via `pathExists`/`pathMatch`)
 - [x] Range operators (`overlaps contains containsElement containedBy strictlyLeftOf strictlyRightOf notExtendsRightOf notExtendsLeftOf adjacentTo`), on multiranges too
-- [x] Contrib operator sets respect `filters.indexed_only` per index hint (no unindexable operators; trigram operators/ordering only on GIN/GiST-indexed columns; unaccent operators only on allowlisted columns; each vector distance ordering only on columns led by an HNSW/IVFFlat index serving it)
+- [x] Contrib operator sets respect `filters.indexed_only` per index hint (no unindexable operators; trigram operators/ordering only on GIN/GiST-indexed columns; unaccent operators and vector/bit distance thresholds only on allowlisted columns; each vector distance ordering only on columns led by an HNSW/IVFFlat index serving it)
 - [x] Filtering across relations (`posts: {some: {title: {equalTo: ...}}}`) — built-in `advanced-filters` plugin: forward FK takes the parent's filter, reverse FK a `{some|none|every}` wrapper, compiled to EXISTS subqueries
 - [x] Filtering on relation existence (`postsExist: true`, `authorExists: false`) — Boolean variant per relation, compiled to a bare `(NOT) EXISTS`
 - [x] Filtering/ordering on computed columns — built-in `advanced-filters` plugin (single-row-argument stable functions; not index-backed)
@@ -214,7 +214,7 @@ Checklist of PostgreSQL and GraphQL features pdbq supports. Checked = implemente
 - [x] Collision detection with warnings at schema build
 - [x] Built-in: `simple-names`
 - [x] Built-in: `nested-mutations`
-- [x] Built-in: `contrib` (full-text, pg_trgm, unaccent, hstore, ltree, range and inet operators; rank, similarity and pgvector distance ordering; `plugins.settings.contrib.{filters,ordering}`)
+- [x] Built-in: `contrib` (full-text, pg_trgm, unaccent, hstore, ltree, range and inet operators; rank, similarity and pgvector distance ordering and scores, distance thresholds; `plugins.settings.contrib.{filters,ordering}`)
 - [x] Built-in: `advanced-filters` (relation filters + computed-column filtering/ordering; halves toggle via `plugins.settings.advanced-filters.{relations,computed}`)
 - [x] Built-in: `aggregates` (connection, grouped, relational-order and relational-filter aggregates; off unless `plugins.settings.aggregates.enabled` or an `@aggregates` table tag; see [Aggregates](aggregates.md))
 - [ ] Out-of-process plugins (go-plugin gRPC or wasm) — the existing hook interfaces are the contract either way

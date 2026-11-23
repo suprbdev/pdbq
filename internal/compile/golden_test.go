@@ -51,16 +51,17 @@ func buildWith(t testing.TB, settings map[string]any) *schema.Built {
 
 // buildContrib compiles the contrib fixture catalog (the shared fixture plus
 // tables of contrib-typed and pgvector columns and the extensions) with the
-// postgis and contrib plugins applied. documents.notes and embeddings.sparse
-// are allowlisted, so the unaccent operators and sparsevec ordering, which
-// no index serves, are generated.
+// postgis and contrib plugins applied. documents.notes and embeddings.sparse,
+// embedding and code are allowlisted, so the unaccent operators, sparsevec
+// ordering and the vector distance thresholds, which no index serves, are
+// generated.
 func buildContrib(t testing.TB) *schema.Built {
 	t.Helper()
 	cat := contribfixture.Catalog()
 	cat.Functions = append(cat.Functions, functionFixtures()...)
 	return buildCatalogAllowing(t, cat, map[string][]string{
 		"public.documents":  {"notes"},
-		"public.embeddings": {"sparse"},
+		"public.embeddings": {"sparse", "embedding", "code"},
 	}, nil, contribplugin.New(nil))
 }
 

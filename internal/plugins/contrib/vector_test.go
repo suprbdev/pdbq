@@ -178,8 +178,8 @@ func TestVectorOrdering(t *testing.T) {
 	if got := fieldType(t, b, "EmbeddingNearVectorInput", "embedding"); got != "[Float!]" {
 		t.Errorf("EmbeddingNearVectorInput.embedding = %s", got)
 	}
-	if fieldType(t, b, "EmbeddingNearVectorInput", "sparse") != "" {
-		t.Error("nearVector field for a column without vector ordering")
+	if got := fieldType(t, b, "EmbeddingNearVectorInput", "sparse"); got != "String" {
+		t.Errorf("EmbeddingNearVectorInput.sparse (distance fields only) = %q", got)
 	}
 	if !hasArg(b.Query.Field("allEmbeddings"), "nearVector") {
 		t.Error("allEmbeddings lacks nearVector:")
@@ -225,8 +225,12 @@ func TestVectorOrderingOmit(t *testing.T) {
 		if got := enumValues(b, "EmbeddingsOrderBy", "EMBEDDING_"); len(got) != 0 {
 			t.Errorf("%s kept %v", tag, got)
 		}
-		if fieldType(t, b, "EmbeddingNearVectorInput", "embedding") != "" {
-			t.Errorf("%s kept the nearVector field", tag)
+		read := tag == "@omit read"
+		if got := fieldType(t, b, "EmbeddingNearVectorInput", "embedding") != ""; got == read {
+			t.Errorf("%s: nearVector field present = %v", tag, got)
+		}
+		if got := b.Objects["Embedding"].Field("embeddingCosineDistance") != nil; got == read {
+			t.Errorf("%s: distance field present = %v", tag, got)
 		}
 	}
 }

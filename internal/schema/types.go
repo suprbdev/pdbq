@@ -49,6 +49,14 @@ const (
 	// first matches* operator on it in the enclosing list field's filter,
 	// null without one.
 	KindFullTextRank FieldKind = "fulltext_rank"
+	// KindScore is a selectable score of Meta.Column measured against the
+	// reference the enclosing list field takes for it (Meta.Score): the
+	// <field>Distance of a spatial column from near: (postgis plugin), the
+	// <field>Similarity family of a text column against similarTo: and the
+	// <field><Metric> distances of a vector or bit column from nearVector:
+	// (contrib plugin). Null without the reference, and for rows not read
+	// through such a list.
+	KindScore FieldKind = "score"
 	// KindAggregates is the aggregates field of a connection (aggregates
 	// plugin): an object of aggregate groups computed over the connection's
 	// filtered row set, ignoring pagination.
@@ -127,12 +135,25 @@ type FieldMeta struct {
 	// columns it binds are overwritten on conflict, so a column the patch
 	// leaves out (`@omit update`) keeps its value.
 	Patch string
+	// Score binds a KindScore field to its reference argument and
+	// expression.
+	Score *Score
 	// ScanCost is a flat surcharge the executor's cost estimate adds for a
 	// field that reads a whole filtered row set rather than a page (the
 	// aggregates plugin's aggregates and groupedAggregates fields). A
 	// list-typed field with a ScanCost also multiplies its selection by the
 	// list fan-out assumption, even inside a connection.
 	ScanCost int
+}
+
+// Score binds a [KindScore] field.
+type Score struct {
+	// Arg is the list field argument holding the reference: "near",
+	// "similarTo" or "nearVector".
+	Arg string
+	// Expr is the pdbcore contrib expression measured ("similarity",
+	// "cosineDistance", ...); empty for the spatial distance.
+	Expr string
 }
 
 // Aggregate binds an aggregate expression over a table's rows (aggregates

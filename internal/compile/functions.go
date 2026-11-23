@@ -352,7 +352,7 @@ func (s *stmt) columnsOnly(typeName string, sel ast.SelectionSet) bool {
 			return false
 		}
 		switch m.Kind {
-		case schema.KindColumn, schema.KindNodeID, schema.KindFullTextRank, schema.KindSpatialDerived:
+		case schema.KindColumn, schema.KindNodeID, schema.KindFullTextRank, schema.KindSpatialDerived, schema.KindScore:
 		default:
 			return false
 		}

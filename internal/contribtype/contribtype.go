@@ -25,6 +25,7 @@
 //	inet / cidr             -> InternetAddress / CidrAddress scalars,
 //	                           InternetAddressFilterOps / CidrAddressFilterOps
 //	vector / halfvec        -> [Float!] (input [Float!]), VectorFilterOps
+//	                           (VectorDistanceFilterOps with distance thresholds)
 //	sparsevec               -> String (pgvector's text form), VectorFilterOps
 //	interval                -> Interval { seconds minutes hours days months years },
 //	                           input IntervalInput, IntervalFilterOps
@@ -118,6 +119,21 @@ const (
 // VectorOps is the operator input of pgvector columns: isNull only, since
 // vectors have no meaningful scalar comparison.
 const VectorOps = "VectorFilterOps"
+
+// Distance-threshold filter inputs (contrib plugin): VectorOps plus the
+// <distance>LessThan operators for vector and halfvec columns
+// (VectorDistanceOps, operand VectorDistanceInput) and sparsevec columns
+// (SparseVectorDistanceOps, SparseVectorDistanceInput), and StringFilterOps
+// plus hammingDistanceLessThan / jaccardDistanceLessThan for bit columns
+// (BitDistanceOps, BitDistanceInput). No index serves these operators.
+const (
+	VectorDistanceOps         = "VectorDistanceFilterOps"
+	VectorDistanceInput       = "VectorDistanceInput"
+	SparseVectorDistanceOps   = "SparseVectorDistanceFilterOps"
+	SparseVectorDistanceInput = "SparseVectorDistanceInput"
+	BitDistanceOps            = "BitDistanceFilterOps"
+	BitDistanceInput          = "BitDistanceInput"
+)
 
 // Column is the GraphQL view of one column (or composite attribute, or
 // computed-column return value).
@@ -351,6 +367,26 @@ func (c Column) Trgm() (contrib.Vocabulary, bool) { return c.vocab(contrib.Vocab
 // Unaccent returns the unaccent vocabulary applying to the column, if any.
 func (c Column) Unaccent() (contrib.Vocabulary, bool) { return c.vocab(contrib.VocabUnaccent) }
 
+// Distances returns the vocabulary holding the column's pgvector distances:
+// its own for vector, halfvec and sparsevec columns, pgvector's bit
+// vocabulary for bit and varbit columns.
+func (c Column) Distances() (contrib.Vocabulary, bool) {
+	if c.Kind == Vector {
+		return c.Own, true
+	}
+	return c.vocab(contrib.VocabBit)
+}
+
+// DistanceInput returns the GraphQL type of the column's reference vector
+// (nearVector: fields, the vector of distance-threshold operands): a list
+// of floats for vector and halfvec, the text form for sparsevec and bit.
+func (c Column) DistanceInput() string {
+	if c.List() {
+		return "[" + c.Scalar + "!]"
+	}
+	return "String"
+}
+
 func (c Column) vocab(name string) (contrib.Vocabulary, bool) {
 	for _, v := range c.Vocabs {
 		if v.Name == name {
@@ -364,9 +400,10 @@ func (c Column) vocab(name string) (contrib.Vocabulary, bool) {
 // the column's own operator input (OpsInput): the owning vocabulary's
 // operators. Text vocabularies (pg_trgm, unaccent) are exposed through
 // [StringTrgmOps], [StringUnaccentOps] and [StringTrgmUnaccentOps] instead,
+// the pgvector distance thresholds through the distance-threshold inputs,
 // and full-text search over text columns is not exposed.
 func (c Column) FilterOps() []contrib.Op {
-	if !c.Owned() {
+	if !c.Owned() || c.Kind == Vector {
 		return nil
 	}
 	return c.Own.Ops
@@ -379,7 +416,7 @@ func (c Column) Op(name string) (contrib.Op, bool) {
 	if c.Owned() {
 		vs = append(vs, c.Own)
 	}
-	for _, n := range []string{contrib.VocabTrgm, contrib.VocabUnaccent} {
+	for _, n := range []string{contrib.VocabTrgm, contrib.VocabUnaccent, contrib.VocabBit} {
 		if v, ok := c.vocab(n); ok {
 			vs = append(vs, v)
 		}
@@ -472,10 +509,13 @@ type VectorOrder struct {
 	Label string
 }
 
-// VectorOrders lists the pgvector ordering families in schema order.
+// VectorOrders lists the pgvector ordering families in schema order: the
+// vector distances, then the bit distances.
 var VectorOrders = []VectorOrder{
 	{Infix: "_L2_DISTANCE", Expr: "l2Distance", Label: "Euclidean (L2) distance"},
 	{Infix: "_NEGATIVE_INNER_PRODUCT", Expr: "negativeInnerProduct", Label: "negative inner product"},
 	{Infix: "_COSINE_DISTANCE", Expr: "cosineDistance", Label: "cosine distance"},
 	{Infix: "_L1_DISTANCE", Expr: "l1Distance", Label: "taxicab (L1) distance"},
+	{Infix: "_HAMMING_DISTANCE", Expr: "hammingDistance", Label: "Hamming distance"},
+	{Infix: "_JACCARD_DISTANCE", Expr: "jaccardDistance", Label: "Jaccard distance"},
 }

@@ -242,3 +242,14 @@ func TestCostAggregates(t *testing.T) {
 		}
 	}
 }
+
+// TestCostScoreFields pins score fields at the cost of a column: one per
+// row, multiplied by the page like any scalar, whatever the reference.
+func TestCostScoreFields(t *testing.T) {
+	cols := costFor(t, testutil.FixtureCatalog(), map[string]any{}, `{ allPlaces(first: 20) { nodes { id name } } }`, nil)
+	scores := costFor(t, testutil.FixtureCatalog(), map[string]any{},
+		`{ allPlaces(first: 20, near: {geometry: "POINT(0 0)"}) { nodes { locationDistance(useSpheroid: true) areaDistance } } }`, nil)
+	if cols != scores {
+		t.Errorf("score fields cost %d, columns %d", scores, cols)
+	}
+}

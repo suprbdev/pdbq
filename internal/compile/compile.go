@@ -176,6 +176,10 @@ type stmt struct {
 	// rankMarker).
 	ranks    map[string]rankSource
 	rankRefs []rankRef
+	// scoreLists maps the alias of a list's row scan to the list field
+	// whose reference arguments (near:, similarTo:, nearVector:) the score
+	// fields of those rows measure against.
+	scoreLists map[string]*ast.Field
 	// then is the Then statement of the compiled field (functionMutation).
 	then *Statement
 	// streamed lists the StreamWindow ids applied so far.
@@ -417,6 +421,7 @@ func (s *stmt) listQuery(meta *schema.FieldMeta, f *ast.Field) (string, error) {
 // extraCond correlates the subquery to a parent row for backward relations.
 func (s *stmt) listInner(t *introspect.Table, f *ast.Field, extraCond, extraSelect string, depth int) (string, error) {
 	alias := s.alias("t")
+	s.scoreList(alias, f)
 	jsonExpr, laterals, err := s.rowJSON(t, f.SelectionSet, alias, depth)
 	if err != nil {
 		return "", err
