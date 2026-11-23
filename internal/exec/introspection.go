@@ -7,8 +7,10 @@ import (
 	"encoding/json"
 	"sort"
 	"strings"
+	"sync/atomic"
 
 	"github.com/vektah/gqlparser/v2/ast"
+	"github.com/vektah/gqlparser/v2/gqlerror"
 
 	"github.com/suprbdev/pdbq/internal/compile"
 )
@@ -80,6 +82,8 @@ func (e *Executor) resolveIntrospection(op *Operation, f *ast.Field) (json.RawMe
 		schema: e.Built.Schema,
 		vars:   op.Vars,
 		frags:  op.Document.Fragments,
+		used:   &op.introBytes,
+		limit:  int64(orDefault(e.Opts.MaxIntrospectionBytes, DefaultMaxIntrospectionBytes)),
 	}
 	var v any
 	var err error
@@ -113,6 +117,17 @@ type introspector struct {
 	schema *ast.Schema
 	vars   map[string]any
 	frags  ast.FragmentDefinitionList
+	used   *int64
+	limit  int64
+}
+
+// charge adds n estimated response bytes and fails once the operation's
+// introspection output exceeds the limit, before the output is built.
+func (in *introspector) charge(n int) error {
+	if atomic.AddInt64(in.used, int64(n)) > in.limit {
+		return gqlerror.Errorf("introspection response exceeds %d bytes", in.limit)
+	}
+	return nil
 }
 
 // iObject is a resolvable introspection object (one of the __* types).
@@ -125,6 +140,9 @@ type iObject interface {
 func (in *introspector) object(v iObject, sel ast.SelectionSet) (map[string]any, error) {
 	out := map[string]any{}
 	for _, f := range in.expand(sel, v.typeName()) {
+		if err := in.charge(len(f.Alias) + 4); err != nil {
+			return nil, err
+		}
 		if f.Name == "__typename" {
 			out[f.Alias] = v.typeName()
 			continue
@@ -159,6 +177,11 @@ func (in *introspector) complete(v any, f *ast.Field) (any, error) {
 			out = append(out, cv)
 		}
 		return out, nil
+	case string:
+		if err := in.charge(len(tv) + 2); err != nil {
+			return nil, err
+		}
+		return v, nil
 	default:
 		return v, nil
 	}

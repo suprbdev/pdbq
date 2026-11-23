@@ -46,6 +46,7 @@ func configFlags(cmd *cobra.Command) {
 	fs.Int("server.max_query_tokens", 15000, "maximum lexical tokens in a GraphQL document")
 	fs.Int("server.max_input_depth", 32, "maximum nesting of input values (literals and variables)")
 	fs.Int("server.max_selections", 10000, "maximum selections in a document with fragments expanded")
+	fs.Int("server.max_introspection_bytes", 16<<20, "maximum estimated JSON bytes of __schema / __type fields per operation")
 	fs.Int("server.max_field_comparisons", 100000, "maximum field pairs compared when validating field merging")
 	fs.Int("server.document_cache_size", 1000, "parsed+validated GraphQL documents to cache (0 disables)")
 	fs.Int("server.document_cache_bytes", 64<<20, "estimated memory the document cache may retain")

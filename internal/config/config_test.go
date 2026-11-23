@@ -59,6 +59,7 @@ func TestValidateRejects(t *testing.T) {
 		"query tokens":  func(c *Config) { c.Server.MaxQueryTokens = 0 },
 		"input depth":   func(c *Config) { c.Server.MaxInputDepth = 0 },
 		"selections":    func(c *Config) { c.Server.MaxSelections = 0 },
+		"introspection": func(c *Config) { c.Server.MaxIntrospectionBytes = 0 },
 		"comparisons":   func(c *Config) { c.Server.MaxFieldComparisons = 0 },
 		"cache bytes":   func(c *Config) { c.Server.DocumentCacheBytes = 0 },
 		"cache entry":   func(c *Config) { c.Server.DocumentCacheMaxEntryBytes = 0 },

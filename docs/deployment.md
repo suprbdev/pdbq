@@ -113,7 +113,7 @@ the browser and were never exposed. GraphiQL and the usual GraphQL clients
 
 pdbq has **no built-in rate limiter** for HTTP requests. The per-request
 protections (`server.max_body_bytes`, `server.max_query_tokens`,
-`server.max_input_depth`, `server.max_selections`,
+`server.max_input_depth`, `server.max_selections`, `server.max_introspection_bytes`,
 `server.max_field_comparisons`, `server.request_timeout`,
 `server.max_depth`, `server.max_cost`, `server.max_page_size`,
 `database.statement_timeout`) bound the cost of a single request, but

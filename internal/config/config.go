@@ -57,6 +57,7 @@ type Server struct {
 	MaxQueryTokens             int           `koanf:"max_query_tokens" doc:"Maximum lexical tokens (names, punctuation, values, comments) in a GraphQL document; parsing stops at the first token beyond it. Bounds the parse and validation work of one request."`
 	MaxInputDepth              int           `koanf:"max_input_depth" doc:"Maximum nesting of input values (list and input object literals, and variable values of list and input object types), e.g. filter not/and/or chains."`
 	MaxSelections              int           `koanf:"max_selections" doc:"Maximum selections (fields, fragment spreads, inline fragments) in a GraphQL document with every fragment spread expanded; rejects fragment bombs before they are walked."`
+	MaxIntrospectionBytes      int           `koanf:"max_introspection_bytes" doc:"Maximum estimated JSON size in bytes of the __schema / __type fields of one operation; aliases multiply every type and field they select, so larger introspection responses are rejected while they are built."`
 	MaxFieldComparisons        int           `koanf:"max_field_comparisons" doc:"Maximum field pairs validation compares to check that fields sharing a response key at one position (fragments expanded) can be merged; that check is quadratic in such repeated fields."`
 	DocumentCacheSize          int           `koanf:"document_cache_size" doc:"Number of parsed and validated GraphQL documents cached by query text (least recently used evicted first, within document_cache_bytes). 0 disables the cache."`
 	DocumentCacheBytes         int           `koanf:"document_cache_bytes" doc:"Estimated memory the document cache may retain (query text plus parsed and validated AST); least recently used documents are evicted beyond it."`
@@ -122,6 +123,7 @@ func DefaultConfig() Config {
 			MaxQueryTokens:             15000,
 			MaxInputDepth:              32,
 			MaxSelections:              10000,
+			MaxIntrospectionBytes:      16 << 20,
 			MaxFieldComparisons:        100000,
 			DocumentCacheSize:          1000,
 			DocumentCacheBytes:         64 << 20,
@@ -206,6 +208,7 @@ func (c *Config) Validate() error {
 		{"max_query_tokens", c.Server.MaxQueryTokens},
 		{"max_input_depth", c.Server.MaxInputDepth},
 		{"max_selections", c.Server.MaxSelections},
+		{"max_introspection_bytes", c.Server.MaxIntrospectionBytes},
 		{"max_field_comparisons", c.Server.MaxFieldComparisons},
 		{"document_cache_bytes", c.Server.DocumentCacheBytes},
 		{"document_cache_max_entry_bytes", c.Server.DocumentCacheMaxEntryBytes},
