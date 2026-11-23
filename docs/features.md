@@ -166,7 +166,7 @@ Checklist of PostgreSQL and GraphQL features pdbq supports. Checked = implemente
 - [x] `GET /schema.graphql` (SDL export; opt-in, off by default)
 - [x] Request timeout, max body size
 - [x] Atomic schema hot-swap (in-flight requests finish on the old schema)
-- [ ] `/metrics` (Prometheus) endpoint
+- [x] `/metrics` (Prometheus) endpoint (opt-in `metrics.enabled`, optional separate `metrics.addr`; see [metrics.md](metrics.md))
 - [x] Persisted queries / APQ (`server.apq` Apollo protocol, `server.persisted_queries_path` allowlist file, `server.persisted_only` lockdown)
 - [ ] `@defer` / `@stream`
 - [ ] Schema contracts — named schema variants that hide tagged types/fields per audience (e.g. `public`/`partner`/`internal`), each with its own SDL export and served endpoint; builds on the `@omit`/tag machinery in smart-comments

@@ -36,6 +36,7 @@ type (
 	ErrorsConfig   = config.Errors
 	PluginsConfig  = config.Plugins
 	LogConfig      = config.Log
+	MetricsConfig  = config.Metrics
 )
 
 // DefaultConfig returns the documented defaults.
@@ -78,9 +79,12 @@ type (
 // Handler runs the boot pipeline (introspect -> plugins -> schema ->
 // executor) and returns the GraphQL http.Handler for embedding in a larger
 // mux. Watch mode, when enabled, hot-swaps the schema behind the returned
-// handler exactly as Serve does. The caller owns the listener; server.addr
-// and request timeouts still apply to the handler's internals
-// (http.TimeoutHandler), but read/idle timeouts are the embedder's job.
+// handler exactly as Serve does. With metrics on, the handler is
+// instrumented and serves metrics.path, unless metrics.addr is set: then the
+// embedder mounts App.Metrics().Handler() itself. The caller owns the
+// listener; server.addr and request timeouts still apply to the handler's
+// internals (http.TimeoutHandler), but read/idle timeouts are the
+// embedder's job.
 func (a *App) Handler(ctx context.Context) (http.Handler, error) {
 	srv, err := a.buildServer(ctx)
 	if err != nil {
@@ -108,6 +112,9 @@ func (a *App) buildServer(ctx context.Context) (*server.Server, error) {
 	if err := a.Connect(ctx); err != nil {
 		return nil, err
 	}
+	if err := a.initMetrics(); err != nil {
+		return nil, err
+	}
 	var catHash string
 	if a.Config.Watch.Enabled {
 		if catHash, err = cat.Hash(); err != nil {
@@ -123,6 +130,11 @@ func (a *App) buildServer(ctx context.Context) (*server.Server, error) {
 	if err != nil {
 		return nil, err
 	}
+	if a.Config.Metrics.Addr == "" {
+		srv.SetMetrics(a.metrics, a.Config.Metrics.Path)
+	} else {
+		srv.SetMetrics(a.metrics, "")
+	}
 	if a.Config.Watch.Enabled {
 		wctx, cancel := context.WithCancel(ctx)
 		w := &watch.Watcher{
@@ -136,6 +148,7 @@ func (a *App) buildServer(ctx context.Context) (*server.Server, error) {
 			OnChange: func(cat *introspect.Catalog) {
 				// Atomic swap: in-flight requests keep the old executor.
 				nb, err := a.BuildSchema(wctx, cat)
+				a.metrics.SchemaRebuilt(err)
 				if err != nil {
 					a.Log.Error("watch: schema rebuild failed", "err", err)
 					return

@@ -52,6 +52,9 @@ func configFlags(cmd *cobra.Command) {
 	fs.Bool("filters.indexed_only", true, "only indexed columns filterable")
 	fs.String("errors.detail", "", "error verbosity: dev|prod|strict")
 	fs.String("log.level", "", "log level")
+	fs.Bool("metrics.enabled", false, "serve Prometheus metrics")
+	fs.String("metrics.path", "", "URL path of the metrics endpoint (default /metrics)")
+	fs.String("metrics.addr", "", "separate listen address for the metrics endpoint")
 	registerEnumCompletion(cmd, "errors.detail", "dev", "prod", "strict")
 	registerEnumCompletion(cmd, "log.level", "debug", "info", "warn", "error")
 }

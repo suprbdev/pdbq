@@ -15,6 +15,7 @@ import (
 	"github.com/suprbdev/pdbcore/auth"
 	"github.com/suprbdev/pdbcore/confx"
 	"github.com/suprbdev/pdbcore/httpx"
+	"github.com/suprbdev/pdbcore/metrics"
 	"github.com/suprbdev/pdbcore/pgexec"
 	"github.com/suprbdev/pdbq/internal/config"
 	"github.com/suprbdev/pdbq/internal/exec"
@@ -38,6 +39,9 @@ type Server struct {
 	sdl      atomic.Pointer[string]
 	// pq holds persisted queries (nil when APQ and the allowlist are off).
 	pq *pqStore
+
+	metrics     *metrics.Metrics
+	metricsPath string
 }
 
 func New(cfg config.Server, authn *Authenticator, ex *exec.Executor, sdl string, log *slog.Logger) (*Server, error) {
@@ -52,6 +56,32 @@ func New(cfg config.Server, authn *Authenticator, ex *exec.Executor, sdl string,
 		s.pq = pq
 	}
 	return s, nil
+}
+
+// SetMetrics instruments the handler with m (request counts, durations and
+// in-flight requests by route class) and, when path is non-empty, serves
+// m's metrics at path. Call it before Handler; a nil m leaves the handler
+// uninstrumented.
+func (s *Server) SetMetrics(m *metrics.Metrics, path string) {
+	s.metrics, s.metricsPath = m, path
+}
+
+// RouteClass is the route label of r in the HTTP metrics: graphql, health,
+// metrics, schema, graphiql or other.
+func (s *Server) RouteClass(r *http.Request) string {
+	switch p := r.URL.Path; {
+	case p == "/graphql":
+		return "graphql"
+	case p == "/healthz" || p == "/readyz":
+		return "health"
+	case s.metricsPath != "" && p == s.metricsPath:
+		return "metrics"
+	case p == "/schema.graphql" && s.cfg.ExposeSchema:
+		return "schema"
+	case p == "/" && s.cfg.GraphiQL:
+		return "graphiql"
+	}
+	return metrics.DefaultRoute
 }
 
 // Swap atomically replaces the executor (and SDL) — watch mode.
@@ -76,6 +106,9 @@ func (s *Server) Handler() http.Handler {
 	if s.cfg.GraphiQL {
 		mux.HandleFunc("GET /", s.handleGraphiQL)
 	}
+	if s.metrics != nil && s.metricsPath != "" {
+		mux.Handle("GET "+s.metricsPath, s.metrics.Handler())
+	}
 	var h http.Handler = mux
 	if s.cfg.RequestTimeout > 0 {
 		h = http.TimeoutHandler(h, s.cfg.RequestTimeout, `{"errors":[{"message":"request timeout"}]}`)
@@ -86,7 +119,7 @@ func (s *Server) Handler() http.Handler {
 	if s.cfg.Compression {
 		h = httpx.Gzip(h)
 	}
-	return h
+	return s.metrics.Middleware(h, s.RouteClass)
 }
 
 // ListenAndServe runs the server until ctx is cancelled.

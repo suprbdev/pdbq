@@ -105,8 +105,10 @@ func (e *Executor) document(query string) (*ast.QueryDocument, error) {
 		return parseAndValidate(e.Built.Schema, query)
 	}
 	if ent, ok := e.docs.get(query); ok {
+		e.Opts.Metrics.documentLookup(true)
 		return ent.doc, cloneError(ent.err)
 	}
+	e.Opts.Metrics.documentLookup(false)
 	doc, err := parseAndValidate(e.Built.Schema, query)
 	e.docs.put(query, doc, err)
 	return doc, cloneError(err)
