@@ -289,6 +289,9 @@ func (s *stmt) relationExists(rel *schema.FilterRelation, v any, alias, quant st
 // bound row-type function called on the current row.
 func (s *stmt) computedCond(t *introspect.Table, fn *introspect.Function, v any, alias string) (string, error) {
 	ret := &introspect.Column{Name: fn.Name, PGType: fn.ReturnType, TypeSchema: fn.ReturnTypeSchema}
+	if fn.ReturnDomain != "" {
+		ret = s.fnReturnColumn(fn)
+	}
 	return s.refOps(ret, computedCallSQL(fn, t, alias), v)
 }
 
@@ -434,10 +437,10 @@ func enumTypeFor(built *schema.Built, col *introspect.Column) (string, bool) {
 	key := col.EnumRef
 	if key == "" {
 		base := strings.TrimPrefix(col.PGType, "_")
-		if built.Catalog.Enum(col.TypeSchema, base) == nil {
+		if built.Catalog.Enum(baseSchema(col), base) == nil {
 			return "", false
 		}
-		key = col.TypeSchema + "." + base
+		key = baseSchema(col) + "." + base
 	}
 	name, ok := built.EnumTypeForPG[key]
 	return name, ok
@@ -478,6 +481,9 @@ func coerceInput(built *schema.Built, col *introspect.Column, v any) any {
 // the text format).
 func (s *stmt) listParam(col *introspect.Column, val any) string {
 	p := s.param(s.coerceList(col, val))
+	if cast, ok := domainArrayCast(s.c.Built, col); ok {
+		return p + cast
+	}
 	if cast, ok := enumArrayCast(s.c.Built, col); ok {
 		return p + cast
 	}
@@ -502,7 +508,7 @@ func (s *stmt) contribArrayCast(col *introspect.Column) (string, bool) {
 	if !s.contrib(&elem).Owned() {
 		return "", false
 	}
-	return "::text[]::" + quoteIdent(col.TypeSchema) + "." + quoteIdent(col.PGType), true
+	return "::text[]::" + quoteIdent(baseSchema(col)) + "." + quoteIdent(col.PGType), true
 }
 
 // enumArrayCast returns the "::text[]::<schema>.<enum>[]" cast suffix for
@@ -511,10 +517,38 @@ func (s *stmt) contribArrayCast(col *introspect.Column) (string, bool) {
 // SQL-text-is-a-pure-function-of-query-shape invariant.
 func enumArrayCast(built *schema.Built, col *introspect.Column) (string, bool) {
 	base := strings.TrimPrefix(col.PGType, "_")
-	if built.Catalog.Enum(col.TypeSchema, base) == nil {
+	if built.Catalog.Enum(baseSchema(col), base) == nil {
 		return "", false
 	}
-	return "::text[]::" + quoteIdent(col.TypeSchema) + "." + quoteIdent(base) + "[]", true
+	return "::text[]::" + quoteIdent(baseSchema(col)) + "." + quoteIdent(base) + "[]", true
+}
+
+// domainArrayCast returns the "::<base>[]::<domain>[]" cast suffix for a
+// list value of a column whose element type is a domain over a built-in
+// type, or "::<base array>::<domain>" for a domain over a built-in array
+// type, and ok=false otherwise. The driver cannot encode a list for a
+// domain's type, whose OID it does not know, so the value travels as the
+// built-in array type, which it can.
+func domainArrayCast(built *schema.Built, col *introspect.Column) (string, bool) {
+	d := built.Catalog.DomainByRef(col.Domain)
+	if d == nil || d.BaseTypeSchema != "pg_catalog" {
+		return "", false
+	}
+	domain := quoteIdent(d.Schema) + "." + quoteIdent(d.Name)
+	if d.IsArrayBase {
+		return "::" + quoteIdent(d.BaseTypeSchema) + "." + quoteIdent(d.BaseType) + "::" + domain, true
+	}
+	return "::" + quoteIdent(d.BaseTypeSchema) + "." + quoteIdent("_"+d.BaseType) + "::" + domain + "[]", true
+}
+
+// baseSchema is the schema of col's PGType: BaseTypeSchema, which differs
+// from TypeSchema for a domain (or an array of one) defined in another
+// schema than its base type, or TypeSchema when it is unknown.
+func baseSchema(col *introspect.Column) string {
+	if col.BaseTypeSchema != "" {
+		return col.BaseTypeSchema
+	}
+	return col.TypeSchema
 }
 
 // coerceList coerces a list-valued input ([X!] for in/notIn/array ops).
@@ -565,6 +599,9 @@ func (s *stmt) valueExpr(col *introspect.Column, v any) string {
 		return expr
 	}
 	if col.IsArray && v != nil {
+		if cast, ok := domainArrayCast(s.c.Built, col); ok {
+			return s.param(s.coerce(col, v)) + cast
+		}
 		if cast, ok := s.contribArrayCast(col); ok {
 			return s.param(s.coerce(col, v)) + cast
 		}

@@ -23,6 +23,7 @@ func TestDefaultNames(t *testing.T) {
 		{KindRelationForwardMany, Input{Table: "room_bookings", Column: "room_id", Columns: []string{"room_id", "valid_at"}}, "roomBookingsByRoomIdAndValidAt"},
 		{KindEnumValueName, Input{Value: "very happy"}, "VERY_HAPPY"},
 		{KindEnumValueName, Input{Value: "1st"}, "_1ST"},
+		{KindDomainTypeName, Input{Schema: "app", Domain: "email_address"}, "EmailAddress"},
 		{KindFunctionRecord, Input{Function: "order_status_counts"}, "OrderStatusCountsRecord"},
 		{KindTypeName, Input{Table: "purchases"}, "Purchase"},
 		{KindTypeName, Input{Table: "order_statuses"}, "OrderStatus"},

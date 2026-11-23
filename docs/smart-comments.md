@@ -80,6 +80,12 @@ Tags may repeat where noted. Disable everything with
 |---|---|
 | `@name <new_name>` | Rename the GraphQL enum type. |
 
+### Domains
+
+| Tag | Effect |
+|---|---|
+| `@name <new_name>` | Name the domain's custom scalar: `@name Percent` on `small_positive` yields `scalar Percent` (see [Domains](domains.md)). |
+
 ## Enum tables
 
 `@enum` on a table turns its rows into a GraphQL enum — the PostGraphile

@@ -47,6 +47,7 @@ func configFlags(cmd *cobra.Command) {
 	fs.StringSlice("schema.schemas", nil, "PostgreSQL schemas to expose")
 	fs.String("schema.cache_path", "", "boot from schema cache file")
 	fs.Bool("schema.expose_partitions", false, "expose partitions of partitioned tables as tables")
+	fs.Bool("schema.domain_scalars", true, "expose domains over built-in scalars as custom scalars")
 	fs.Bool("rls.enabled", true, "enable RLS role switching")
 	fs.Bool("watch.enabled", false, "watch for DDL changes (dev)")
 	fs.Bool("filters.indexed_only", true, "only indexed columns filterable")

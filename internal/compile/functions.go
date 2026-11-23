@@ -120,35 +120,28 @@ func (s *stmt) funcArgExpr(a introspect.FuncArg, v any) string {
 	if v == nil {
 		return "NULL::" + typ
 	}
-	return s.valueExpr(funcArgColumn(a), v) + "::" + typ
+	return s.valueExpr(s.funcArgColumn(a), v) + "::" + typ
 }
 
-// funcArgColumn describes a function parameter as a column.
-func funcArgColumn(a introspect.FuncArg) *introspect.Column {
-	return &introspect.Column{
-		Name:       a.Name,
-		PGType:     a.PGType,
-		TypeSchema: a.TypeSchema,
-		IsArray:    strings.HasPrefix(a.PGType, "_"),
-	}
+// funcArgColumn describes a function parameter as a column, a domain
+// resolved to its base type (schema.FuncArgColumn).
+func (s *stmt) funcArgColumn(a introspect.FuncArg) *introspect.Column {
+	return schema.FuncArgColumn(s.c.Built.Catalog, a)
 }
 
 // fnReturnColumn describes a function's return type as a column, so the
 // scalar/array JSON renderers can apply the same representation fixes they
 // apply to real columns (enum value names, BigInt-as-string, bytea base64).
-func fnReturnColumn(fn *introspect.Function) *introspect.Column {
-	return &introspect.Column{
-		PGType:     fn.ReturnType,
-		TypeSchema: fn.ReturnTypeSchema,
-		IsArray:    strings.HasPrefix(fn.ReturnType, "_"),
-	}
+// A domain resolves to its base type (schema.FuncReturnColumn).
+func (s *stmt) fnReturnColumn(fn *introspect.Function) *introspect.Column {
+	return schema.FuncReturnColumn(s.c.Built.Catalog, fn)
 }
 
 // fnValueJSON renders an already-materialized function result value (a stable
 // reference such as "__fn.v", not a call expression) as response JSON; sel
 // is the result field's selection (range objects).
 func (s *stmt) fnValueJSON(ref string, fn *introspect.Function, sel ast.SelectionSet) string {
-	ret := fnReturnColumn(fn)
+	ret := s.fnReturnColumn(fn)
 	if expr, ok := s.contribJSON(ref, ret, sel); ok {
 		return expr
 	}
@@ -354,7 +347,7 @@ func (s *stmt) computedJSON(meta *schema.FieldMeta, f *ast.Field, alias string, 
 	if err != nil {
 		return "", err
 	}
-	ret := fnReturnColumn(fn)
+	ret := s.fnReturnColumn(fn)
 	shape, comp := s.fnResultShape(fn, f.SelectionSet)
 	switch shape {
 	case fnRows:

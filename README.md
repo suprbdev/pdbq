@@ -103,6 +103,7 @@ See [docs/quickstart.md](docs/quickstart.md) for the full tour.
 | [docs/temporal.md](docs/temporal.md) | PostgreSQL 18 temporal keys, PERIOD and NOT ENFORCED foreign keys |
 | [docs/postgis.md](docs/postgis.md) | PostGIS: GeoJSON scalar, spatial filters, distance ordering, opt-in typed geometry |
 | [docs/aggregates.md](docs/aggregates.md) | Opt-in aggregates: `aggregates`, `groupedAggregates`/`having`, ordering and filtering by related aggregates, spatial aggregates |
+| [docs/domains.md](docs/domains.md) | Domains as custom scalars (`schema.domain_scalars`) |
 | [docs/contrib.md](docs/contrib.md) | Full-text search, pg_trgm, hstore, ltree, citext, ranges, inet: types, filters, rank and similarity ordering |
 | [docs/plugins.md](docs/plugins.md) | Hook surfaces, writing a plugin, built-ins as worked examples |
 | [docs/caching.md](docs/caching.md) | Schema cache and CI/CD gates |

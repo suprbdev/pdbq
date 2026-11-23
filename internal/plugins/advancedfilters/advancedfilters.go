@@ -329,6 +329,9 @@ func (p *Plugin) addComputed(b *schema.Builder) {
 		})
 		if in := filterInput(b, t); !skipFilter && in != nil && in.Field(fieldName) == nil {
 			ret := &introspect.Column{Name: f.Name, PGType: f.ReturnType, TypeSchema: f.ReturnTypeSchema}
+			if f.ReturnDomain != "" {
+				ret = schema.FuncReturnColumn(b.Catalog, f)
+			}
 			in.AddField(&schema.InputField{
 				Name:        fieldName,
 				Type:        b.FilterOpsInputFor(ret),

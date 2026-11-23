@@ -16,9 +16,10 @@
 //     order), foreign keys (bare, many, filter), unique constraints (bare),
 //     and functions (bare, plus filter/order for computed columns, honored by
 //     advanced-filters).
-//   - @name <new_name> — rename a table, column, enum, or function; the value
-//     replaces the pg name at the start of the inflection pipeline, so every
-//     derived name (type, queries, mutations, filters) follows.
+//   - @name <new_name> — rename a table, column, enum, domain, or function;
+//     the value replaces the pg name at the start of the inflection
+//     pipeline, so every derived name (type, queries, mutations, filters)
+//     follows.
 //   - @fieldName / @foreignFieldName <name> — on a foreign key: exact GraphQL
 //     name for the forward (child -> parent) / backward (parent -> children)
 //     relation field; also picked up by advanced-filters and nested-mutations.
@@ -120,6 +121,10 @@ func (p *Plugin) Inflect(kind inflect.Kind, in inflect.Input, next inflect.Next)
 	case inflect.KindEnumTypeName:
 		if name := p.Index().Enum(in.Schema, in.Enum).First("name"); name != "" {
 			in.Enum = name
+		}
+	case inflect.KindDomainTypeName:
+		if name := p.Index().Domain(in.Schema, in.Domain).First("name"); name != "" {
+			in.Domain = name
 		}
 	case inflect.KindFunctionField, inflect.KindFunctionInput, inflect.KindFunctionPayload,
 		inflect.KindComputedField, inflect.KindFunctionRecord:
