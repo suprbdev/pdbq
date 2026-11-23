@@ -1,0 +1,13 @@
+# Keyset predicate shapes: a uniform direction over non-nullable columns is a
+# row comparison; mixed directions keep the expanded form behind a redundant
+# bound on a non-nullable leading column; a nullable leading term gets no
+# bound (a NULL-admitting OR cannot become an index condition).
+{
+  uniform: allPosts(first: 2, after: "WyJQb3N0IiwzXQ==", orderBy: [TITLE_ASC]) { nodes { id } }
+  uniformDesc: allPosts(first: 2, after: "WyJQb3N0IiwzXQ==", orderBy: [TITLE_DESC, ID_DESC]) { nodes { id } }
+  uniformBefore: allPosts(last: 2, before: "WyJQb3N0IiwzXQ==", orderBy: [AUTHOR_ID_ASC, TITLE_ASC]) { nodes { id } }
+  mixedDesc: allPosts(first: 2, after: "WyJQb3N0IiwzXQ==", orderBy: [TITLE_DESC]) { nodes { id } }
+  mixedBefore: allPosts(last: 2, before: "WyJQb3N0IiwzXQ==", orderBy: [TITLE_DESC]) { nodes { id } }
+  nullableTail: allUsers(first: 2, after: "WyJVc2VyIiwgMV0=", orderBy: [EMAIL_ASC, MOOD_DESC]) { nodes { id } }
+  nullableLead: allUsers(first: 2, after: "WyJVc2VyIiwgMV0=", orderBy: [MOOD_ASC, EMAIL_ASC]) { nodes { id } }
+}

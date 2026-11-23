@@ -109,6 +109,11 @@ cursors (and have no `nodeId`). Notes:
   columns (including the default order) pagination continues past where the
   row used to be; an ordering involving other columns needs the anchor row's
   values, so the page comes back empty.
+- When the leading `orderBy` column is `NOT NULL` and btree-indexed, a page
+  deep into the order costs about the same as the first: the predicate
+  bounds an index range scan on that column. A nullable leading column
+  (NULLs sort last) cannot bound the scan, so deep pages over it read the
+  index from its start.
 - `hasNextPage`/`hasPreviousPage` are exact in the direction being paginated
   (one extra row is fetched); the opposite side reflects the supplied
   cursors.

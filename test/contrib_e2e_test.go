@@ -561,6 +561,31 @@ func TestContrib(t *testing.T) {
 		}
 	})
 
+	t.Run("keyset walks over a non-nullable citext order", func(t *testing.T) {
+		conn := testConn(t)
+		execAll(t, conn,
+			`CREATE TABLE `+contribSchema+`.ks_handles (id int PRIMARY KEY, handle "`+contribExtSchema+`".citext NOT NULL, grp int NOT NULL)`,
+			`CREATE INDEX ON `+contribSchema+`.ks_handles (handle)`,
+			`CREATE INDEX ON `+contribSchema+`.ks_handles (grp)`,
+			`INSERT INTO `+contribSchema+`.ks_handles SELECT i, (ARRAY['ada', 'ADA', 'Grace', 'bob', 'Bob', 'grace', 'Zed'])[1 + i % 7], i % 2 FROM generate_series(1, 23) AS i`,
+		)
+		t.Cleanup(func() { _, _ = conn.Exec(context.Background(), `DROP TABLE `+contribSchema+`.ks_handles`) })
+		hs := testServer(t, func(cfg *config.Config) { cfg.Schema.Schemas = []string{contribSchema} })
+		for order, sql := range map[string]string{
+			"HANDLE_ASC":           "handle, id",
+			"HANDLE_DESC":          "handle DESC, id",
+			"HANDLE_ASC, GRP_DESC": "handle, grp DESC, id",
+		} {
+			want := queryIDs(t, conn, `SELECT id FROM `+contribSchema+`.ks_handles ORDER BY `+sql)
+			if got := ksWalk(t, hs.URL, "allKsHandles", order, false); !slices.Equal(got, want) {
+				t.Errorf("%s forward: got %v want %v", order, got, want)
+			}
+			if got := ksWalk(t, hs.URL, "allKsHandles", order, true); !slices.Equal(got, want) {
+				t.Errorf("%s backward: got %v want %v", order, got, want)
+			}
+		}
+	})
+
 	t.Run("ltree primary key: nodeId and keyset", func(t *testing.T) {
 		res := post(t, url, `{allLabels(first: 1) { nodes { nodeId } pageInfo { endCursor } }}`, nil)
 		requireNoErrors(t, res)

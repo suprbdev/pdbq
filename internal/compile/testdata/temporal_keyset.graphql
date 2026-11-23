@@ -1,0 +1,6 @@
+# Keyset predicates over a composite (temporal) primary key compile to a row
+# comparison; a relational leading term keeps the expanded form unbounded.
+{
+  pk: allRoomBookings(first: 2, after: "WyJSb29tQm9va2luZyIsIDEsICJbMjAyNi0wMy0wMSwyMDI2LTAzLTA1KSJd") { nodes { guest } }
+  rel: allBookingNotes(first: 2, after: "WyJCb29raW5nTm90ZSIsIDFd", orderBy: [ROOM_BOOKINGS_BY_ROOM_ID_AND_VALID_AT__ROOM_ID_DESC]) { nodes { note } }
+}
