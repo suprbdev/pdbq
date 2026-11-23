@@ -19,6 +19,9 @@ import (
 	"github.com/suprbdev/pdbq/internal/compile"
 	"github.com/suprbdev/pdbq/internal/contribfixture"
 	"github.com/suprbdev/pdbq/internal/inflect"
+	"github.com/suprbdev/pdbq/internal/plugin"
+	"github.com/suprbdev/pdbq/internal/plugins/advancedfilters"
+	"github.com/suprbdev/pdbq/internal/plugins/aggregates"
 	contribplugin "github.com/suprbdev/pdbq/internal/plugins/contrib"
 	postgisplugin "github.com/suprbdev/pdbq/internal/plugins/postgis"
 	"github.com/suprbdev/pdbq/internal/schema"
@@ -69,6 +72,27 @@ func buildCatalog(t testing.TB, cat *introspect.Catalog, settings map[string]any
 		if err := h.TransformSchema(context.Background(), b); err != nil {
 			t.Fatalf("%s plugin: %v", h.Name(), err)
 		}
+	}
+	built, err := b.Build()
+	if err != nil {
+		t.Fatalf("build schema: %v", err)
+	}
+	return built
+}
+
+// buildAggregates compiles the fixture catalog with the advanced-filters,
+// postgis and aggregates (enabled) plugins applied; users.created_at is
+// allowed as an orderable column so its timestamp group-by derivatives exist.
+func buildAggregates(t testing.TB) *schema.Built {
+	t.Helper()
+	b := schema.New(testutil.FixtureCatalog(), inflect.Default, schema.Options{
+		FilterIndexedOnly: true,
+		AllowColumns:      map[string][]string{"public.users": {"created_at"}},
+	})
+	reg := plugin.NewRegistry(advancedfilters.New(nil), postgisplugin.New(nil),
+		aggregates.New(map[string]any{"enabled": true}))
+	if err := reg.TransformSchema(context.Background(), nil, b); err != nil {
+		t.Fatalf("plugins: %v", err)
 	}
 	built, err := b.Build()
 	if err != nil {
@@ -156,9 +180,11 @@ func functionFixtures() []*introspect.Function {
 // built with plugins.settings.postgis.typed_geometry on, temporal_* ones
 // against the catalog extended with temporalTables, through the
 // advanced-filters and nested-mutations plugins (nested_* ones too), contrib_*
-// against the contrib fixture catalog with the contrib plugin.
+// against the contrib fixture catalog with the contrib plugin, aggregates_*
+// against buildAggregates.
 func TestGolden(t *testing.T) {
 	plain := build(t)
+	aggBuilt := buildAggregates(t)
 	typed := buildWith(t, map[string]any{"typed_geometry": true})
 	temporal, temporalReg := buildTemporal(t)
 	contribBuilt := buildContrib(t)
@@ -175,6 +201,9 @@ func TestGolden(t *testing.T) {
 		}
 		if strings.HasPrefix(name, "contrib_") {
 			built = contribBuilt
+		}
+		if strings.HasPrefix(name, "aggregates") {
+			built = aggBuilt
 		}
 		compileFn := compile.New(built).Compile
 		if strings.HasPrefix(name, "temporal") || strings.HasPrefix(name, "nested_") {

@@ -36,6 +36,7 @@ Tags may repeat where noted. Disable everything with
 | `@unique col[, col]` | Declare a logical unique constraint: generates the single-row lookup field (repeatable). |
 | `@foreignKey (col, …) references [schema.]table (col, …)` | Declare a logical foreign key (typically on views): generates relation fields in both directions and relation filters (repeatable). Append `\|@fieldName x\|@foreignFieldName y` to name the generated fields. |
 | `@enum` | Treat the table as a GraphQL enum: its **rows** become the enum values. See [Enum tables](#enum-tables). |
+| `@aggregates` / `@aggregates off` | Opt the table in to (out of) the `aggregates` plugin's surface; `@omit aggregates` and `@behavior ±aggregates` work too. See [Aggregates](aggregates.md#smart-comments). |
 
 `@omit` actions combine: `@omit create, delete` or repeated `@omit` lines.
 
@@ -49,6 +50,7 @@ Tags may repeat where noted. Disable everything with
 | `@deprecated [reason]` | Emit `@deprecated(reason: …)` on the output field. |
 | `@notNull` / `@nullable` | Override introspected nullability — views lose `NOT NULL`, `@notNull` restores the non-null GraphQL type. |
 | `@filterable` (alias `@sortable`) | Admit the column to filtering **and** ordering despite `filters.indexed_only` — the per-column form of `filters.allow_columns`. Combine with `@omit filter` or `@omit order` to expose only one side. |
+| `@omit aggregates` | Leave the column out of every aggregate (`@behavior -groupBy` only out of `groupBy`). See [Aggregates](aggregates.md#smart-comments). |
 
 ### Constraints (`COMMENT ON CONSTRAINT … ON <table>`)
 

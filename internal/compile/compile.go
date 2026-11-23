@@ -585,8 +585,9 @@ func (s *stmt) orderExprSQL(t *introspect.Table, term orderTerm, alias string) s
 // referenced row; reverse relations, and forward ones over a PERIOD foreign
 // key, aggregate it over the related rows (MIN for ASC terms, MAX for DESC),
 // yielding NULL when no related row exists so those rows sort last
-// (renderOrder emits NULLS LAST for descending terms). The inner alias is
-// fixed: relational subqueries never nest, so it cannot collide.
+// (renderOrder emits NULLS LAST for descending terms); an aggregate binding
+// (aggregates plugin) replaces MIN/MAX with its own expression. The inner
+// alias is fixed: relational subqueries never nest, so it cannot collide.
 func (s *stmt) relationOrderSQL(term orderTerm, alias string) string {
 	rel := term.rel
 	const sub = "__ro"
@@ -597,7 +598,9 @@ func (s *stmt) relationOrderSQL(term orderTerm, alias string) string {
 		join = s.fkJoinSQL(rel.FK, sub, alias, false)
 	}
 	expr := sub + "." + quoteIdent(rel.Column)
-	if !rel.Forward || !rel.FK.ReferencesOne() {
+	if rel.Aggregate != nil {
+		expr = aggregateExpr(rel.Aggregate, sub)
+	} else if !rel.Forward || !rel.FK.ReferencesOne() {
 		agg := "MIN"
 		if term.desc {
 			agg = "MAX"

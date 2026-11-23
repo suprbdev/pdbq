@@ -1,0 +1,11 @@
+{
+  allPlaces(filter: {ownerId: {equalTo: 1}}) {
+    aggregates {
+      stExtent { location area }
+      stUnion { location }
+      stCollect { location }
+      stCentroid { location area }
+      distinctCount { location }
+    }
+  }
+}

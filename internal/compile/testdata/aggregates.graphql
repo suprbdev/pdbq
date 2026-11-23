@@ -1,0 +1,24 @@
+{
+  allPosts(filter: {authorId: {equalTo: 1}}, first: 1) {
+    totalCount
+    aggregates {
+      __typename
+      sum { id authorId }
+      distinctCount { title }
+      average { id }
+      max { id }
+      stddevSample { id }
+      variancePopulation { authorId }
+    }
+    nodes { id }
+  }
+  allUsers(condition: {mood: HAPPY}) {
+    a: aggregates { min { createdAt balance } sum { balance } keys }
+    nodes {
+      email
+      postsByAuthorId(first: 1, filter: {title: {startsWith: "N"}}) {
+        aggregates { sum { id } distinctCount { id } }
+      }
+    }
+  }
+}

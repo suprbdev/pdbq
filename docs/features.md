@@ -69,7 +69,7 @@ Checklist of PostgreSQL and GraphQL features pdbq supports. Checked = implemente
 - [x] GraphQL variables with coercion and default values
 - [x] Multiple root fields per operation
 - [x] Depth limit and cost limit per operation
-- [ ] Aggregate fields (count/sum/avg on lists) — stretch
+- [x] Aggregate fields — built-in `aggregates` plugin (opt-in, `@graphile/pg-aggregates` shape): connection `aggregates` (`sum distinctCount min max average stddevSample stddevPopulation varianceSample variancePopulation`), `groupedAggregates(groupBy:, having:)` with `_TRUNCATED_TO_HOUR`/`_DAY` timestamp derivatives, `<REL>_COUNT_*`/`<REL>_<AGGREGATE>_<COLUMN>_*` ordering, `aggregates` in to-many relation filters, PostGIS `stExtent stUnion stCollect stCentroid`; one statement, RLS and cost limits apply — see [Aggregates](aggregates.md)
 - [ ] GraphQL subscriptions / live queries — non-goal for v1 (hook surfaces designed with this in mind; ship later)
 
 ## Filtering & ordering
@@ -208,6 +208,7 @@ Checklist of PostgreSQL and GraphQL features pdbq supports. Checked = implemente
 - [x] Built-in: `nested-mutations`
 - [x] Built-in: `contrib` (full-text, pg_trgm, hstore, ltree, range and inet operators; rank and similarity ordering; `plugins.settings.contrib.{filters,ordering}`)
 - [x] Built-in: `advanced-filters` (relation filters + computed-column filtering/ordering; halves toggle via `plugins.settings.advanced-filters.{relations,computed}`)
+- [x] Built-in: `aggregates` (connection, grouped, relational-order and relational-filter aggregates; off unless `plugins.settings.aggregates.enabled` or an `@aggregates` table tag; see [Aggregates](aggregates.md))
 - [ ] Out-of-process plugins (go-plugin gRPC or wasm) — v2 track; the existing hook interfaces are the contract either way
 - [x] Built-in: smart-comments plugin (`docs/smart-comments.md`) — `@omit` (per-action on tables, columns, FKs, unique constraints, functions), `@name`, `@fieldName`/`@foreignFieldName`, `@deprecated`, `@notNull`/`@nullable`, `@filterable`/`@sortable`, and logical `@primaryKey`/`@unique`/`@foreignKey` on views; `advanced-filters` honors the tags per object (`@omit filter,order` on relations/computed functions) and gains `relations_opt_in`/`computed_opt_in` for explicit `@filterable` opt-in
 

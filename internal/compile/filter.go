@@ -106,7 +106,7 @@ func (s *stmt) filterCond(t *introspect.Table, filterType string, v any, alias s
 				// compile to EXISTS subqueries, computed columns to function
 				// calls over the current row.
 				if rel := s.c.Built.FilterRelations[filterType][key]; rel != nil {
-					cond, err := s.relationCond(rel, val, alias)
+					cond, err := s.relationCond(rel, s.inputFieldType(filterType, key), val, alias)
 					if err != nil {
 						return "", err
 					}
@@ -193,8 +193,10 @@ func sortedFilterKeys(m map[string]any) []string {
 // {some|none|every} wrapper over it. Existence variants (<rel>Exists /
 // <rel>Exist) take a Boolean: true compiles to a bare EXISTS over the join,
 // false to NOT EXISTS. Like isNull, the Boolean is part of the query shape,
-// not a parameter.
-func (s *stmt) relationCond(rel *schema.FilterRelation, v any, alias string) (string, error) {
+// not a parameter. The wrapper's aggregates field (aggregates plugin,
+// wrapperType names the wrapper input) compares aggregates over the related
+// rows.
+func (s *stmt) relationCond(rel *schema.FilterRelation, wrapperType string, v any, alias string) (string, error) {
 	if rel.Exists {
 		b, ok := v.(bool)
 		if !ok {
@@ -222,6 +224,14 @@ func (s *stmt) relationCond(rel *schema.FilterRelation, v any, alias string) (st
 		switch quant {
 		case "some", "none", "every":
 			cond, err := s.relationExists(rel, val, alias, quant)
+			if err != nil {
+				return "", err
+			}
+			if cond != "" {
+				conds = append(conds, cond)
+			}
+		case "aggregates":
+			cond, err := s.relationAggregateCond(rel, s.inputFieldType(wrapperType, quant), val, alias)
 			if err != nil {
 				return "", err
 			}

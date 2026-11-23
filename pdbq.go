@@ -22,6 +22,7 @@ import (
 	"github.com/suprbdev/pdbq/internal/exec"
 	"github.com/suprbdev/pdbq/internal/plugin"
 	"github.com/suprbdev/pdbq/internal/plugins/advancedfilters"
+	"github.com/suprbdev/pdbq/internal/plugins/aggregates"
 	contribplugin "github.com/suprbdev/pdbq/internal/plugins/contrib"
 	"github.com/suprbdev/pdbq/internal/plugins/nestedmutations"
 	postgisplugin "github.com/suprbdev/pdbq/internal/plugins/postgis"
@@ -91,6 +92,7 @@ func builtinPlugins(cfg config.Config) []plugin.Plugin {
 		advancedfilters.New(cfg.Plugins.Settings["advanced-filters"]),
 		postgisplugin.New(cfg.Plugins.Settings["postgis"]),
 		contribplugin.New(cfg.Plugins.Settings["contrib"]),
+		aggregates.New(cfg.Plugins.Settings["aggregates"]),
 		nestedmutations.New(cfg.Plugins.Settings["nested-mutations"]),
 	}
 }

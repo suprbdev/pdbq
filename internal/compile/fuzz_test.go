@@ -10,6 +10,7 @@ import (
 	"github.com/vektah/gqlparser/v2/validator"
 
 	"github.com/suprbdev/pdbq/internal/compile"
+	"github.com/suprbdev/pdbq/internal/schema"
 )
 
 // FuzzFilter drives arbitrary values through the filter-input -> SQL path
@@ -17,10 +18,11 @@ import (
 // never appear in the SQL text, only in the parameter list. It runs against
 // the contrib fixture so the contrib vocabulary operators (full-text,
 // pg_trgm, hstore, ltree, citext, ranges, inet), the codec-typed generic
-// comparisons, rank and similarity ordering are covered too.
+// comparisons, rank and similarity ordering are covered too, and against
+// the aggregates schema for having and relation-aggregate filters.
 func FuzzFilter(f *testing.F) {
 	built := buildContrib(f)
-	compiler := compile.New(built)
+	aggBuilt := buildAggregates(f)
 
 	const query = `query ($e: String, $tag: [String!], $n: Int!, $h: KeyValueHash, $b: Boolean!, $d: Datetime, $ip: InternetAddress, $ips: [InternetAddress!], $cfg: String) {
 		allUsers(filter: {
@@ -48,36 +50,71 @@ func FuzzFilter(f *testing.F) {
 			orderBy: [SEARCH_RANK_DESC, LABEL_SIMILARITY_DESC]
 		) { nodes { id searchRank attrs span { start { value inclusive } } } }
 	}`
-	doc, perr := parser.ParseQuery(&ast.Source{Input: query})
-	if perr != nil {
-		f.Fatal(perr)
+	const aggQuery = `query ($e: String, $tag: [String!], $n: Int!, $big: BigInt, $bigs: [BigInt!], $bf: BigFloat, $d: Datetime) {
+		allPosts(filter: {title: {startsWith: $e}}) {
+			aggregates { sum { id } }
+			groupedAggregates(
+				groupBy: [AUTHOR_ID, TITLE]
+				having: {
+					sum: {id: {greaterThan: $big, lessThanOrEqualTo: $big}}
+					OR: [{max: {id: {equalTo: $n}}}, {average: {authorId: {notEqualTo: $bf}}}]
+				}
+			) { keys distinctCount { title } }
+		}
+		allUsers(
+			filter: {postsByAuthorId: {aggregates: {
+				filter: {title: {in: $tag, likeInsensitive: $e}}
+				sum: {id: {greaterThan: $big, in: $bigs}}
+				distinctCount: {title: {equalTo: $big, isNull: false}}
+				max: {id: {lessThan: $n}}
+			}}}
+			orderBy: [POSTS_BY_AUTHOR_ID_SUM_ID_DESC]
+		) {
+			groupedAggregates(groupBy: [CREATED_AT_TRUNCATED_TO_DAY], having: {max: {createdAt: {greaterThan: $d}}}) { keys }
+		}
+	}`
+	type target struct {
+		built *schema.Built
+		op    *ast.OperationDefinition
 	}
-	if errs := validator.ValidateWithRules(built.Schema, doc, nil); len(errs) > 0 {
-		f.Fatal(errs)
+	var targets []target
+	for _, tc := range []struct {
+		built *schema.Built
+		query string
+	}{{built, query}, {aggBuilt, aggQuery}} {
+		doc, perr := parser.ParseQuery(&ast.Source{Input: tc.query})
+		if perr != nil {
+			f.Fatal(perr)
+		}
+		if errs := validator.ValidateWithRules(tc.built.Schema, doc, nil); len(errs) > 0 {
+			f.Fatal(errs)
+		}
+		targets = append(targets, target{tc.built, doc.Operations[0]})
 	}
-	op := doc.Operations[0]
 
 	compileWith := func(t testing.TB, email, tag string, n int) []*compile.Statement {
 		t.Helper()
-		vars, verr := validator.VariableValues(built.Schema, op, map[string]any{
-			"e": email, "tag": []any{tag}, "n": n, "h": map[string]any{tag: email}, "b": n%2 == 0,
-			"d": email, "ip": email, "ips": []any{tag}, "cfg": "c" + email,
-		})
-		if verr != nil {
-			t.Skipf("rejected variables: %v", verr)
-		}
 		var out []*compile.Statement
-		for _, sel := range op.SelectionSet {
-			stmt, err := compiler.Compile(context.Background(), &compile.Request{
-				Field:    sel.(*ast.Field),
-				Vars:     vars,
-				Built:    built,
-				MaxDepth: 15,
+		for _, tg := range targets {
+			vars, verr := validator.VariableValues(tg.built.Schema, tg.op, map[string]any{
+				"e": email, "tag": []any{tag}, "n": n, "h": map[string]any{tag: email}, "b": n%2 == 0,
+				"d": email, "ip": email, "ips": []any{tag}, "cfg": "c" + email, "big": tag, "bigs": []any{tag}, "bf": email,
 			})
-			if err != nil {
-				t.Fatalf("compile error on valid input: %v", err)
+			if verr != nil {
+				t.Skipf("rejected variables: %v", verr)
 			}
-			out = append(out, stmt)
+			for _, sel := range tg.op.SelectionSet {
+				stmt, err := compile.New(tg.built).Compile(context.Background(), &compile.Request{
+					Field:    sel.(*ast.Field),
+					Vars:     vars,
+					Built:    tg.built,
+					MaxDepth: 15,
+				})
+				if err != nil {
+					t.Fatalf("compile error on valid input: %v", err)
+				}
+				out = append(out, stmt)
+			}
 		}
 		return out
 	}

@@ -12,6 +12,7 @@ import (
 	"github.com/suprbdev/pdbcore/testutil"
 	"github.com/suprbdev/pdbq/internal/config"
 	"github.com/suprbdev/pdbq/internal/inflect"
+	"github.com/suprbdev/pdbq/internal/plugins/aggregates"
 	postgisplugin "github.com/suprbdev/pdbq/internal/plugins/postgis"
 	"github.com/suprbdev/pdbq/internal/schema"
 )
@@ -185,5 +186,46 @@ func TestCostTypedGeometryLists(t *testing.T) {
 	got := costFor(t, testutil.FixtureCatalog(), map[string]any{"typed_geometry": true}, query, nil)
 	if limit := config.DefaultConfig().Server.MaxCost; got > limit {
 		t.Errorf("typed polygon page costs %d, over the default max_cost %d", got, limit)
+	}
+}
+
+// aggregateCost is cost against the fixture schema with the aggregates
+// plugin enabled.
+func aggregateCost(t *testing.T, query string) int {
+	t.Helper()
+	b := schema.New(testutil.FixtureCatalog(), inflect.Default, schema.Options{FilterIndexedOnly: true})
+	if err := aggregates.New(map[string]any{"enabled": true}).TransformSchema(context.Background(), b); err != nil {
+		t.Fatal(err)
+	}
+	built, err := b.Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, perr := parser.ParseQuery(&ast.Source{Input: query})
+	if perr != nil {
+		t.Fatalf("parse: %v", perr)
+	}
+	if errs := validator.ValidateWithRules(built.Schema, doc, nil); len(errs) > 0 {
+		t.Fatalf("validate: %v", errs)
+	}
+	_, c := measure(doc.Operations[0].SelectionSet, doc.Fragments, nil, 100, 1, built.Meta)
+	return c
+}
+
+// TestCostAggregates pins the aggregate cost model: an aggregates field adds
+// the scan cost (10) to its selection; groupedAggregates, a list of groups,
+// also multiplies its selection by the list fan-out (10).
+func TestCostAggregates(t *testing.T) {
+	for _, tc := range []struct {
+		query string
+		want  int
+	}{
+		{`{ allPosts(first: 1) { totalCount } }`, 2},
+		{`{ allPosts(first: 1) { aggregates { sum { id } } } }`, 14},
+		{`{ allPosts(first: 1) { groupedAggregates(groupBy: [AUTHOR_ID]) { keys } } }`, 22},
+	} {
+		if got := aggregateCost(t, tc.query); got != tc.want {
+			t.Errorf("cost(%s) = %d, want %d", tc.query, got, tc.want)
+		}
 	}
 }

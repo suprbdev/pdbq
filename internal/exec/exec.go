@@ -440,7 +440,8 @@ func (e *Executor) executeField(ctx context.Context, q pgexec.Querier, op *Opera
 // costs 1; a paginated field multiplies its subtree by the requested
 // first/last page size — assuming 10 when neither is given — and its direct
 // list children (nodes/edges) are not multiplied again; list fields outside
-// a paginated container multiply by 10).
+// a paginated container multiply by 10; a field with a ScanCost adds it, and
+// multiplies its subtree by 10 when list-typed, e.g. groupedAggregates).
 func (e *Executor) checkLimits(doc *ast.QueryDocument, op *ast.OperationDefinition, vars map[string]any) error {
 	maxDepth, maxCost := e.Opts.MaxDepth, e.Opts.MaxCost
 	if maxDepth <= 0 {
@@ -495,6 +496,18 @@ func fieldCostMultiplier(f *ast.Field, meta schema.Meta) int {
 	return fm.CostMultiplier
 }
 
+// fieldScanCost returns the ScanCost surcharge bound to a field (aggregates
+// over a whole filtered row set), or 0 when the field has none.
+func fieldScanCost(f *ast.Field, meta schema.Meta) int {
+	if meta == nil || f.ObjectDefinition == nil {
+		return 0
+	}
+	if fm := meta[f.ObjectDefinition.Name][f.Name]; fm != nil {
+		return fm.ScanCost
+	}
+	return 0
+}
+
 // measureSel walks one selection set. paginated is true when the enclosing
 // field already applied a page-size multiplier (a connection): its direct
 // list children (nodes/edges) then count once instead of the ×10 list
@@ -528,8 +541,12 @@ func measureSel(sel ast.SelectionSet, frags ast.FragmentDefinitionList, vars map
 			if over := fieldCostMultiplier(v, meta); over > 0 && over < mult {
 				mult = over
 			}
+			scan := fieldScanCost(v, meta)
+			if scan > 0 && v.Definition != nil && v.Definition.Type.NamedType == "" {
+				mult, childPaginated = 10, true
+			}
 			d, c := measureSel(v.SelectionSet, frags, vars, pageCap, depth+1, childPaginated, meta)
-			cost += 1 + mult*c
+			cost += 1 + scan + mult*c
 			if len(v.SelectionSet) == 0 {
 				d = depth
 			}
