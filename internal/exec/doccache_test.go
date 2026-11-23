@@ -182,7 +182,7 @@ func TestDocumentCacheConcurrent(t *testing.T) {
 				}
 				res := e.Execute(ctx, Request{Query: introspection[(g+i)%len(introspection)]})
 				if len(res.Errors) > 0 {
-					errs <- fmt.Errorf("introspection: %v", res.Errors)
+					errs <- fmt.Errorf("introspection: %w", res.Errors)
 					return
 				}
 				if res := e.Execute(ctx, Request{Query: `{nope}`}); len(res.Errors) == 0 {

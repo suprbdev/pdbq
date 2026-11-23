@@ -407,15 +407,15 @@ func (st *build) addSimilarToArg(t *introspect.Table, enumName string, cols []*i
 	}
 	b.Inputs[inputName] = input
 	for _, f := range st.orderBy[enumName] {
-		if !hasArg(f, "similarTo") {
+		if !hasArg(f) {
 			f.Args = append(f.Args, schema.Arg{Name: "similarTo", Type: inputName})
 		}
 	}
 }
 
-func hasArg(f *schema.Field, name string) bool {
+func hasArg(f *schema.Field) bool {
 	for _, a := range f.Args {
-		if a.Name == name {
+		if a.Name == "similarTo" {
 			return true
 		}
 	}

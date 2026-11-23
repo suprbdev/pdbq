@@ -212,7 +212,8 @@ func (s *Server) writeResult(w http.ResponseWriter, res *exec.Result) {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	*bp = append(b, '\n')
+	b = append(b, '\n')
+	*bp = b
 	w.Header().Set("Content-Type", "application/json")
 	if _, err := w.Write(*bp); err != nil {
 		s.log.Error("write response", "err", err)

@@ -411,6 +411,7 @@ type fieldVal struct{ d *ast.FieldDefinition }
 
 func (fieldVal) typeName() string { return "__Field" }
 
+//nolint:unparam
 func (v fieldVal) field(in *introspector, f *ast.Field) (any, error) {
 	switch f.Name {
 	case "name":
@@ -453,6 +454,7 @@ type inputVal struct {
 
 func (inputVal) typeName() string { return "__InputValue" }
 
+//nolint:unparam
 func (v inputVal) field(in *introspector, f *ast.Field) (any, error) {
 	switch f.Name {
 	case "name":
@@ -482,6 +484,7 @@ type enumVal struct{ d *ast.EnumValueDefinition }
 
 func (enumVal) typeName() string { return "__EnumValue" }
 
+//nolint:unparam
 func (v enumVal) field(_ *introspector, f *ast.Field) (any, error) {
 	switch f.Name {
 	case "name":
@@ -504,6 +507,7 @@ type directiveVal struct{ d *ast.DirectiveDefinition }
 
 func (directiveVal) typeName() string { return "__Directive" }
 
+//nolint:unparam
 func (v directiveVal) field(in *introspector, f *ast.Field) (any, error) {
 	switch f.Name {
 	case "name":
