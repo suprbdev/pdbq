@@ -63,6 +63,7 @@ func windowOf(f *ast.Field) (streamWindow, bool) {
 // w.start+w.count-1 of the page.
 func (p *pagePlan) applyWindow(w streamWindow) {
 	p.offset += w.start
+	p.hasOffset = true
 	p.limit = max(0, min(w.count, p.limit-w.start))
 }
 

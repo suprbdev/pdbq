@@ -18,12 +18,13 @@ import (
 // when enabled. A Server mounted at "/" serves the usual root paths.
 // /healthz, /readyz and the metrics endpoint are served at the root, and
 // every other path is a 404. The WebSocket connection and operation limits
-// count over all mounted servers.
+// and server.incremental_max_responses count over all mounted servers.
 type Group struct {
-	cfg    config.Server
-	log    *slog.Logger
-	mounts []groupMount
-	ws     *wsLimits
+	cfg         config.Server
+	log         *slog.Logger
+	mounts      []groupMount
+	ws          *wsLimits
+	incremental *slots
 
 	ping        func(context.Context) error
 	metrics     *metrics.Metrics
@@ -41,7 +42,7 @@ func NewGroup(cfg config.Server, log *slog.Logger) *Group {
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Group{cfg: cfg, log: log, ws: &wsLimits{}}
+	return &Group{cfg: cfg, log: log, ws: &wsLimits{}, incremental: &slots{}}
 }
 
 // Add mounts s under prefix ("/" or a path without a trailing slash).
@@ -50,6 +51,7 @@ func (g *Group) Add(prefix string, s *Server) {
 	prefix = strings.TrimSuffix(prefix, "/")
 	s.prefix = prefix
 	s.ws = g.ws
+	s.incremental = g.incremental
 	g.mounts = append(g.mounts, groupMount{prefix: prefix, srv: s})
 }
 

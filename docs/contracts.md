@@ -124,6 +124,16 @@ contract does can add a field, a type, a privilege or a row:
   lookups.
 - Hiding a foreign key column does not hide the relation it backs: tag the
   constraint as well when the related row must not be reachable.
+- Integrity errors keep their SQLSTATE but not always PostgreSQL's message.
+  With `errors.detail: prod`, a foreign key, not-null, unique, check or
+  exclusion violation whose message names a table, column or foreign key
+  the contract hides (or `@omit` hides, with or without contracts) is
+  reported as `foreign key violation`, `not-null violation`, and so on. A
+  check or exclusion constraint, which pdbq does not introspect, gets the
+  generic message whenever its table has a hidden column. Deleting a
+  visible row still fails while a hidden table references it: the error no
+  longer names that table, but its SQLSTATE (`23503`) still tells that some
+  row does. `errors.detail: dev` shows every message.
 
 ## Watch mode and metrics
 

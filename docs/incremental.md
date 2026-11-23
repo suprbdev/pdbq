@@ -151,7 +151,9 @@ delivery runs a few more:
   response is being delivered never show up in its later payloads. The
   transaction is not retried: a payload already sent cannot be taken back.
   It holds one pooled connection until the last payload is written, so a
-  slow client keeps that connection for up to `server.request_timeout`.
+  slow client keeps that connection for up to `server.request_timeout`, and
+  a client that stops reading for up to `server.incremental_write_timeout`
+  (see [Limits and errors](#limits-and-errors)).
 - **RLS identity.** The role and claims are applied once, at the start of
   that transaction, so every deferred fragment and stream batch runs under the
   request's identity.
@@ -214,6 +216,21 @@ With the option on, these rules apply to every operation:
   payload completes every pending fragment and stream with a
   `request timeout` error and `hasNext: false`. A client that disconnects
   cancels the transaction.
+- `server.incremental_write_timeout` (10s) bounds each payload of an HTTP
+  response: a write the client has not taken in that time (it stopped
+  reading, and the socket buffers are full) fails, the transaction rolls
+  back and the connection is closed without a last payload. No write
+  outlasts `server.request_timeout` either, so the pooled connection is
+  released by then whatever the client does. Over WebSocket each message
+  has a fixed 10 second write timeout; a write that misses it closes the
+  WebSocket connection, which ends its transactions.
+- `server.incremental_max_responses` caps the incremental responses holding
+  a transaction at once, over HTTP and WebSocket and over every contract
+  (0, the default, means half of `database.max_conns`, at least 1), so
+  incremental clients cannot take the whole pool. A query beyond it is
+  answered by one result, as if the directives were absent: an
+  `application/json` response over HTTP, one `next` message over
+  WebSocket.
 - A deferred fragment or stream batch that fails is completed with its errors
   (`completed: [{id, errors}]`; in `deferSpec=20220824`, an entry with
   `data: null` or `items: null`). A database error aborts the transaction, so

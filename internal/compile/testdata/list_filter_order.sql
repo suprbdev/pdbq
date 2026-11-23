@@ -6,7 +6,7 @@ FROM (
   WHERE __t_1."id" > $1 AND __t_1."title" LIKE $2
   ORDER BY __t_1."title" ASC, __t_1."id" ASC
   LIMIT 11
-  OFFSET $3
+  OFFSET $3::bigint
 ) AS __s_2
 GROUP BY ()
 -- args: [1,"Hello%",5,15]

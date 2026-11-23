@@ -239,7 +239,7 @@ func TestTxMutationRollback(t *testing.T) {
 		{"sql error", `b: addNumbers(input: {a: 2147483647, b: 1}) { integer }`,
 			`{"data":{"a":{"integer":1},"b":null},"errors":[{"message":"integer out of range","path":["b"],"extensions":{"code":"22003","constraint":"","detail":"","hint":"","table":""}}]}`},
 		{"no row matched", `b: updateUserById(id: 999999, patch: {fullName: "x"}) { user { id } }`,
-			`{"data":{"a":{"integer":2},"b":null},"errors":[{"message":"no row matched \"updateUserById\""}]}`},
+			`{"data":{"a":{"integer":2},"b":null},"errors":[{"message":"no row matched \"b\"","path":["b"]}]}`},
 		{"compile error", `b: createUser(input: {email: "qtx@example.com"}) { user { postsByAuthorId(first: -1) { totalCount } } }`,
 			`{"data":{"a":{"integer":3},"b":null},"errors":[{"message":"compile: first must be \u003e= 0","path":["b"]}]}`},
 	}

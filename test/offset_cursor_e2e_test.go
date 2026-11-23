@@ -112,4 +112,37 @@ func TestOffsetCursors(t *testing.T) {
 			t.Errorf("distinctOn edge %d cursor = %q, want %q", i, got, want)
 		}
 	}
+
+	const distinctPage = `query ($o: Int!) { allOcKeyeds(distinctOn: [G], orderBy: [G_ASC], offset: $o, first: 2) {
+		edges { cursor } pageInfo { hasNextPage hasPreviousPage endCursor } } }`
+	for _, tc := range []struct {
+		offset           int
+		cursors          []string
+		hasNext, hasPrev bool
+	}{
+		{0, []string{"o:1", "o:2"}, true, false},
+		{4, []string{"o:5", "o:6"}, true, true},
+		{8, []string{"o:9", "o:10"}, false, true},
+	} {
+		res := post(t, hs.URL, distinctPage, map[string]any{"o": tc.offset})
+		requireNoErrors(t, res)
+		var page ocPage
+		mustUnmarshal(t, res.Data["allOcKeyeds"], &page)
+		var got []string
+		for _, e := range page.Edges {
+			got = append(got, ocCursorN(t, e.Cursor))
+		}
+		if !slices.Equal(got, tc.cursors) || page.PageInfo.HasNextPage != tc.hasNext || page.PageInfo.HasPreviousPage != tc.hasPrev {
+			t.Errorf("distinctOn offset %d: cursors %v, hasNext %v, hasPrev %v; want %v, %v, %v",
+				tc.offset, got, page.PageInfo.HasNextPage, page.PageInfo.HasPreviousPage, tc.cursors, tc.hasNext, tc.hasPrev)
+		}
+	}
+	res = post(t, hs.URL, fmt.Sprintf(`{ allOcKeyeds(distinctOn: [G], orderBy: [G_ASC], first: 2, after: %q) { edges { cursor } pageInfo { hasPreviousPage } } }`,
+		base64.StdEncoding.EncodeToString([]byte("o:6"))), nil)
+	requireNoErrors(t, res)
+	var after ocPage
+	mustUnmarshal(t, res.Data["allOcKeyeds"], &after)
+	if len(after.Edges) != 2 || ocCursorN(t, after.Edges[0].Cursor) != "o:7" || !after.PageInfo.HasPreviousPage {
+		t.Errorf("distinctOn after o:6: %+v", after)
+	}
 }

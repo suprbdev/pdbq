@@ -101,6 +101,19 @@ func TestPartialMutationsGoSideAndCompileErrors(t *testing.T) {
 	}
 }
 
+func TestPartialMutationsNoRowMatchedNamesTheAlias(t *testing.T) {
+	r := &txRun{tx: &spTx{rows: map[string]outcome{
+		"a": {raw: `{"user":{"id":1}}`},
+		"b": {noRow: true},
+		"c": {raw: `{"user":{"id":3}}`},
+	}}}
+	e := newPartialExecutor(t, Options{PartialMutations: true}, r)
+	res := e.Execute(context.Background(), Request{Query: partialQuery, PartialMutations: true})
+	if got, want := resultJSON(t, res), `{"data":{"a":{"user":{"id":1}},"b":null,"c":{"user":{"id":3}}},"errors":[{"message":"no row matched \"b\"","path":["b"]}]}`; got != want {
+		t.Fatalf("response = %s, want %s", got, want)
+	}
+}
+
 func TestPartialMutationsSerializationFailureAbortsTheTransaction(t *testing.T) {
 	r := &txRun{tx: &spTx{rows: map[string]outcome{
 		"a": {raw: `{"user":{"id":1}}`},
