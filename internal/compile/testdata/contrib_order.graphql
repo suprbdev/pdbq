@@ -1,0 +1,22 @@
+# Full-text rank: <field>Rank and <COLUMN>_RANK_* order by ts_rank against
+# the first matches* operator on the column in the same list's filter,
+# reusing its placeholders. Trigram ordering sorts by the pg_trgm distance
+# operator from the similarTo: reference (most similar first for _DESC,
+# index-assisted with a GiST trigram index).
+{
+  ranked: allDocuments(filter: {search: {matchesWebsearch: "cat", config: "simple"}}, orderBy: [SEARCH_RANK_DESC]) {
+    nodes { id searchRank }
+  }
+  rankNoFilter: allDocuments {
+    nodes { id searchRank }
+  }
+  rankOrderNoFilter: allDocuments(orderBy: [SEARCH_RANK_DESC]) {
+    nodes { id }
+  }
+  similar: allDocuments(similarTo: {label: "postgres"}, orderBy: [LABEL_SIMILARITY_DESC, LABEL_WORD_SIMILARITY_ASC, LABEL_STRICT_WORD_SIMILARITY_DESC], first: 5) {
+    nodes { id label }
+  }
+  similarMissing: allDocuments(orderBy: [LABEL_SIMILARITY_DESC]) {
+    nodes { id }
+  }
+}

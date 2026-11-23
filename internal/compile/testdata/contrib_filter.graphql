@@ -1,0 +1,42 @@
+# Contrib vocabulary operators. Extension operators are schema-qualified
+# (OPERATOR("ext".?)) and operands cast to the extension's types, so the SQL
+# works when the extension schema is off the search_path; every operand is a
+# bind parameter.
+{
+  fulltext: allDocuments(filter: {search: {matches: "cat & dog", matchesWebsearch: "\"black cat\" -dog", config: "english"}}) {
+    nodes { id }
+  }
+  fulltextNoConfig: allDocuments(filter: {search: {matchesPlain: "cats", matchesPhrase: "black cat"}}) {
+    nodes { id }
+  }
+  trgm: allDocuments(filter: {title: {similarTo: "postgress", wordSimilarTo: "postgres", strictWordSimilarTo: "gres", likeInsensitive: "%sql%"}}) {
+    nodes { id }
+  }
+  hstore: allDocuments(filter: {attrs: {containsKey: "color", containsAllKeys: ["a", "b"], containsAnyKeys: ["c"], contains: {color: "red", size: null}, equalTo: {k: "v"}}}) {
+    nodes { id }
+  }
+  ltree: allDocuments(filter: {path: {ancestorOf: "a.b.c", descendantOf: "a", matchesLquery: "*.b.*", matchesAnyLquery: ["a.*", "x.*"], matchesLtxtquery: "b & !z", in: ["a.b", "a.c"], greaterThan: "a"}}) {
+    nodes { id }
+  }
+  ltreeArray: allDocuments(filter: {paths: {descendantOf: "a", matchesLquery: "a.*", equalTo: ["a.b", "c"]}}) {
+    nodes { id }
+  }
+  range: allDocuments(filter: {span: {overlaps: {start: {value: 1, inclusive: true}, end: {value: 5, inclusive: false}}, containsElement: 3, adjacentTo: {start: {value: 10, inclusive: true}}, equalTo: {}}}) {
+    nodes { id }
+  }
+  tstzrange: allDocuments(filter: {during: {contains: {start: {value: "2024-01-01T00:00:00Z", inclusive: true}, end: {value: "2024-02-01T00:00:00Z", inclusive: false}}, containsElement: "2024-01-15T12:00:00Z", strictlyLeftOf: {start: {value: "2030-01-01T00:00:00Z", inclusive: true}}}}) {
+    nodes { id }
+  }
+  multirange: allDocuments(filter: {avail: {containsElement: 4, overlaps: {start: {value: 1, inclusive: true}, end: {value: 3, inclusive: true}}, equalTo: [{start: {value: 1, inclusive: true}, end: {value: 2, inclusive: false}}, {start: {value: 5, inclusive: true}}]}}) {
+    nodes { id }
+  }
+  inet: allDocuments(filter: {ip: {containedBy: "10.0.0.0/8", containsOrEqualTo: "10.1.0.0/16", containedByOrEqualTo: "10.0.0.0/8", containsOrContainedBy: "10.0.0.0/24", notIn: ["10.0.0.1"], equalTo: "10.0.0.2"}, net: {contains: "10.1.2.3"}}) {
+    nodes { id }
+  }
+  combined: allDocuments(filter: {or: [{path: {descendantOf: "a"}}, {not: {attrs: {containsKey: "x"}}}], search: {isNull: false}}) {
+    nodes { id }
+  }
+  emptyConfig: allDocuments(filter: {search: {matches: "cat", config: ""}}) {
+    nodes { id }
+  }
+}

@@ -1,6 +1,9 @@
 package schema
 
-import "github.com/suprbdev/pdbcore/postgis"
+import (
+	"github.com/suprbdev/pdbcore/postgis"
+	"github.com/suprbdev/pdbq/internal/contribtype"
+)
 
 // Custom scalar names emitted into every schema.
 var customScalars = []string{"BigInt", "BigFloat", "Datetime", "Date", "Time", "UUID", "JSON", "Cursor"}
@@ -102,6 +105,35 @@ func filterOps(gqlType string, pgType string, isArray bool) []filterOp {
 			filterOp{"startsWith", "String"}, filterOp{"endsWith", "String"})
 	}
 	return base
+}
+
+// contribFilterOps returns the generic comparison operators of a contrib
+// type's operator input: those its type supports with an operand of the
+// column's own input type. Vocabulary operators are added by the contrib
+// plugin.
+func contribFilterOps(ci contribtype.Column) []filterOp {
+	t, list := ci.Input, "["+ci.Input+"!]"
+	eq := []filterOp{{"equalTo", t}, {"notEqualTo", t}}
+	in := []filterOp{{"in", list}, {"notIn", list}}
+	isNull := []filterOp{{"isNull", "Boolean"}}
+	cmp := []filterOp{
+		{"lessThan", t}, {"lessThanOrEqualTo", t},
+		{"greaterThan", t}, {"greaterThanOrEqualTo", t},
+	}
+	var out []filterOp
+	switch ci.Kind {
+	case contribtype.FullText:
+		return isNull
+	case contribtype.Hstore:
+		out = append(eq, isNull...)
+	case contribtype.Ltree, contribtype.Inet:
+		out = append(append(append(eq, in...), isNull...), cmp...)
+	case contribtype.LtreeArray, contribtype.Multirange:
+		out = append([]filterOp{{"equalTo", list}, {"notEqualTo", list}}, isNull...)
+	case contribtype.Range:
+		out = append(append(eq, isNull...), cmp...)
+	}
+	return out
 }
 
 type filterOp struct {

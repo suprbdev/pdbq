@@ -1,11 +1,11 @@
 mutation {
-  createBookingNote(input: {validAt: "[2026-03-02,2026-03-04)", note: "Late arrival", authorId: 1, roomBookingsByRoomIdAndValidAt: {connect: {roomId: 1}}}) {
+  createBookingNote(input: {validAt: {start: {value: "2026-03-02", inclusive: true}, end: {value: "2026-03-04", inclusive: false}}, note: "Late arrival", authorId: 1, roomBookingsByRoomIdAndValidAt: {connect: {roomId: 1}}}) {
     bookingNote { id roomBookingsByRoomIdAndValidAt { nodes { guest } } }
   }
-  createRoomBooking(input: {roomId: 3, validAt: "[2026-05-01,2026-05-10)", guest: "Ada", bookingNotesByRoomIdAndValidAt: {create: [{validAt: "[2026-05-02,2026-05-03)", note: "Early", authorId: 1}]}}) {
+  createRoomBooking(input: {roomId: 3, validAt: {start: {value: "2026-05-01", inclusive: true}, end: {value: "2026-05-10", inclusive: false}}, guest: "Ada", bookingNotesByRoomIdAndValidAt: {create: [{validAt: {start: {value: "2026-05-02", inclusive: true}, end: {value: "2026-05-03", inclusive: false}}, note: "Early", authorId: 1}]}}) {
     roomBooking { guest bookingNotesByRoomIdAndValidAt { nodes { note } } }
   }
-  updateRoomBookingByRoomIdAndValidAt(roomId: 1, validAt: "[2026-03-01,2026-03-05)", patch: {guest: "Grace"}) {
+  updateRoomBookingByRoomIdAndValidAt(roomId: 1, validAt: {start: {value: "2026-03-01", inclusive: true}, end: {value: "2026-03-05", inclusive: false}}, patch: {guest: "Grace"}) {
     roomBooking { guest }
   }
 }

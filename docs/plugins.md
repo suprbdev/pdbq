@@ -118,7 +118,10 @@ The built-in `postgis` plugin (priority 160) follows exactly this shape for
 PostGIS columns: it adds `GeometryFilterOps` fields, derived accessors,
 projection arguments and distance-ordering enum values plus their bindings,
 and the core compiler reads the bindings without a `CompileHook`. See
-[PostGIS](postgis.md).
+[PostGIS](postgis.md). The `contrib` plugin (priority 170) does the same for
+full-text, pg_trgm, hstore, ltree, range and inet columns (vocabulary
+operators, `<field>Rank` fields, rank and similarity ordering); see
+[Contrib types](contrib.md).
 
 ## Worked example 3: smart-comments
 

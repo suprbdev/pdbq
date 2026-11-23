@@ -22,6 +22,7 @@ import (
 	"github.com/suprbdev/pdbq/internal/exec"
 	"github.com/suprbdev/pdbq/internal/plugin"
 	"github.com/suprbdev/pdbq/internal/plugins/advancedfilters"
+	contribplugin "github.com/suprbdev/pdbq/internal/plugins/contrib"
 	"github.com/suprbdev/pdbq/internal/plugins/nestedmutations"
 	postgisplugin "github.com/suprbdev/pdbq/internal/plugins/postgis"
 	"github.com/suprbdev/pdbq/internal/plugins/simplenames"
@@ -89,6 +90,7 @@ func builtinPlugins(cfg config.Config) []plugin.Plugin {
 		simplenames.New(),
 		advancedfilters.New(cfg.Plugins.Settings["advanced-filters"]),
 		postgisplugin.New(cfg.Plugins.Settings["postgis"]),
+		contribplugin.New(cfg.Plugins.Settings["contrib"]),
 		nestedmutations.New(cfg.Plugins.Settings["nested-mutations"]),
 	}
 }

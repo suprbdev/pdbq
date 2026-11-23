@@ -1,0 +1,12 @@
+# variables: {"after": "WyJEb2N1bWVudCIsIDNd"}
+# Keyset pages over rank and similarity orderings: the anchor row's rank
+# and distance are recomputed with the page's own placeholders.
+query ($after: Cursor) {
+  ranked: allDocuments(filter: {search: {matches: "cat"}}, orderBy: [SEARCH_RANK_DESC], after: $after, first: 2) {
+    edges { cursor node { id searchRank } }
+    pageInfo { hasNextPage }
+  }
+  similar: allDocuments(similarTo: {label: "pg"}, orderBy: [LABEL_SIMILARITY_DESC], after: $after, first: 2) {
+    nodes { id }
+  }
+}

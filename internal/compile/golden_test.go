@@ -17,7 +17,9 @@ import (
 	"github.com/suprbdev/pdbcore/introspect"
 	"github.com/suprbdev/pdbcore/testutil"
 	"github.com/suprbdev/pdbq/internal/compile"
+	"github.com/suprbdev/pdbq/internal/contribfixture"
 	"github.com/suprbdev/pdbq/internal/inflect"
+	contribplugin "github.com/suprbdev/pdbq/internal/plugins/contrib"
 	postgisplugin "github.com/suprbdev/pdbq/internal/plugins/postgis"
 	"github.com/suprbdev/pdbq/internal/schema"
 )
@@ -39,12 +41,34 @@ func buildWith(t testing.TB, settings map[string]any) *schema.Built {
 	t.Helper()
 	cat := testutil.FixtureCatalog()
 	cat.Functions = append(cat.Functions, functionFixtures()...)
+	return buildCatalog(t, cat, settings)
+}
+
+// buildContrib compiles the contrib fixture catalog (the shared fixture plus
+// a table of contrib-typed columns and the extensions) with the postgis and
+// contrib plugins applied.
+func buildContrib(t testing.TB) *schema.Built {
+	t.Helper()
+	cat := contribfixture.Catalog()
+	cat.Functions = append(cat.Functions, functionFixtures()...)
+	return buildCatalog(t, cat, nil, contribplugin.New(nil))
+}
+
+// buildCatalog builds cat with default naming, the postgis plugin
+// configured by settings and the extra schema hooks.
+func buildCatalog(t testing.TB, cat *introspect.Catalog, settings map[string]any, hooks ...*contribplugin.Plugin) *schema.Built {
+	t.Helper()
 	b := schema.New(cat, inflect.Default, schema.Options{
 		FilterIndexedOnly: true,
 		Functions:         true,
 	})
 	if err := postgisplugin.New(settings).TransformSchema(context.Background(), b); err != nil {
 		t.Fatalf("postgis plugin: %v", err)
+	}
+	for _, h := range hooks {
+		if err := h.TransformSchema(context.Background(), b); err != nil {
+			t.Fatalf("%s plugin: %v", h.Name(), err)
+		}
 	}
 	built, err := b.Build()
 	if err != nil {
@@ -131,11 +155,13 @@ func functionFixtures() []*introspect.Function {
 // regenerate. Documents named spatial_typed_* compile against the schema
 // built with plugins.settings.postgis.typed_geometry on, temporal_* ones
 // against the catalog extended with temporalTables, through the
-// advanced-filters and nested-mutations plugins.
+// advanced-filters and nested-mutations plugins, contrib_* against the
+// contrib fixture catalog with the contrib plugin.
 func TestGolden(t *testing.T) {
 	plain := build(t)
 	typed := buildWith(t, map[string]any{"typed_geometry": true})
 	temporal, temporalReg := buildTemporal(t)
+	contribBuilt := buildContrib(t)
 
 	files, err := filepath.Glob(filepath.Join("testdata", "*.graphql"))
 	if err != nil || len(files) == 0 {
@@ -146,6 +172,9 @@ func TestGolden(t *testing.T) {
 		built := plain
 		if strings.HasPrefix(name, "spatial_typed_") {
 			built = typed
+		}
+		if strings.HasPrefix(name, "contrib_") {
+			built = contribBuilt
 		}
 		compileFn := compile.New(built).Compile
 		if strings.HasPrefix(name, "temporal") {

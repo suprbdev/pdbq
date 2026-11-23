@@ -43,6 +43,29 @@ func (p *ParamSet) SpatialValue(col *introspect.Column, v any) (string, error) {
 	return val.SQL(p.Add(val.Param)), nil
 }
 
+// Value renders an input value for col as a parameterized SQL expression,
+// appending its parameters to the set: PostGIS constructors for spatial
+// columns, codec expressions for contrib types (hstore($1::text[]),
+// int4range($1::int4, $2::int4, $3::text), $1::"ext".citext, ...), and a
+// coerced bare placeholder (see CoerceInput) for everything else.
+//
+// CompileHook plugins writing column values should use this rather than
+// Add: those types need their constructor or cast to be typed correctly.
+func (p *ParamSet) Value(built *schema.Built, col *introspect.Column, v any) (string, error) {
+	if col != nil && v != nil && postgis.IsSpatial(col.PGType) {
+		return p.SpatialValue(col, v)
+	}
+	if col != nil && v != nil {
+		s := &stmt{c: &Compiler{Built: built}, args: p.args}
+		if ci := s.contrib(col); ci.Owned() {
+			sql, err := s.contribValue(ci, v)
+			p.args = s.args
+			return sql, err
+		}
+	}
+	return p.Add(coerceInput(built, col, v)), nil
+}
+
 // MutationWithCTEs compiles the payload selection of a mutation root field
 // against a caller-supplied CTE chain. The chain's final CTE must be named
 // __mut and yield the mutated row(s); params created via ps are preserved
@@ -68,6 +91,9 @@ func (c *Compiler) MutationWithCTEs(req *Request, f *ast.Field, meta *schema.Fie
 	// in Compile, so a plugin-driven mutation cannot emit SQL built from a
 	// value that failed to parse.
 	if err := s.err(); err != nil {
+		return nil, err
+	}
+	if payload, err = s.resolveRanks(payload); err != nil {
 		return nil, err
 	}
 	return &Statement{

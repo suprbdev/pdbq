@@ -1,0 +1,10 @@
+# Function arguments and results of contrib types use the same mapping and
+# codecs as columns: range and hstore arguments go through their
+# constructors, range and hstore results render as objects.
+{
+  widen(r: {start: {value: 1, inclusive: true}, end: {value: 5, inclusive: false}}, by: 2) {
+    start { value inclusive }
+    end { value }
+  }
+  withFlag(h: {a: "1"})
+}

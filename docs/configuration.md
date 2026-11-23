@@ -63,6 +63,8 @@ $ pdbq config example   # print the full annotated reference
 | `errors.detail` | `prod` | `dev` exposes full PG error detail; `strict` hides even constraint-violation messages |
 | `plugins.disabled` | `[]` | e.g. `[simple-names]` |
 | `plugins.settings.<name>` | `{}` | per-plugin config |
+| `plugins.settings.contrib.filters` | `true` | full-text, trigram, hstore, ltree, range and inet filter operators plus `<field>Rank` fields; see [Contrib types](contrib.md) |
+| `plugins.settings.contrib.ordering` | `true` | `_RANK_`/`_SIMILARITY_` orderBy values and the `similarTo:` argument; see [Contrib types](contrib.md) |
 | `plugins.settings.postgis.typed_geometry` | `false` | spatial columns read as typed geometry objects (`GeometryPoint { x y }`, …) instead of the `GeoJSON` scalar; see [PostGIS](postgis.md#typed-geometry) |
 | `log.level` | `info` | `debug`, `info`, `warn`, `error` |
 | `log.format` | `text` | `text` or `json` |

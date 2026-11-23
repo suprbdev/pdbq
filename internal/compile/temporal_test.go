@@ -110,7 +110,7 @@ func TestTemporalSchema(t *testing.T) {
 		}
 	}
 	in := sdlBlock(sdl, "input BookingNoteCreateInput {")
-	if !strings.Contains(in, "roomId: Int\n") || !strings.Contains(in, "validAt: String!\n") {
+	if !strings.Contains(in, "roomId: Int\n") || !strings.Contains(in, "validAt: DateRangeInput!\n") {
 		t.Errorf("nested PERIOD FK: room id should be optional, the period required:\n%s", in)
 	}
 	lookup := built.Meta["Query"]["roomBookingByRoomId"]

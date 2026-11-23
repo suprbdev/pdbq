@@ -142,7 +142,7 @@ func (s *stmt) anchorVals(t *introspect.Table, terms []orderTerm, keys []any) ([
 	vals := make([]string, len(terms))
 	subWhere := "" // shared across subqueries: the params are allocated once
 	for i, term := range terms {
-		if term.fn == nil && term.rel == nil {
+		if term.plain() {
 			if j := slices.Index(pk, term.col); j >= 0 {
 				vals[i] = s.param(s.keyParam(t.Column(term.col), keys[j]))
 				continue

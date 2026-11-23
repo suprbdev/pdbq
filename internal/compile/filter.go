@@ -7,6 +7,7 @@ import (
 
 	"github.com/suprbdev/pdbcore/introspect"
 	"github.com/suprbdev/pdbcore/postgis"
+	"github.com/suprbdev/pdbq/internal/contribtype"
 	"github.com/suprbdev/pdbq/internal/schema"
 )
 
@@ -161,7 +162,7 @@ func (s *stmt) conditionCond(t *introspect.Table, condType string, v any, alias 
 			conds = append(conds, ref+" IS NULL")
 			continue
 		}
-		conds = append(conds, ref+" = "+s.valueExpr(col, m[key]))
+		conds = append(conds, ref+" "+s.contrib(col).Operator("=")+" "+s.valueExpr(col, m[key]))
 	}
 	return strings.Join(conds, " AND "), nil
 }
@@ -278,12 +279,21 @@ func (s *stmt) refOps(col *introspect.Column, ref string, v any) (string, error)
 	if !ok {
 		return "", fmt.Errorf("compile: filter for column %q must be an operator object", col.Name)
 	}
+	ci := s.contrib(col)
+	var config any
+	if ci.Kind == contribtype.FullText {
+		config = ops["config"]
+		if s, ok := config.(string); ok && s == "" {
+			return "", errUser("config must name a text search configuration")
+		}
+	}
 	var conds []string
 	for _, op := range sortedFilterKeys(ops) {
 		val := ops[op]
-		if val == nil {
+		if val == nil || (op == "config" && ci.Kind == contribtype.FullText) {
 			continue
 		}
+		val = fullTextOperand(ci, op, val, config)
 		cond, err := s.oneOp(col, ref, op, val)
 		if err != nil {
 			return "", err
@@ -299,6 +309,15 @@ func (s *stmt) oneOp(col *introspect.Column, ref, op string, val any) (string, e
 	// types, so they never reach a geometry column.
 	if f := postgis.FlavourOf(col.PGType); f.Spatial() {
 		return s.spatialOp(f, columnSRID(col), ref, op, val)
+	}
+	ci := s.contrib(col)
+	if ci.Owned() && ci.Kind != contribtype.Citext {
+		return s.contribOp(ci, ref, op, val)
+	}
+	if ci.Kind == contribtype.Citext {
+		if sql, ok, err := s.citextOp(ci, ref, op, val); ok {
+			return sql, err
+		}
 	}
 	switch op {
 	case "equalTo":
@@ -350,6 +369,9 @@ func (s *stmt) oneOp(col *introspect.Column, ref, op string, val any) (string, e
 		return jsonbExpr(col, ref) + " @? " + s.param(val) + "::jsonpath", nil
 	case "pathMatch":
 		return jsonbExpr(col, ref) + " @@ " + s.param(val) + "::jsonpath", nil
+	}
+	if _, ok := ci.Trgm(); ok {
+		return s.vocabOp(ci, ref, op, val)
 	}
 	return "", errUser("unknown filter operator %q", op)
 }
@@ -483,6 +505,14 @@ func (s *stmt) valueExpr(col *introspect.Column, v any) string {
 		if err != nil {
 			// valueExpr has no error return; record it so compilation fails
 			// with the user-facing message instead of emitting bad SQL.
+			s.fail(err)
+			return "NULL"
+		}
+		return expr
+	}
+	if ci := s.contrib(col); ci.Owned() && v != nil {
+		expr, err := s.contribValue(ci, v)
+		if err != nil {
 			s.fail(err)
 			return "NULL"
 		}

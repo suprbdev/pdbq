@@ -33,7 +33,7 @@ Checklist of PostgreSQL and GraphQL features pdbq supports. Checked = implemente
 - [x] `float4`/`float8` → `Float`
 - [x] `numeric`/`money` → `BigFloat` (string-serialized)
 - [x] `bool` → `Boolean`
-- [x] `text`/`varchar`/`char`/`citext`/`name` → `String`
+- [x] `text`/`varchar`/`char`/`citext`/`name` → `String` (`citext` comparisons stay case-insensitive with the extension off the search_path)
 - [x] `uuid` → `UUID`
 - [x] `json`/`jsonb` → `JSON`
 - [x] `timestamp`/`timestamptz` → `Datetime`
@@ -41,12 +41,14 @@ Checklist of PostgreSQL and GraphQL features pdbq supports. Checked = implemente
 - [x] `bytea` → `String` (base64 output)
 - [x] Arrays of any mapped type → GraphQL lists
 - [x] Enums → GraphQL enum types (labels mapped to spec-valid names, round-tripped on input and output)
-- [x] `inet`/`cidr`/`macaddr`, `interval`, ranges, `ltree`, `tsvector` → `String` fallback
+- [x] `macaddr`, `interval`, custom range types → `String` fallback
 - [ ] `interval` as structured scalar (v1.x)
-- [ ] Range types with structured bounds (v1.x; range filter operators tracked under Filtering & ordering)
-- [ ] `hstore` (v1.x)
-- [ ] `ltree` operators (v1.x)
-- [ ] Full-text search: `tsvector`/`tsquery` filter ops (v1.x)
+- [x] Range and multirange types with structured bounds: `IntRange { start { value inclusive } end { … } }` (PostGraphile shape; `BigIntRange`, `BigFloatRange`, `DateRange`, `DatetimeRange`), multiranges as lists — see [Contrib types](contrib.md)
+- [x] `hstore` → `KeyValueHash` JSON object, with `containsKey containsAllKeys containsAnyKeys contains containedBy`
+- [x] `ltree` / `ltree[]` with `ancestorOf descendantOf matchesLquery matchesAnyLquery matchesLtxtquery` (+ `*Any` forms)
+- [x] `inet`/`cidr` → `InternetAddress`/`CidrAddress` with containment operators
+- [x] Full-text search: `tsvector` → `FullText` with `matches matchesPlain matchesPhrase matchesWebsearch` (+ `config`), `<field>Rank` and `<COLUMN>_RANK_*` ordering
+- [x] `pg_trgm`: `StringTrgmFilterOps` (`similarTo wordSimilarTo strictWordSimilarTo`) and index-assisted `<COLUMN>_SIMILARITY_*` ordering via `similarTo:`
 - [x] PostGIS `geometry`/`geography` → `GeoJSON` scalar (GeoJSON out; GeoJSON or WKT/EWKT in), with spatial filters (bounding-box incl. directional/n-D, DE-9IM, 3D, exact/ordering equality, radius), derived accessors (area, length, centroid, X/Y/Z/M, start/end point, WKT/EWKT, bounds, …; type-specific ones gated by the column's typmod), projection arguments and distance ordering — see [PostGIS](postgis.md)
 - [x] Opt-in typed geometry objects (`plugins.settings.postgis.typed_geometry`): `GeometryInterface`/`GeographyInterface`, per-subtype and Z/M/ZM types chosen from the column typmod, `@graphile/postgis`-compatible shape, compiled into the same statement
 
@@ -84,7 +86,8 @@ Checklist of PostgreSQL and GraphQL features pdbq supports. Checked = implemente
 - [x] `orderBy` enums (`EMAIL_ASC`/`EMAIL_DESC`), multi-column, PK tiebreaker always appended
 - [x] Filters/ordering on backward relation fields, not just root lists
 - [x] `jsonb` path operators (`@?`/`@@` via `pathExists`/`pathMatch`)
-- [ ] Range operators (`&&`, `@>` element, `<<`, `>>`) (v1.x, alongside structured range types)
+- [x] Range operators (`overlaps contains containsElement containedBy strictlyLeftOf strictlyRightOf notExtendsRightOf notExtendsLeftOf adjacentTo`), on multiranges too
+- [x] Contrib operator sets respect `filters.indexed_only` per index hint (no unindexable operators; trigram operators/ordering only on GIN/GiST-indexed columns)
 - [x] Filtering across relations (`posts: {some: {title: {equalTo: ...}}}`) — built-in `advanced-filters` plugin: forward FK takes the parent's filter, reverse FK a `{some|none|every}` wrapper, compiled to EXISTS subqueries
 - [x] Filtering on relation existence (`postsExist: true`, `authorExists: false`) — Boolean variant per relation, compiled to a bare `(NOT) EXISTS`
 - [x] Filtering/ordering on computed columns — built-in `advanced-filters` plugin (single-row-argument stable functions; not index-backed)
@@ -203,6 +206,7 @@ Checklist of PostgreSQL and GraphQL features pdbq supports. Checked = implemente
 - [x] Collision detection with warnings at schema build
 - [x] Built-in: `simple-names`
 - [x] Built-in: `nested-mutations`
+- [x] Built-in: `contrib` (full-text, pg_trgm, hstore, ltree, range and inet operators; rank and similarity ordering; `plugins.settings.contrib.{filters,ordering}`)
 - [x] Built-in: `advanced-filters` (relation filters + computed-column filtering/ordering; halves toggle via `plugins.settings.advanced-filters.{relations,computed}`)
 - [ ] Out-of-process plugins (go-plugin gRPC or wasm) — v2 track; the existing hook interfaces are the contract either way
 - [x] Built-in: smart-comments plugin (`docs/smart-comments.md`) — `@omit` (per-action on tables, columns, FKs, unique constraints, functions), `@name`, `@fieldName`/`@foreignFieldName`, `@deprecated`, `@notNull`/`@nullable`, `@filterable`/`@sortable`, and logical `@primaryKey`/`@unique`/`@foreignKey` on views; `advanced-filters` honors the tags per object (`@omit filter,order` on relations/computed functions) and gains `relations_opt_in`/`computed_opt_in` for explicit `@filterable` opt-in

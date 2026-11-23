@@ -66,7 +66,16 @@ func (s *stmt) rowJSONAs(typeName string, sel ast.SelectionSet, alias string, de
 				pairs = append(pairs, key, expr)
 				continue
 			}
+			if !meta.Column.IsArray {
+				if expr, ok := s.contribJSON(alias+"."+quoteIdent(meta.Column.Name), meta.Column, f.SelectionSet); ok {
+					pairs = append(pairs, key, expr)
+					continue
+				}
+			}
 			pairs = append(pairs, key, s.columnJSON(alias, meta.Column))
+		case schema.KindFullTextRank:
+			ref := alias + "." + quoteIdent(meta.Column.Name)
+			pairs = append(pairs, key, s.rankMarker(rankRef{key: ref, render: ref}))
 		case schema.KindSpatialDerived:
 			suffix, _ := meta.Nested["suffix"].(string)
 			expr, err := s.spatialDerivedSQL(alias, meta.Column, suffix)
@@ -243,6 +252,8 @@ func (s *stmt) compositeJSON(ref string, comp *introspect.Composite, isArray boo
 			} else {
 				expr = "to_jsonb(" + attr + ")"
 			}
+		} else if cexpr, ok := s.contribJSON(attr, meta.Column, f.SelectionSet); ok {
+			expr = cexpr
 		} else {
 			expr = s.exprJSON(attr, meta.Column)
 		}
@@ -451,7 +462,7 @@ func (s *stmt) connectionJSON(t *introspect.Table, f *ast.Field, extraCond strin
 	if plan.emitKeyset && (wantEdges || wantPageInfo) {
 		selectCols = append(selectCols, nodeIDSQL(typeName, t, alias)+" AS __cursor")
 	}
-	terms := reorderForDistinct(s.orderTerms(t, f), dcols)
+	terms := reorderForDistinct(s.orderTerms(t, f, alias), dcols)
 	// __rn must number rows in the emitted order, so the window carries the
 	// same ORDER BY as the scan: a bare OVER () is evaluated below the sort
 	// node and would follow plan-dependent scan order instead.

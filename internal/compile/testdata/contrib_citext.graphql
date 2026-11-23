@@ -1,0 +1,16 @@
+# citext keeps case-insensitive semantics through citext's own
+# schema-qualified operators and citext-typed operands: an unqualified
+# comparison, or a text-typed operand, silently resolves to the
+# case-sensitive text operator when the extension schema is off the
+# search_path.
+{
+  filter: allDocuments(filter: {slug: {equalTo: "Hello", in: ["A", "b"], notIn: ["c"], like: "he%", likeInsensitive: "%LO", startsWith: "he_", endsWith: "%o", greaterThan: "a"}}) {
+    nodes { id slug }
+  }
+  condition: allDocuments(condition: {slug: "HELLO", attrs: {a: "1"}, span: {start: {value: 1, inclusive: true}}}) {
+    nodes { id }
+  }
+  bySlug: documentBySlug(slug: "Hello") {
+    id
+  }
+}

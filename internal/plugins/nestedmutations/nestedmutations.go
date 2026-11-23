@@ -16,7 +16,6 @@ import (
 
 	coreinflect "github.com/suprbdev/pdbcore/inflect"
 	"github.com/suprbdev/pdbcore/introspect"
-	"github.com/suprbdev/pdbcore/postgis"
 	"github.com/suprbdev/pdbq/internal/compile"
 	"github.com/suprbdev/pdbq/internal/exec"
 	"github.com/suprbdev/pdbq/internal/inflect"
@@ -320,16 +319,13 @@ func (g *cteGen) name(prefix string) string {
 // addParam coerces v for the named column (enum labels, jsonb encoding)
 // before registering it as a placeholder.
 //
-// PostGIS columns take the constructor expression instead of a bare
-// placeholder: geometry/geography values arrive as GeoJSON or WKT text and
-// have to be wrapped (ST_GeomFromGeoJSON / ST_GeomFromEWKT) to be typed
-// correctly.
+// PostGIS and contrib-typed columns take the constructor or cast expression
+// instead of a bare placeholder (see compile.ParamSet.Value): geometry
+// values arrive as GeoJSON or WKT text and have to be wrapped
+// (ST_GeomFromGeoJSON / ST_GeomFromEWKT), hstore and range values as JSON
+// objects fed to their constructors, to be typed correctly.
 func (g *cteGen) addParam(t *introspect.Table, colName string, v any) (string, error) {
-	col := t.Column(colName)
-	if col != nil && v != nil && postgis.IsSpatial(col.PGType) {
-		return g.ps.SpatialValue(col, v)
-	}
-	return g.ps.Add(compile.CoerceInput(g.req.Built, col, v)), nil
+	return g.ps.Value(g.req.Built, t.Column(colName), v)
 }
 
 // insertChain emits CTEs to insert one row into t from input, resolving
