@@ -169,15 +169,23 @@ a GIN index on a text column is taken to be a trigram index, and an HNSW
 index on a vector column is taken to serve every metric, although pgvector
 uses one only for the distance of its operator class.
 
-Full-text search over plain text columns (`to_tsvector(col) @@ ...`) is not
-exposed: it cannot use an index unless an expression index matches the exact
-configuration. Add a generated column instead:
+Full-text search over plain text, `json` or `jsonb` columns
+(`to_tsvector(col) @@ ...`; pdbcore's `textsearch` and `jsonsearch`
+vocabularies) is not exposed: it cannot use an index unless an expression
+index matches the exact configuration. Add a generated column instead
+(`to_tsvector('<config>', jsonb)` is immutable too, and indexes the
+document's string values):
 
 ```sql
 ALTER TABLE articles ADD COLUMN search tsvector
   GENERATED ALWAYS AS (to_tsvector('english', title || ' ' || body)) STORED;
+ALTER TABLE events ADD COLUMN payload_search tsvector
+  GENERATED ALWAYS AS (to_tsvector('english', payload)) STORED;
 CREATE INDEX ON articles USING gin (search);
 ```
+
+pdbr, the REST sibling, offers these searches (as PostgREST does) on columns
+the [indexed-only policy](filtering.md#the-indexed-only-policy) admits.
 
 ## Full-text rank
 
@@ -202,6 +210,62 @@ field nor the ordering.
 `<field>Rank` is `null` when the list has no such filter (and for rows read
 outside a filtered list: relations, mutation payloads). Ordering by rank
 without one is an error. Keyset cursors work with rank ordering.
+
+## Full-text headlines
+
+Every `tsvector` column with a `<field>Rank` field also gets a highlighted
+snippet field, `<field>Headline(document: <Type>HeadlineDocument!, options:
+FullTextHeadlineOptions): String`, when its table has text columns.
+`document` names one of the table's readable `text`, `varchar`, `char(n)` or
+`citext` columns (the source the `tsvector` was built from, typically), and
+the field renders `ts_headline` of that column against the same match the
+rank uses: the first `matches*` operator on the `tsvector` column at the
+conjunctive top level of the list's filter, with its query and `config`.
+
+```graphql
+{
+  allArticles(filter: {search: {matchesWebsearch: "postgres index", config: "english"}}, orderBy: [SEARCH_RANK_DESC], first: 10) {
+    nodes {
+      title
+      searchRank
+      snippet: searchHeadline(document: BODY, options: {maxWords: 20, minWords: 5, startSel: "<mark>", stopSel: "</mark>"})
+    }
+  }
+}
+```
+
+`FullTextHeadlineOptions` holds the `ts_headline` options; omitted fields
+keep PostgreSQL's defaults:
+
+| Field | Range | Default |
+|---|---|---|
+| `maxWords`, `minWords` | 1 to 100, `minWords` < `maxWords` | 35, 15 |
+| `shortWord` | 0 to 100 | 3 |
+| `maxFragments` | 0 to 10 (0 shows one headline) | 0 |
+| `highlightAll` | the whole document, ignoring the word and fragment limits | false |
+| `startSel`, `stopSel`, `fragmentDelimiter` | 1 to 32 bytes, no `"`, `\` or control characters | `<b>`, `</b>`, `" ... "` |
+
+Out-of-range options are a GraphQL error. The options are rendered into
+`ts_headline`'s options text and bound as one parameter, the query and
+config reuse the match's parameters, and the document is a column, so the
+SQL text does not depend on any of the values.
+
+The field is `null` where `<field>Rank` is: without such a match (a match
+under `or`, `not` or a relation filter does not count), for rows read
+outside a filtered list (relations, lookups, mutation payloads) and for a
+`NULL` document. Document columns with `@omit read` (or hidden by a schema
+contract) are not in the enum; `@omit read` or `@omit filter` on the
+`tsvector` column removes the field with its rank. `json` and `jsonb`
+columns are not documents here because the field is a `String` (pdbr
+returns their highlighted document as JSON).
+
+`ts_headline` parses the whole document on every call, whatever the
+options, so it is bounded three ways: it runs only for the rows of the page
+(plus the one look-ahead row): it is a projection of the page subquery,
+which PostgreSQL evaluates above the sort and the `LIMIT`; the options cap
+what it returns per row; and the cost estimator charges each headline 10 per
+row on top of the column reads (pdbcore's `contrib.HeadlineCost`), so a
+`first: 100` page of headlines costs about 1,000.
 
 ## Trigram similarity (pg_trgm)
 

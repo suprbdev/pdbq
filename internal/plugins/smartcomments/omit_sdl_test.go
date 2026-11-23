@@ -168,6 +168,7 @@ const (
 	sScore     = "score"      // a similarity or distance field, scored against a reference input
 	sRank      = "rank"       // a full-text rank field, scored against the column's filter
 	sRankOrder = "rank-order" // a full-text rank orderBy value
+	sDocument  = "document"   // a headline document enum value, highlighted against another column's filter
 	sAggOrder  = "agg-order"  // a relational aggregate orderBy value
 	sDistinct  = "distinct"   // a distinctOn value
 	sGroupBy   = "group-by"   // a groupBy value
@@ -203,7 +204,7 @@ func occurrences(t *testing.T, s *ast.Schema, column string) map[string]bool {
 					add(sUpsert, loc)
 				case root[def.Name] && has(f.Name):
 					add(sKey, loc)
-				case has(f.Name) && strings.HasSuffix(f.Name, "Rank"):
+				case has(f.Name) && (strings.HasSuffix(f.Name, "Rank") || strings.HasSuffix(f.Name, "Headline")):
 					add(sRank, loc)
 				case has(f.Name) && (strings.HasSuffix(f.Name, "Similarity") || strings.HasSuffix(f.Name, "Distance")):
 					add(sScore, loc)
@@ -253,6 +254,8 @@ func occurrences(t *testing.T, s *ast.Schema, column string) map[string]bool {
 					add(sDistinct, loc)
 				case strings.HasSuffix(def.Name, "GroupBy"):
 					add(sGroupBy, loc)
+				case strings.HasSuffix(def.Name, "HeadlineDocument"):
+					add(sDocument, loc)
 				case !strings.HasSuffix(def.Name, "OrderBy"):
 					t.Errorf("unclassified enum value %s", loc)
 				case strings.HasSuffix(prefix, "__"):
@@ -290,8 +293,8 @@ func surfacesOf(occ map[string]bool) []string {
 // column's name the untagged schema has must survive exactly when its
 // surface is not one the variant hides, and no new occurrence may appear.
 func TestOmitColumnEverywhere(t *testing.T) {
-	everything := []string{sOutput, sKey, sUpsert, sFilter, sAggFilter, sOrder, sRefOrder, sRef, sScore, sAggOrder, sRank, sRankOrder, sDistinct, sGroupBy, sCreate, sUpdate}
-	read := []string{sOutput, sKey, sUpsert, sFilter, sAggFilter, sOrder, sRefOrder, sRef, sScore, sAggOrder, sRank, sRankOrder, sDistinct, sGroupBy}
+	everything := []string{sOutput, sKey, sUpsert, sFilter, sAggFilter, sOrder, sRefOrder, sRef, sScore, sAggOrder, sRank, sRankOrder, sDocument, sDistinct, sGroupBy, sCreate, sUpdate}
+	read := []string{sOutput, sKey, sUpsert, sFilter, sAggFilter, sOrder, sRefOrder, sRef, sScore, sAggOrder, sRank, sRankOrder, sDocument, sDistinct, sGroupBy}
 	variants := []struct {
 		tag    string
 		hidden []string
@@ -306,7 +309,7 @@ func TestOmitColumnEverywhere(t *testing.T) {
 		{"@omit filter,order", []string{sFilter, sAggFilter, sOrder, sRefOrder, sAggOrder, sRank, sRankOrder, sDistinct, sGroupBy}},
 	}
 	columns := map[string][]string{
-		"secret_code":   {sOutput, sKey, sUpsert, sFilter, sAggFilter, sOrder, sRefOrder, sRef, sScore, sAggOrder, sDistinct, sCreate, sUpdate},
+		"secret_code":   {sOutput, sKey, sUpsert, sFilter, sAggFilter, sOrder, sRefOrder, sRef, sScore, sAggOrder, sDocument, sDistinct, sCreate, sUpdate},
 		"secret_spot":   {sOutput, sFilter, sAggFilter, sRefOrder, sScore, sCreate, sUpdate},
 		"secret_doc":    {sOutput, sFilter, sAggFilter, sOrder, sAggOrder, sRank, sRankOrder, sDistinct, sGroupBy, sCreate, sUpdate},
 		"secret_amount": {sOutput, sFilter, sAggFilter, sOrder, sAggOrder, sDistinct, sGroupBy, sCreate, sUpdate},

@@ -1,0 +1,21 @@
+# Full-text headlines: <field>Headline(document:, options:) runs ts_headline
+# over the document column against the same match <field>Rank ranks against
+# (the first matches* on the column at the conjunctive top level), reusing
+# its placeholders; the options text is always one bound parameter. Null
+# without a match.
+{
+  ranked: allDocuments(filter: {search: {matchesWebsearch: "cat", config: "english"}}, orderBy: [SEARCH_RANK_DESC], first: 5) {
+    nodes {
+      id
+      searchRank
+      snippet: searchHeadline(document: NOTES)
+      marked: searchHeadline(document: TITLE, options: {maxWords: 10, minWords: 3, startSel: "<mark>", stopSel: "</mark>", maxFragments: 2})
+    }
+  }
+  noMatch: allDocuments(filter: {or: [{search: {matches: "x"}}, {id: {equalTo: 1}}]}) {
+    nodes { searchHeadline(document: LABEL) }
+  }
+  keywords: allDocuments(filter: {keywords: {matches: "pg"}}) {
+    nodes { keywordsHeadline(document: NOTES, options: {highlightAll: true}) }
+  }
+}

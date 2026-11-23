@@ -49,6 +49,12 @@ const (
 	// first matches* operator on it in the enclosing list field's filter,
 	// null without one.
 	KindFullTextRank FieldKind = "fulltext_rank"
+	// KindFullTextHeadline is the <field>Headline(document:, options:):
+	// String sibling of a tsvector column (contrib plugin): ts_headline of
+	// the document column the document: argument names (Meta.Nested
+	// "documents" maps its enum values to columns) against the same match
+	// a KindFullTextRank field ranks against, null without one.
+	KindFullTextHeadline FieldKind = "fulltext_headline"
 	// KindScore is a selectable score of Meta.Column measured against the
 	// reference the enclosing list field takes for it (Meta.Score): the
 	// <field>Distance of a spatial column from near: (postgis plugin), the
@@ -158,6 +164,14 @@ type FieldMeta struct {
 	// list-typed field with a ScanCost also multiplies its selection by the
 	// list fan-out assumption, even inside a connection.
 	ScanCost int
+	// RowCost is a surcharge the executor's cost estimate adds each time
+	// the field is evaluated (per row it is read for), for values that are
+	// expensive to compute (full-text headlines).
+	RowCost int
+	// ArgCost maps arguments to a surcharge added per evaluation, like
+	// RowCost, when the argument has a non-null value (the spatial buffer:
+	// argument).
+	ArgCost map[string]int
 }
 
 // ContribValue names a contrib value of a column: an operand-free accessor

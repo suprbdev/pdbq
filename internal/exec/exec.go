@@ -1082,6 +1082,7 @@ func (m *measurer) field(v *ast.Field, depth int, paginated bool) measured {
 		mult, childPaginated = m.pageCap, true
 	}
 	scan = satAdd(scan, aggregateArgCost(v, m.vars, m.built))
+	scan = satAdd(scan, fieldRowCost(v, m.meta, m.vars))
 	if len(v.SelectionSet) == 0 {
 		return measured{depth: 0, cost: satAdd(1, scan)}
 	}
@@ -1117,6 +1118,29 @@ func fieldScanCost(f *ast.Field, meta schema.Meta) int {
 		return fm.ScanCost
 	}
 	return 0
+}
+
+// fieldRowCost returns the per-evaluation surcharge bound to a field: its
+// RowCost plus the ArgCost of every argument given a non-null value.
+func fieldRowCost(f *ast.Field, meta schema.Meta, vars map[string]any) int {
+	if meta == nil || f.ObjectDefinition == nil {
+		return 0
+	}
+	fm := meta[f.ObjectDefinition.Name][f.Name]
+	if fm == nil {
+		return 0
+	}
+	cost := fm.RowCost
+	for name, c := range fm.ArgCost {
+		arg := f.Arguments.ForName(name)
+		if arg == nil {
+			continue
+		}
+		if v, err := arg.Value.Value(vars); err == nil && v != nil {
+			cost = satAdd(cost, c)
+		}
+	}
+	return cost
 }
 
 // aggregateArgCost charges the aggregates a field's arguments evaluate per

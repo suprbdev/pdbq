@@ -103,12 +103,12 @@ func FuzzFilter(f *testing.F) {
 			groupedAggregates(groupBy: [CREATED_AT_TRUNCATED_TO_DAY], having: {max: {createdAt: {greaterThan: $d}}}) { keys }
 		}
 	}`
-	const fuzzyQuery = `query ($e: String!, $n: Int!, $len: Int) {
+	const fuzzyQuery = `query ($e: String!, $n: Int!, $len: Int, $b: Boolean!) {
 		allDocuments(
-			filter: {notes: {levenshteinDistanceLessThan: {text: $e, distance: $n}, metaphoneEqualTo: $e}}
+			filter: {notes: {levenshteinDistanceLessThan: {text: $e, distance: $n}, metaphoneEqualTo: $e}, search: {matchesPlain: $e}}
 			similarTo: {notes: $e}
 			orderBy: [NOTES_LEVENSHTEIN_DISTANCE_ASC]
-		) { nodes { id notesLevenshteinDistance pathSubpath(offset: $n, length: $len) } }
+		) { nodes { id notesLevenshteinDistance pathSubpath(offset: $n, length: $len) searchHeadline(document: NOTES, options: {maxWords: $n, minWords: 1, startSel: $e, highlightAll: $b}) } }
 	}`
 	const pageQuery = `query ($n: Int!, $after: Cursor) {
 		allUsers(distinctOn: [MOOD], orderBy: [MOOD_DESC], first: 2, offset: $n) {
@@ -234,7 +234,7 @@ func FuzzSpatial(f *testing.F) {
 	built := build(f)
 	compiler := compile.New(built)
 
-	const query = `query ($wkt: GeoJSON!, $x: Float!, $d: Float!) {
+	const query = `query ($wkt: GeoJSON!, $x: Float!, $d: Float!, $p: Int!) {
 		allPlaces(filter: {
 			location: {
 				intersects: $wkt
@@ -244,7 +244,7 @@ func FuzzSpatial(f *testing.F) {
 				bboxIntersectsND: $wkt
 				bboxIntersects2D: $wkt
 			}
-		}, near: {geometry: $wkt}, orderBy: [AREA_DISTANCE_ASC]) { nodes { id locationDistance areaDistance } }
+		}, near: {geometry: $wkt}, orderBy: [AREA_DISTANCE_ASC]) { nodes { id locationDistance areaDistance location(buffer: $d, precision: $p) area(buffer: $x, simplify: $d, transform: 3857, precision: $p) } }
 	}`
 	doc, perr := parser.ParseQuery(&ast.Source{Input: query})
 	if perr != nil {
@@ -258,7 +258,7 @@ func FuzzSpatial(f *testing.F) {
 	compileWith := func(t testing.TB, wkt string, x, d float64) (*compile.Statement, bool) {
 		t.Helper()
 		vars, verr := validator.VariableValues(built.Schema, op, map[string]any{
-			"wkt": wkt, "x": x, "d": d,
+			"wkt": wkt, "x": x, "d": d, "p": len(wkt) % 16,
 		})
 		if verr != nil {
 			return nil, false
