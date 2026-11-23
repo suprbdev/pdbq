@@ -739,6 +739,10 @@ func (st *build) addHeadlineField(t *introspect.Table, c *introspect.Column) {
 	if docs == nil {
 		return
 	}
+	maxDoc := b.Options.MaxHeadlineDocument
+	if maxDoc < 1 {
+		maxDoc = pgcontrib.MaxHeadlineDocument
+	}
 	obj.AddField(&schema.Field{
 		Name: name,
 		Type: "String",
@@ -750,8 +754,8 @@ func (st *build) addHeadlineField(t *introspect.Table, c *introspect.Column) {
 			" in the filter of the list this row was read through, the same match " + strings.TrimSuffix(name, "Headline") + "Rank ranks against; null without one.",
 		Meta: &schema.FieldMeta{
 			Kind: schema.KindFullTextHeadline, Table: t, Column: c,
-			Nested:  map[string]any{"documents": docs},
-			RowCost: pgcontrib.HeadlineCost,
+			Nested:  map[string]any{"documents": docs, "max_document": maxDoc},
+			RowCost: pgcontrib.HeadlineDocumentCost(maxDoc),
 		},
 	})
 }

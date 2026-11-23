@@ -279,9 +279,10 @@ func (s *stmt) rankMarker(r rankRef) string {
 func rankMarkerText(i int) string { return "%%RANK_" + strconv.Itoa(i) + "%%" }
 
 // headlineMarker renders a <field>Headline field: a rank marker over the
-// document column the document: argument names, resolved like the rank of
-// the same tsvector column, with the validated options bound as one text
-// parameter whether or not any were given (none without the match).
+// document column the document: argument names, bounded to the field's
+// max_document characters (contrib.HeadlineDocumentSQL), resolved like the
+// rank of the same tsvector column, with the validated options bound as one
+// text parameter whether or not any were given (none without the match).
 func (s *stmt) headlineMarker(meta *schema.FieldMeta, f *ast.Field, alias string) (string, error) {
 	docs, _ := meta.Nested["documents"].(map[string]*introspect.Column)
 	v, _ := s.argValue(f, "document")
@@ -295,9 +296,17 @@ func (s *stmt) headlineMarker(meta *schema.FieldMeta, f *ast.Field, alias string
 	if err != nil {
 		return "", errUser("%s: %s", f.Name, err.Error())
 	}
+	maxDoc, _ := meta.Nested["max_document"].(int)
+	if maxDoc < 1 {
+		maxDoc = pgcontrib.MaxHeadlineDocument
+	}
+	render := alias + "." + quoteIdent(doc.Name)
+	if bounded := pgcontrib.HeadlineDocumentSQL(render, doc.PGType, strconv.Itoa(maxDoc)); bounded != "" {
+		render = bounded
+	}
 	return s.rankMarker(rankRef{
 		key:      alias + "." + quoteIdent(meta.Column.Name),
-		render:   alias + "." + quoteIdent(doc.Name),
+		render:   render,
 		headline: true,
 		options:  h.String(),
 	}), nil

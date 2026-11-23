@@ -45,9 +45,26 @@ func TestCostSpatialBuffer(t *testing.T) {
 	}
 }
 
-// TestCostHeadline charges contrib.HeadlineCost per row for a headline.
+// TestCostHeadline charges a headline contrib.HeadlineDocumentCost of the
+// document bound per row: the default bound, or server.max_headline_document.
 func TestCostHeadline(t *testing.T) {
-	b := schema.New(contribfixture.Catalog(), inflect.Default, schema.Options{FilterIndexedOnly: true})
+	for _, maxDoc := range []int{0, 1000, 100000} {
+		want := maxDoc
+		if want == 0 {
+			want = pgcontrib.MaxHeadlineDocument
+		}
+		rank, headline := headlineCosts(t, maxDoc)
+		if wantCost := rank + 10*pgcontrib.HeadlineDocumentCost(want); headline != wantCost {
+			t.Errorf("max document %d: headline cost %d, want %d", maxDoc, headline, wantCost)
+		}
+	}
+}
+
+// headlineCosts returns the cost of ten rows with a rank and with a
+// headline, under the document bound maxDoc.
+func headlineCosts(t *testing.T, maxDoc int) (int, int) {
+	t.Helper()
+	b := schema.New(contribfixture.Catalog(), inflect.Default, schema.Options{FilterIndexedOnly: true, MaxHeadlineDocument: maxDoc})
 	if err := contribplugin.New(nil).TransformSchema(context.Background(), b); err != nil {
 		t.Fatal(err)
 	}
@@ -68,7 +85,5 @@ func TestCostHeadline(t *testing.T) {
 	}
 	rank := measureQ(`{ allDocuments(first: 10, filter: {search: {matches: "a"}}) { nodes { searchRank } } }`)
 	headline := measureQ(`{ allDocuments(first: 10, filter: {search: {matches: "a"}}) { nodes { searchHeadline(document: NOTES) } } }`)
-	if headline != rank+10*pgcontrib.HeadlineCost {
-		t.Errorf("headline cost %d, want %d", headline, rank+10*pgcontrib.HeadlineCost)
-	}
+	return rank, headline
 }

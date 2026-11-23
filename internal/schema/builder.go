@@ -82,6 +82,11 @@ type Options struct {
 	// incremental delivery RFC (server.incremental_delivery). Without it
 	// the SDL declares no directive.
 	IncrementalDelivery bool
+	// MaxHeadlineDocument bounds, in characters, the document a full-text
+	// headline reads (server.max_headline_document); the contrib plugin
+	// prices headlines by it. Values below 1 mean
+	// contrib.MaxHeadlineDocument.
+	MaxHeadlineDocument int
 	Logger              *slog.Logger
 }
 

@@ -40,6 +40,7 @@ $ pdbq config example   # print the full annotated reference
 | `server.max_body_bytes` | 1048576 | maximum request body size (1 MiB) |
 | `server.max_depth` / `max_cost` | 15 / 10000 | per-operation limits; recursive relations can tune the cost estimate with `@costMultiplier` (see [smart comments](smart-comments.md#cost-estimation-for-recursive-relations)) |
 | `server.max_page_size` | 100 | largest accepted `first`/`last` (a larger value errors); also the default page size when neither is given |
+| `server.max_headline_document` | 65536 | characters of the document a full-text headline reads (`left(doc, n)`); each headline costs 10 per started 8192 characters of it, per row (see [contrib](contrib.md#full-text-headlines)) |
 | `server.max_query_tokens` | 15000 | lexical tokens per GraphQL document (names, punctuation, values, comments); parsing stops at the first one beyond it, bounding the parse and validation work of one request |
 | `server.max_input_depth` | 32 | nesting of input values: list and input object literals, and variables of list or input object types (`not`/`and`/`or` filter chains, nested mutation inputs); JSON scalar values are not counted |
 | `server.max_selections` | 10000 | selections (fields, fragment spreads, inline fragments) of a document with every fragment spread expanded; rejects fragment bombs before anything walks them |

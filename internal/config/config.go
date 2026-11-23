@@ -14,6 +14,7 @@ import (
 
 	flag "github.com/spf13/pflag"
 	"github.com/suprbdev/pdbcore/confx"
+	pgcontrib "github.com/suprbdev/pdbcore/contrib"
 	"github.com/suprbdev/pdbq/internal/live"
 	"github.com/suprbdev/pdbq/internal/subscribe"
 )
@@ -59,6 +60,7 @@ type Server struct {
 	MaxDepth                   int           `koanf:"max_depth" doc:"Maximum GraphQL selection depth per operation."`
 	MaxCost                    int           `koanf:"max_cost" doc:"Maximum estimated cost (selected fields x list multipliers) per operation."`
 	MaxPageSize                int           `koanf:"max_page_size" doc:"Maximum rows per page; first/last above this are rejected and it is the default page size when neither is given."`
+	MaxHeadlineDocument        int           `koanf:"max_headline_document" doc:"Characters of a document a full-text headline (<field>Headline) reads: text is cut to its first max_headline_document characters, a longer json/jsonb document gets a null headline. ts_headline's work grows with the document, and the cost estimate charges each headline by this bound."`
 	MaxQueryTokens             int           `koanf:"max_query_tokens" doc:"Maximum lexical tokens (names, punctuation, values, comments) in a GraphQL document; parsing stops at the first token beyond it. Bounds the parse and validation work of one request."`
 	MaxInputDepth              int           `koanf:"max_input_depth" doc:"Maximum nesting of input values (list and input object literals, and variable values of list and input object types), e.g. filter not/and/or chains."`
 	MaxSelections              int           `koanf:"max_selections" doc:"Maximum selections (fields, fragment spreads, inline fragments) in a GraphQL document with every fragment spread expanded; rejects fragment bombs before they are walked."`
@@ -154,6 +156,7 @@ func DefaultConfig() Config {
 			MaxDepth:                   15,
 			MaxCost:                    10000,
 			MaxPageSize:                100,
+			MaxHeadlineDocument:        pgcontrib.MaxHeadlineDocument,
 			MaxQueryTokens:             15000,
 			MaxInputDepth:              32,
 			MaxSelections:              10000,
@@ -241,6 +244,9 @@ func (c *Config) Validate() error {
 	}
 	if c.Server.MaxPageSize < 1 {
 		errs = append(errs, "server.max_page_size must be >= 1")
+	}
+	if c.Server.MaxHeadlineDocument < 1 {
+		errs = append(errs, "server.max_headline_document must be >= 1")
 	}
 	if c.Server.DocumentCacheSize < 0 {
 		errs = append(errs, "server.document_cache_size must be >= 0")
