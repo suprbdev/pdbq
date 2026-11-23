@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/suprbdev/pdbcore/introspect"
+	corecatalog "github.com/suprbdev/pdbcore/smartcomments/catalog"
 	"github.com/suprbdev/pdbcore/testutil"
 	"github.com/suprbdev/pdbq/internal/inflect"
 	"github.com/suprbdev/pdbq/internal/plugin"
@@ -99,14 +100,14 @@ func TestTableBackedEnum(t *testing.T) {
 func TestComputedColumns(t *testing.T) {
 	cat := testutil.FixtureCatalog()
 	cat.Functions = append(cat.Functions,
-		// Volatile row-type functions are never computed columns.
+		// Volatile row-type functions are custom mutations, not computed columns.
 		&introspect.Function{
 			Schema: "public", Name: "users_touch",
 			Args:       []introspect.FuncArg{{Name: "u", PGType: "users", TypeSchema: "public"}},
 			ReturnType: "text", ReturnTypeSchema: "pg_catalog",
 			Volatility: introspect.VolatilityVolatile,
 		},
-		// Row-type arg in non-first position: not representable, skipped.
+		// Row-type arg in non-first position: a root query taking UserInput.
 		&introspect.Function{
 			Schema: "public", Name: "tag_user",
 			Args: []introspect.FuncArg{
@@ -143,10 +144,56 @@ func TestComputedColumns(t *testing.T) {
 	if meta := built.Meta["User"]["postCount"]; meta == nil || meta.Kind != schema.KindComputed || meta.Function == nil {
 		t.Error("missing KindComputed metadata on User.postCount")
 	}
-	for _, reject := range []string{"usersPostCount", "postsExcerpt", "usersTouch", "touch(", "tagUser"} {
+	for _, reject := range []string{"usersPostCount", "postsExcerpt", "touch(", "  touch"} {
 		if strings.Contains(built.SDL, reject) {
 			t.Errorf("SDL should not contain %q", reject)
 		}
+	}
+	if q := sdlType(built.SDL, "type Query"); !strings.Contains(q, "tagUser(tag: String, u: UserInput): String") {
+		t.Errorf("Query missing tagUser(tag:, u: UserInput):\n%s", q)
+	}
+	if m := sdlType(built.SDL, "type Mutation"); !strings.Contains(m, "usersTouch(input: UsersTouchInput!): UsersTouchPayload!") {
+		t.Errorf("Mutation missing usersTouch:\n%s", m)
+	}
+	if in := sdlType(built.SDL, "input UserInput"); !strings.Contains(in, "  id: Int\n") || !strings.Contains(in, "  prevAddresses: [AddressInput!]\n") || strings.Contains(in, "!\n  email") || strings.Contains(in, "clientMutationId") {
+		t.Errorf("UserInput must hold every column, all nullable:\n%s", in)
+	}
+	if built.RowInputForPG["public.users"] != "UserInput" {
+		t.Errorf("RowInputForPG = %v", built.RowInputForPG)
+	}
+}
+
+func TestPolymorphicFunctionsNeedConcreteTypes(t *testing.T) {
+	b := schema.New(testutil.FixtureCatalog(), inflect.Default, schema.Options{Functions: true})
+	built, err := b.Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, reject := range []string{"pickFirst", "largerOf", "rangeLower", "arrayFirst"} {
+		if strings.Contains(built.SDL, reject) {
+			t.Errorf("unresolved polymorphic function exposed: %q", reject)
+		}
+	}
+	cat := testutil.FixtureCatalog()
+	if err := corecatalog.New().TransformCatalog(context.Background(), cat); err != nil {
+		t.Fatal(err)
+	}
+	built, err = schema.New(cat, inflect.Default, schema.Options{Functions: true}).Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	q := sdlType(built.SDL, "type Query")
+	for _, want := range []string{
+		"pickFirst(a: String, b: String): String",
+		"largerOf(a: BigFloat, b: BigFloat): BigFloat",
+		"rangeLower(r: IntRangeInput): Int",
+	} {
+		if !strings.Contains(q, want) {
+			t.Errorf("Query missing %q:\n%s", want, q)
+		}
+	}
+	if strings.Contains(q, "arrayFirst") {
+		t.Error("untagged polymorphic function exposed")
 	}
 }
 

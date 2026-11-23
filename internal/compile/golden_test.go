@@ -15,6 +15,7 @@ import (
 	"github.com/vektah/gqlparser/v2/validator"
 
 	"github.com/suprbdev/pdbcore/introspect"
+	corecatalog "github.com/suprbdev/pdbcore/smartcomments/catalog"
 	"github.com/suprbdev/pdbcore/testutil"
 	"github.com/suprbdev/pdbq/internal/compile"
 	"github.com/suprbdev/pdbq/internal/contribfixture"
@@ -58,10 +59,14 @@ func buildContrib(t testing.TB) *schema.Built {
 	return buildCatalog(t, cat, nil, contribplugin.New(nil))
 }
 
-// buildCatalog builds cat with default naming, the postgis plugin
-// configured by settings and the extra schema hooks.
+// buildCatalog builds cat with default naming after the catalog half of
+// smart comments (which resolves tagged polymorphic functions), with the
+// postgis plugin configured by settings and the extra schema hooks.
 func buildCatalog(t testing.TB, cat *introspect.Catalog, settings map[string]any, hooks ...*contribplugin.Plugin) *schema.Built {
 	t.Helper()
+	if err := corecatalog.New().TransformCatalog(context.Background(), cat); err != nil {
+		t.Fatalf("smart-comments catalog hook: %v", err)
+	}
 	b := schema.New(cat, inflect.Default, schema.Options{
 		FilterIndexedOnly: true,
 		Functions:         true,

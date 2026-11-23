@@ -50,3 +50,25 @@ func TestFunctionSchemaSurface(t *testing.T) {
 		}
 	}
 }
+
+func TestRowArgumentSQLIsValueIndependent(t *testing.T) {
+	var first string
+	for i, q := range []string{
+		`{ userGreeting(greeting: "a", u: {id: 1}) }`,
+		`{ userGreeting(greeting: "b", u: {email: "x'); DROP TABLE users; --", mood: SAD, address: {city: "c"}, prevAddresses: [{street: "s"}]}) }`,
+		`{ userGreeting(greeting: "c", u: {}) }`,
+	} {
+		stmt, err := compileOne(t, q, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(stmt.SQL, "DROP") || len(stmt.Args) != 2 {
+			t.Fatalf("values must be bound: %s %v", stmt.SQL, stmt.Args)
+		}
+		if i == 0 {
+			first = stmt.SQL
+		} else if stmt.SQL != first {
+			t.Errorf("SQL depends on the row's values:\n%s\n%s", first, stmt.SQL)
+		}
+	}
+}

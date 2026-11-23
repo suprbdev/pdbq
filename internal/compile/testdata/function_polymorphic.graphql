@@ -1,0 +1,5 @@
+query {
+  pickFirst(a: null, b: "fallback")
+  largerOf(a: "1.5", b: "2")
+  rangeLower(r: {start: {value: 3, inclusive: true}, end: {value: 9, inclusive: false}})
+}

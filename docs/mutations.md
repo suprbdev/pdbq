@@ -98,6 +98,49 @@ so there is no sound GraphQL type, and exposing it as `JSON` would not work
 for `SETOF record`. pdbq logs one `skipping function` line at startup for each
 such function; declare `OUT` parameters or `RETURNS TABLE` to expose it.
 
+### Function arguments
+
+Custom queries (stable and immutable functions) and custom mutations map
+their parameters the same way: scalars, enums, domains, PostGIS values and
+arrays to the matching GraphQL types, a composite type to its `<Type>Input`.
+
+**Table rows.** A parameter typed as a table's row type, in any position, or
+an array of rows (`posts[]`), takes `<Type>Input` (`UserInput`,
+`[PostInput]`). It has one nullable field per column of the table,
+including generated, identity and primary-key columns. The argument is a
+value handed to the function, not a write to the table, so `@omit create`
+and `@omit update` do not apply. Columns tagged `@omit read` are left out:
+the input never accepts a value the API hides. An absent field is `NULL` in
+the row. The value is bound as a single `jsonb` parameter and populated with
+`jsonb_populate_record(NULL::<table>, $n)`, so the SQL text never depends on
+the values.
+
+```graphql
+# CREATE FUNCTION user_greeting(greeting text, u users) RETURNS text STABLE
+userGreeting(greeting: String, u: UserInput): String
+# CREATE FUNCTION rename_user(u users, new_name text) RETURNS users VOLATILE
+renameUser(input: RenameUserInput!): RenameUserPayload!   # input RenameUserInput { u: UserInput  newName: String  clientMutationId: String }
+```
+
+A *stable* function whose first parameter is a row is a computed column on
+that type (see [smart comments](smart-comments.md)), not a root field. A
+*volatile* one is a custom mutation taking the row. PostGraphile takes
+`UserInput` (its create input) by default and selects other variants with
+`@arg0variant`. pdbq has one row input type, with every readable column,
+and does not read `@argNvariant`.
+
+**Polymorphic parameters** (`anyelement`, `anyarray`, `anynonarray`,
+`anyenum`, `anyrange`, `anymultirange` and the `anycompatible*` family)
+only take a type when PostgreSQL sees the actual argument types of a call.
+A non-polymorphic sibling parameter does not take part, so the signature
+alone never fixes them. The `@anyelement <type>` / `@anycompatible <type>`
+[smart comments](smart-comments.md#functions) name the type. The function
+is then exposed as if declared with it: `anyarray` becomes `<type>[]` and
+`anyrange` the range over `<type>`. Arguments are cast to it, which makes
+PostgreSQL resolve the call the same way. Without the tag the function is
+skipped and one `skipping function: polymorphic signature` line is logged.
+PostGraphile skips such functions.
+
 The `@resultFieldName <name>` [smart comment](smart-comments.md) on the
 function sets the name explicitly; an `InflectionHook` plugin can override
 the default through `inflect.KindFunctionResultField`.

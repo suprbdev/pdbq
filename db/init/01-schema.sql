@@ -190,6 +190,57 @@ VOLATILE LANGUAGE sql AS $$
     SELECT CASE m WHEN 'sad' THEN 'ok' WHEN 'ok' THEN 'happy' ELSE 'happy' END::mood;
 $$;
 
+-- Table-valued arguments: a table's row type outside the first position, or
+-- an array of rows or composites, is passed as an input object (GraphQL) or
+-- JSON object (REST) and populated into the row type.
+CREATE FUNCTION user_greeting(greeting text, u users) RETURNS text
+STABLE LANGUAGE sql AS $$
+    SELECT greeting || ', ' || coalesce(u.full_name, u.email) || '!';
+$$;
+
+CREATE FUNCTION total_title_length(ps posts[]) RETURNS integer
+STABLE LANGUAGE sql AS $$
+    SELECT coalesce(sum(length(p.title)), 0)::integer FROM unnest(ps) AS p;
+$$;
+
+CREATE FUNCTION address_cities(addrs address[]) RETURNS text[]
+STABLE LANGUAGE sql AS $$
+    SELECT ARRAY(SELECT a.city FROM unnest(addrs) AS a);
+$$;
+
+-- A volatile function whose first argument is a row is a custom mutation /
+-- RPC taking the row, not a computed column.
+CREATE FUNCTION rename_user(u users, new_name text) RETURNS users
+VOLATILE LANGUAGE sql AS $$
+    UPDATE users SET full_name = new_name WHERE id = u.id RETURNING *;
+$$;
+
+-- Polymorphic functions: @anyelement / @anycompatible name the concrete type
+-- their pseudo-types resolve to (anyrange over integer is int4range).
+-- Untagged ones (array_first) are skipped.
+CREATE FUNCTION pick_first(a anyelement, b anyelement) RETURNS anyelement
+IMMUTABLE LANGUAGE sql AS $$
+    SELECT coalesce(a, b);
+$$;
+COMMENT ON FUNCTION pick_first(anyelement, anyelement) IS '@anyelement text';
+
+CREATE FUNCTION larger_of(a anycompatible, b anycompatible) RETURNS anycompatible
+IMMUTABLE LANGUAGE sql AS $$
+    SELECT greatest(a, b);
+$$;
+COMMENT ON FUNCTION larger_of(anycompatible, anycompatible) IS '@anycompatible numeric';
+
+CREATE FUNCTION range_lower(r anyrange) RETURNS anyelement
+IMMUTABLE LANGUAGE sql AS $$
+    SELECT lower(r);
+$$;
+COMMENT ON FUNCTION range_lower(anyrange) IS '@anyelement integer';
+
+CREATE FUNCTION array_first(arr anyarray) RETURNS anyelement
+IMMUTABLE LANGUAGE sql AS $$
+    SELECT arr[array_lower(arr, 1)];
+$$;
+
 -- JWT minting (rls.auth.jwt_type = public.jwt): functions returning this
 -- composite yield signed tokens; the fields become claims.
 CREATE TYPE jwt AS (

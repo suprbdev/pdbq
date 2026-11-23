@@ -120,7 +120,27 @@ func (s *stmt) funcArgExpr(a introspect.FuncArg, v any) string {
 	if v == nil {
 		return "NULL::" + typ
 	}
-	return s.valueExpr(s.funcArgColumn(a), v) + "::" + typ
+	col := s.funcArgColumn(a)
+	if row := s.rowArgComposite(col); row != nil {
+		return s.compositeParam(row, col, v) + "::" + typ
+	}
+	return s.valueExpr(col, v) + "::" + typ
+}
+
+// rowArgComposite views the table whose row type (or array of it) col
+// holds as a composite whose attributes are the table's columns, when the
+// schema has a row input type for it (schema.Built.RowInputForPG); nil
+// otherwise.
+func (s *stmt) rowArgComposite(col *introspect.Column) *introspect.Composite {
+	name := strings.TrimPrefix(col.PGType, "_")
+	if _, ok := s.c.Built.RowInputForPG[col.TypeSchema+"."+name]; !ok {
+		return nil
+	}
+	t := s.c.Built.Catalog.Table(col.TypeSchema, name)
+	if t == nil {
+		return nil
+	}
+	return &introspect.Composite{Schema: t.Schema, Name: t.Name, Fields: t.Columns}
 }
 
 // funcArgColumn describes a function parameter as a column, a domain

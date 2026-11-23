@@ -116,7 +116,7 @@ Checklist of PostgreSQL and GraphQL features pdbq supports. Checked = implemente
 
 - [x] Stable/immutable functions → Query fields
 - [x] Volatile functions → Mutation fields (`fn(input: FnInput!): FnPayload!`)
-- [x] Arguments mapped from GraphQL args (named args only; called in named notation, positional for variadic functions): scalars, enums, composites (`<Type>Input`), PostGIS values (GeoJSON/WKT), arrays
+- [x] Arguments mapped from GraphQL args (named args only; called in named notation, positional for variadic functions): scalars, enums, composites and table rows (`<Type>Input`), PostGIS values (GeoJSON/WKT), arrays
 - [x] Omitted arguments take the function's `DEFAULT`; an explicit `null` passes SQL `NULL`; omitting an argument without a default is a GraphQL error
 - [x] Scalar returns (via `to_jsonb`)
 - [x] `SETOF <table>` returns → list of the table's object type with full selection support
@@ -126,9 +126,9 @@ Checklist of PostgreSQL and GraphQL features pdbq supports. Checked = implemente
 - [x] `OUT`/`RETURNS TABLE` record returns → `<Function>Record` object type (`[<Function>Record!]!` for `SETOF`), compiled in the same statement
 - [x] `void` returns → `Boolean`
 - [x] EXECUTE-privilege gating
-- [x] Computed columns (stable/immutable functions whose first argument is a row type → fields on that type; extra scalar args become field args; set-returning/volatile deferred)
+- [x] Computed columns (stable/immutable functions whose first argument is a row type → fields on that type; extra args become field args; volatile ones are custom mutations)
 - [x] Set-returning computed columns (`SETOF <scalar>`/`SETOF <table>` row-type functions → list fields with full selection support)
-- [ ] Functions with table-valued arguments or polymorphic types
+- [x] Functions with table-valued arguments (a row type in any position, arrays of rows or composites → `<Type>Input`; a volatile function with a leading row argument is a custom mutation) and polymorphic types (resolved by the `@anyelement` / `@anycompatible` smart comments; otherwise skipped with one log line) — see [Mutations](mutations.md#function-arguments)
 - [x] Custom mutations with PostGraphile payloads: the result field named after its type (`post`, `posts`, `integer`, the `OUT` parameter's name, none for `void`; `@resultFieldName` overrides), `clientMutationId`, `query`, and for a returned table row its forward relations and `<row>Edge`; a payload that reads tables (relations, `query`, computed columns) is read by a second statement after the call, in the same transaction, so it sees the function's writes; one statement otherwise — see [Mutations](mutations.md)
 
 ## RLS & auth
