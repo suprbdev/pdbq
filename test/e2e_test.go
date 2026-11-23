@@ -593,7 +593,7 @@ func TestSimpleNames(t *testing.T) {
 		}
 	}
 
-	res = post(t, hs.URL, `mutation { updatePost(id: 1, patch: {title: "Notes on the Analytical Engine"}) { post { id } author { email } } }`, nil)
+	res = post(t, hs.URL, `mutation { updatePost(input: {id: 1, postPatch: {title: "Notes on the Analytical Engine"}}) { post { id } author { email } } }`, nil)
 	requireNoErrors(t, res)
 	if got, want := normalize(t, res.Data["updatePost"]), normalizeStr(t, `{"post": {"id": 1}, "author": {"email": "ada@example.com"}}`); got != want {
 		t.Errorf("updatePost = %s, want %s", got, want)
@@ -972,7 +972,7 @@ func TestAdvancedFilters(t *testing.T) {
 
 	t.Run("postgis WKT input round-trip", func(t *testing.T) {
 		res := post(t, hs.URL, `mutation {
-			createPlace(input: {name: "WKT Test", location: "SRID=4326;POINT(10 20)"}) {
+			createPlace(input: {place: {name: "WKT Test", location: "SRID=4326;POINT(10 20)"}}) {
 				place { id name location locationSrid }
 			}
 		}`, nil)
@@ -996,7 +996,7 @@ func TestAdvancedFilters(t *testing.T) {
 			t.Errorf("srid = %d, want 4326", payload.Place.Srid)
 		}
 		// Clean up so reruns against a persistent dev DB stay idempotent.
-		post(t, hs.URL, fmt.Sprintf(`mutation { deletePlaceById(id: %d) { place { id } } }`, payload.Place.ID), nil)
+		post(t, hs.URL, fmt.Sprintf(`mutation { deletePlaceById(input: {id: %d}) { place { id } } }`, payload.Place.ID), nil)
 	})
 
 	t.Run("postgis rejects malformed geometry", func(t *testing.T) {
@@ -1120,7 +1120,7 @@ func TestEnumTable(t *testing.T) {
 	})
 
 	t.Run("create with enum value", func(t *testing.T) {
-		res := post(t, hs.URL, `mutation {createEvent(input: {name: "E2E Enum", typeCode: HACKATHON}) {event {id typeCode}}}`, nil)
+		res := post(t, hs.URL, `mutation {createEvent(input: {event: {name: "E2E Enum", typeCode: HACKATHON}}) {event {id typeCode}}}`, nil)
 		requireNoErrors(t, res)
 		var payload struct {
 			Event struct {
@@ -1132,7 +1132,7 @@ func TestEnumTable(t *testing.T) {
 		if payload.Event.TypeCode != "HACKATHON" {
 			t.Errorf("created typeCode = %s, want HACKATHON", payload.Event.TypeCode)
 		}
-		res = post(t, hs.URL, fmt.Sprintf(`mutation {deleteEventById(id: %d) {event {id}}}`, payload.Event.ID), nil)
+		res = post(t, hs.URL, fmt.Sprintf(`mutation {deleteEventById(input: {id: %d}) {event {id}}}`, payload.Event.ID), nil)
 		requireNoErrors(t, res)
 	})
 }
@@ -1145,7 +1145,7 @@ func TestMutationsAndRollback(t *testing.T) {
 	sweepUsers(t, fmt.Sprintf("%%-%d@example.com", run))
 
 	res := post(t, hs.URL, fmt.Sprintf(`mutation {
-		createUser(input: {email: %q, mood: OK}) { user { id email } }
+		createUser(input: {user: {email: %q, mood: OK}}) { user { id email } }
 	}`, email("e2e")), nil)
 	requireNoErrors(t, res)
 	var payload struct {
@@ -1158,13 +1158,13 @@ func TestMutationsAndRollback(t *testing.T) {
 	id := payload.User.ID
 
 	res = post(t, hs.URL, fmt.Sprintf(`mutation {
-		updateUserById(id: %d, patch: {fullName: "E2E"}) { user { fullName } }
+		updateUserById(input: {id: %d, userPatch: {fullName: "E2E"}}) { user { fullName } }
 	}`, id), nil)
 	requireNoErrors(t, res)
 
 	// Update by unique constraint instead of the primary key.
 	res = post(t, hs.URL, fmt.Sprintf(`mutation {
-		updateUserByEmail(email: %q, patch: {fullName: "E2E ByEmail"}) { user { id fullName } }
+		updateUserByEmail(input: {email: %q, userPatch: {fullName: "E2E ByEmail"}}) { user { id fullName } }
 	}`, payload.User.Email), nil)
 	requireNoErrors(t, res)
 	if got := normalize(t, res.Data["updateUserByEmail"]); got != fmt.Sprintf(`{"user":{"fullName":"E2E ByEmail","id":%d}}`, id) {
@@ -1174,22 +1174,22 @@ func TestMutationsAndRollback(t *testing.T) {
 	// Upsert: first call inserts, second updates the same row on the email
 	// unique conflict.
 	res = post(t, hs.URL, fmt.Sprintf(`mutation {
-		upsertUserByEmail(input: {email: %q, fullName: "Upsert v1"}) { user { fullName } }
+		upsertUserByEmail(input: {user: {email: %q, fullName: "Upsert v1"}}) { user { fullName } }
 	}`, email("upsert")), nil)
 	requireNoErrors(t, res)
 	res = post(t, hs.URL, fmt.Sprintf(`mutation {
-		upsertUserByEmail(input: {email: %q, fullName: "Upsert v2"}) { user { fullName } }
+		upsertUserByEmail(input: {user: {email: %q, fullName: "Upsert v2"}}) { user { fullName } }
 	}`, email("upsert")), nil)
 	requireNoErrors(t, res)
 	if got := normalize(t, res.Data["upsertUserByEmail"]); got != `{"user":{"fullName":"Upsert v2"}}` {
 		t.Errorf("upsert on conflict: got %s", got)
 	}
-	post(t, hs.URL, fmt.Sprintf(`mutation { deleteUserByEmail(email: %q) { user { id } } }`, email("upsert")), nil)
+	post(t, hs.URL, fmt.Sprintf(`mutation { deleteUserByEmail(input: {email: %q}) { user { id } } }`, email("upsert")), nil)
 
 	// deletedUserNodeId equals the nodeId the row had, by key and by unique.
 	for _, byEmail := range []bool{false, true} {
 		em := email(fmt.Sprintf("delnode%t", byEmail))
-		res = post(t, hs.URL, fmt.Sprintf(`mutation { createUser(input: {email: %q, mood: OK}) { user { id nodeId } } }`, em), nil)
+		res = post(t, hs.URL, fmt.Sprintf(`mutation { createUser(input: {user: {email: %q, mood: OK}}) { user { id nodeId } } }`, em), nil)
 		requireNoErrors(t, res)
 		var created struct {
 			User struct {
@@ -1200,9 +1200,9 @@ func TestMutationsAndRollback(t *testing.T) {
 		mustUnmarshal(t, res.Data["createUser"], &created)
 		var del, field string
 		if byEmail {
-			field, del = "deleteUserByEmail", fmt.Sprintf(`deleteUserByEmail(email: %q)`, em)
+			field, del = "deleteUserByEmail", fmt.Sprintf(`deleteUserByEmail(input: {email: %q})`, em)
 		} else {
-			field, del = "deleteUserById", fmt.Sprintf(`deleteUserById(id: %d)`, created.User.ID)
+			field, del = "deleteUserById", fmt.Sprintf(`deleteUserById(input: {id: %d})`, created.User.ID)
 		}
 		res = post(t, hs.URL, `mutation { `+del+` { deletedUserNodeId } }`, nil)
 		requireNoErrors(t, res)
@@ -1217,37 +1217,37 @@ func TestMutationsAndRollback(t *testing.T) {
 
 	// Bulk mutations: multi-row insert, filtered update, filtered delete.
 	res = post(t, hs.URL, fmt.Sprintf(`mutation {
-		createUsers(input: [
+		createManyUsers(input: {users: [
 			{email: %q, fullName: "Bulk One"}
 			{email: %q, fullName: "Bulk Two"}
-		]) { users { fullName } affectedCount }
+		]}) { users { fullName } affectedCount }
 	}`, email("bulk1"), email("bulk2")), nil)
 	requireNoErrors(t, res)
-	if got := normalize(t, res.Data["createUsers"]); got != `{"affectedCount":2,"users":[{"fullName":"Bulk One"},{"fullName":"Bulk Two"}]}` {
+	if got := normalize(t, res.Data["createManyUsers"]); got != `{"affectedCount":2,"users":[{"fullName":"Bulk One"},{"fullName":"Bulk Two"}]}` {
 		t.Errorf("bulk create: got %s", got)
 	}
 	res = post(t, hs.URL, fmt.Sprintf(`mutation {
-		updateUsers(filter: {email: {in: [%q, %q]}}, patch: {fullName: "Bulk Updated"}) { affectedCount }
+		updateManyUsers(input: {filter: {email: {in: [%q, %q]}}, userPatch: {fullName: "Bulk Updated"}}) { affectedCount }
 	}`, email("bulk1"), email("bulk2")), nil)
 	requireNoErrors(t, res)
-	if got := normalize(t, res.Data["updateUsers"]); got != `{"affectedCount":2}` {
+	if got := normalize(t, res.Data["updateManyUsers"]); got != `{"affectedCount":2}` {
 		t.Errorf("bulk update: got %s", got)
 	}
 	res = post(t, hs.URL, fmt.Sprintf(`mutation {
-		deleteUsers(filter: {email: {in: [%q, %q]}}) { users { fullName } affectedCount }
+		deleteManyUsers(input: {filter: {email: {in: [%q, %q]}}}) { users { fullName } affectedCount }
 	}`, email("bulk1"), email("bulk2")), nil)
 	requireNoErrors(t, res)
-	if got := normalize(t, res.Data["deleteUsers"]); got != `{"affectedCount":2,"users":[{"fullName":"Bulk Updated"},{"fullName":"Bulk Updated"}]}` {
+	if got := normalize(t, res.Data["deleteManyUsers"]); got != `{"affectedCount":2,"users":[{"fullName":"Bulk Updated"},{"fullName":"Bulk Updated"}]}` {
 		t.Errorf("bulk delete: got %s", got)
 	}
 
 	// Composite input round-trip: create with an object value, read it back
 	// structured (including the enum attribute and the composite array).
 	res = post(t, hs.URL, fmt.Sprintf(`mutation {
-		updateUserById(id: %d, patch: {
+		updateUserById(input: {id: %d, userPatch: {
 			address: {street: "221B Baker St", city: "London", mood: HAPPY}
 			prevAddresses: [{city: "Cambridge"}, {city: "Princeton", mood: SAD}]
-		}) { user { address { street city mood } prevAddresses { city mood } } }
+		}}) { user { address { street city mood } prevAddresses { city mood } } }
 	}`, id), nil)
 	requireNoErrors(t, res)
 	wantAddr := normalizeStr(t, `{"user": {
@@ -1261,7 +1261,7 @@ func TestMutationsAndRollback(t *testing.T) {
 	// Computed column on a mutation payload: exercises the ROW(...)::table
 	// cast against a real RETURNING * CTE row source.
 	res = post(t, hs.URL, fmt.Sprintf(`mutation {
-		updateUserById(id: %d, patch: {fullName: "E2E Computed"}) { user { postCount } }
+		updateUserById(input: {id: %d, userPatch: {fullName: "E2E Computed"}}) { user { postCount } }
 	}`, id), nil)
 	requireNoErrors(t, res)
 	if got := normalize(t, res.Data["updateUserById"]); got != `{"user":{"postCount":"0"}}` {
@@ -1270,10 +1270,10 @@ func TestMutationsAndRollback(t *testing.T) {
 
 	// Nested mutation: creates a user and two posts atomically.
 	res = post(t, hs.URL, fmt.Sprintf(`mutation {
-		createUser(input: {
+		createUser(input: {user: {
 			email: %q
 			postsByAuthorId: {create: [{title: "n1"}, {title: "n2"}]}
-		}) { user { id postsByAuthorId { nodes { title } } } }
+		}}) { user { id postsByAuthorId { nodes { title } } } }
 	}`, email("nested")), nil)
 	requireNoErrors(t, res)
 	if c := strings.Count(string(res.Data["createUser"]), `"title"`); c != 2 {
@@ -1284,13 +1284,13 @@ func TestMutationsAndRollback(t *testing.T) {
 	// the nested_mutations CTE builder, not the core compiler, so they need
 	// the constructor wrapper there too.
 	res = post(t, hs.URL, fmt.Sprintf(`mutation {
-		createUser(input: {
+		createUser(input: {user: {
 			email: %q
 			placesByOwnerId: {create: [
 				{name: "nested geo", location: {type: "Point", coordinates: [1, 2]}}
 				{name: "nested wkt", location: "SRID=4326;POINT(3 4)"}
 			]}
-		}) { user { id placesByOwnerId { nodes { name location } } } }
+		}}) { user { id placesByOwnerId { nodes { name location } } } }
 	}`, email("nestedgeo")), nil)
 	requireNoErrors(t, res)
 	if !strings.Contains(string(res.Data["createUser"]), `"coordinates"`) {
@@ -1300,10 +1300,10 @@ func TestMutationsAndRollback(t *testing.T) {
 	// Induced failure: duplicate email inside a nested mutation must roll
 	// back the parent insert too (single statement + tx).
 	res = post(t, hs.URL, fmt.Sprintf(`mutation {
-		createUser(input: {
+		createUser(input: {user: {
 			email: %q
 			postsByAuthorId: {create: [{title: "x", authorId: 999999}]}
-		}) { user { id } }
+		}}) { user { id } }
 	}`, email("rollback")), nil)
 	if len(res.Errors) == 0 {
 		t.Fatal("expected nested mutation failure")
@@ -1315,7 +1315,7 @@ func TestMutationsAndRollback(t *testing.T) {
 	}
 
 	// Cleanup.
-	post(t, hs.URL, fmt.Sprintf(`mutation { deleteUserById(id: %d) { user { id } } }`, id), nil)
+	post(t, hs.URL, fmt.Sprintf(`mutation { deleteUserById(input: {id: %d}) { user { id } } }`, id), nil)
 }
 
 // sweepUsers deletes, once the test finishes (even after a Fatal), every user
@@ -1364,8 +1364,8 @@ func TestPerRequestTransaction(t *testing.T) {
 	}
 	// Mutations still roll back on error under the per-request policy.
 	res = post(t, hs.URL, `mutation {
-		one: createUser(input: {email: "tx1@pr.example"}) { user { id } }
-		two: createUser(input: {email: "tx1@pr.example"}) { user { id } }
+		one: createUser(input: {user: {email: "tx1@pr.example"}}) { user { id } }
+		two: createUser(input: {user: {email: "tx1@pr.example"}}) { user { id } }
 	}`, nil)
 	if len(res.Errors) == 0 {
 		t.Fatal("expected duplicate email failure")
@@ -1910,7 +1910,7 @@ func TestTypedGeometry(t *testing.T) {
 
 	t.Run("mutation payload and GeoJSON input", func(t *testing.T) {
 		res := post(t, hs.URL, `mutation {
-			createPlace(input: {name: "Typed", location: {type: "Point", coordinates: [10, 20]}}) {
+			createPlace(input: {place: {name: "Typed", location: {type: "Point", coordinates: [10, 20]}}}) {
 				place { id location { x y } }
 			}
 		}`, nil)
@@ -1922,7 +1922,7 @@ func TestTypedGeometry(t *testing.T) {
 			} `json:"place"`
 		}
 		mustUnmarshal(t, res.Data["createPlace"], &payload)
-		post(t, hs.URL, fmt.Sprintf(`mutation { deletePlaceById(id: %d) { place { id } } }`, payload.Place.ID), nil)
+		post(t, hs.URL, fmt.Sprintf(`mutation { deletePlaceById(input: {id: %d}) { place { id } } }`, payload.Place.ID), nil)
 		if got := normalize(t, payload.Place.Location); got != `{"x":10,"y":20}` {
 			t.Errorf("payload location = %s", got)
 		}
@@ -2257,7 +2257,7 @@ func TestPartitions(t *testing.T) {
 	if strings.Contains(string(sdl), "Readings2025") || strings.Contains(string(sdl), "Readings2026") {
 		t.Error("partitions exposed by default")
 	}
-	res := post(t, hs.URL, `mutation { createReading(input: {id: 2, at: "2026-03-01", v: 20}) { reading { id v } } }`, nil)
+	res := post(t, hs.URL, `mutation { createReading(input: {reading: {id: 2, at: "2026-03-01", v: 20}}) { reading { id v } } }`, nil)
 	requireNoErrors(t, res)
 	res = post(t, hs.URL, `{ allReadings(orderBy: ID_ASC) { nodes { id at v } } readingByIdAndAt(id: 2, at: "2026-03-01") { v } }`, nil)
 	requireNoErrors(t, res)
@@ -2289,13 +2289,13 @@ func TestRelationNameFallback(t *testing.T) {
 	})
 	hs := testServer(t, nil)
 
-	res := post(t, hs.URL, `mutation { createRnMemo(input: {id: 1, body: "x", rnUserByUserEmail: {connectByEmail: {email: "a@b.c"}}}) { rnMemo { userEmail rnUserByUserEmail { name } } } }`, nil)
+	res := post(t, hs.URL, `mutation { createRnMemo(input: {rnMemo: {id: 1, body: "x", rnUserByUserEmail: {connectByEmail: {email: "a@b.c"}}}}) { rnMemo { userEmail rnUserByUserEmail { name } } } }`, nil)
 	requireNoErrors(t, res)
 	if got, want := normalize(t, res.Data["createRnMemo"]), normalizeStr(t, `{"rnMemo": {"userEmail": "a@b.c", "rnUserByUserEmail": {"name": "Ann"}}}`); got != want {
 		t.Errorf("nested connect: got %s want %s", got, want)
 	}
 
-	res = post(t, hs.URL, `mutation { createRnMemo(input: {id: 2, body: "y", rnUserByUserEmail: {create: {email: "n@b.c", name: "Nat"}}}) { rnMemo { userEmail rnUserByUserEmail { name } } } }`, nil)
+	res = post(t, hs.URL, `mutation { createRnMemo(input: {rnMemo: {id: 2, body: "y", rnUserByUserEmail: {create: {email: "n@b.c", name: "Nat"}}}}) { rnMemo { userEmail rnUserByUserEmail { name } } } }`, nil)
 	requireNoErrors(t, res)
 	if got, want := normalize(t, res.Data["createRnMemo"]), normalizeStr(t, `{"rnMemo": {"userEmail": "n@b.c", "rnUserByUserEmail": {"name": "Nat"}}}`); got != want {
 		t.Errorf("nested create: got %s want %s", got, want)

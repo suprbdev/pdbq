@@ -298,7 +298,7 @@ func TestBatchTxCommitFailure(t *testing.T) {
 }
 
 func TestBatchTxMutation(t *testing.T) {
-	const mutation = `mutation { a: createUser(input: {email: "a@b.c"}) { user { id } } t: __typename }`
+	const mutation = `mutation { a: createUser(input: {user: {email: "a@b.c"}}) { user { id } } t: __typename }`
 	t.Run("commit after scan", func(t *testing.T) {
 		f := &fakeBatch{attempts: []attempt{{stmts: map[string]outcome{"a": {raw: `{"user":{"id":1}}`}}}}}
 		e := newBatchExecutor(t, Options{}, f)
@@ -339,7 +339,7 @@ func TestBatchTxMutation(t *testing.T) {
 func TestBatchTxMutationIdentityFailure(t *testing.T) {
 	f := &fakeBatch{attempts: []attempt{{before: errors.New("invalid role \"x y\"")}}}
 	e := newBatchExecutor(t, Options{DevErrors: true}, f)
-	res := e.Execute(context.Background(), Request{Query: `mutation { a: createUser(input: {email: "a@b.c"}) { user { id } } }`})
+	res := e.Execute(context.Background(), Request{Query: `mutation { a: createUser(input: {user: {email: "a@b.c"}}) { user { id } } }`})
 	if got, want := resultJSON(t, res), `{"errors":[{"message":"invalid role \"x y\""}]}`; got != want {
 		t.Fatalf("response = %s, want %s", got, want)
 	}

@@ -14,8 +14,6 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/vektah/gqlparser/v2/ast"
-
 	coreinflect "github.com/suprbdev/pdbcore/inflect"
 	"github.com/suprbdev/pdbcore/introspect"
 	"github.com/suprbdev/pdbq/internal/compile"
@@ -160,7 +158,7 @@ func (p *Plugin) TransformSchema(_ context.Context, b *schema.Builder) error {
 		if name := b.Inflect(inflect.KindCreateInput, inflect.Input{Schema: t.Schema, Table: t.Name}); t.Insertable() && b.Inputs[name] != nil {
 			p.inputForTable[key] = name
 		}
-		if name := b.Inflect(inflect.KindUpdateInput, inflect.Input{Schema: t.Schema, Table: t.Name}); t.Updatable() && b.Inputs[name] != nil {
+		if name := b.Inflect(inflect.KindPatchInput, inflect.Input{Schema: t.Schema, Table: t.Name}); t.Updatable() && b.Inputs[name] != nil {
 			p.patchForTable[key] = name
 		}
 	}
@@ -546,27 +544,15 @@ func refKey(fk *introspect.ForeignKey) []string {
 func (p *Plugin) WrapCompile(next compile.Func) compile.Func {
 	return func(ctx context.Context, req *compile.Request) (*compile.Statement, error) {
 		meta := metaFor(req)
-		if meta == nil {
+		if meta == nil || meta.Values == "" {
 			return next(ctx, req)
 		}
-		argName := ""
-		switch meta.Kind {
-		case schema.KindCreate, schema.KindUpsert, schema.KindCreateMany:
-			argName = "input"
-		case schema.KindUpdate, schema.KindUpdateMany:
-			argName = "patch"
-		default:
-			return next(ctx, req)
-		}
-		arg := req.Field.Arguments.ForName(argName)
-		if arg == nil {
-			return next(ctx, req)
-		}
-		val, err := arg.Value.Value(req.Vars)
+		input, inputType, err := compile.MutationInput(req.Field, req.Vars)
 		if err != nil {
-			return nil, err
+			return next(ctx, req)
 		}
-		argType := argTypeName(req.Field, argName)
+		argType := compile.InputFieldType(req.Built, inputType, meta.Values)
+		val := input[meta.Values]
 		st := stateOf(req.Built)
 		if !st.usesNested(argType, val) {
 			return next(ctx, req)
@@ -574,15 +560,15 @@ func (p *Plugin) WrapCompile(next compile.Func) compile.Func {
 		if meta.Kind != schema.KindCreate && meta.Kind != schema.KindUpdate {
 			return nil, compile.UserErrorf("nested_mutations: %s does not take nested mutation fields", req.Field.Name)
 		}
-		input, _ := val.(map[string]any)
+		values, _ := val.(map[string]any)
 
 		g := &cteGen{p: p, st: st, req: req, ps: &compile.ParamSet{}, writeIdx: map[string]int{}, dml: map[string]*dmlCTE{}}
 		if meta.Kind == schema.KindCreate {
-			err = g.insertRow(meta.Table, argType, input, "__mut", 1, nil, "")
+			err = g.insertRow(meta.Table, argType, values, "__mut", 1, nil, "")
 		} else {
 			var key rowKey
-			if key, err = g.argKey(meta); err == nil {
-				err = g.updateRow(meta.Table, argType, input, "__mut", 1, key, nil, "")
+			if key, err = g.inputKey(meta, inputType, input); err == nil {
+				err = g.updateRow(meta.Table, argType, values, "__mut", 1, key, nil, "")
 			}
 			g.guard("__mut", req.Field.Name)
 		}
@@ -607,17 +593,6 @@ func metaFor(req *compile.Request) *schema.FieldMeta {
 		return m[req.Field.Name]
 	}
 	return nil
-}
-
-func argTypeName(f *ast.Field, arg string) string {
-	if f.Definition == nil {
-		return ""
-	}
-	def := f.Definition.Arguments.ForName(arg)
-	if def == nil {
-		return ""
-	}
-	return def.Type.Name()
 }
 
 // usesNested reports whether a row input value (or any row of a list of
@@ -904,24 +879,16 @@ func (k rowKey) cond(g *cteGen, t *introspect.Table, ref string) string {
 	return strings.Join(conds, " AND ")
 }
 
-// argKey reads the key arguments of an update mutation, which precede patch
-// in KeyColumns order.
-func (g *cteGen) argKey(meta *schema.FieldMeta) (rowKey, error) {
-	f := g.req.Field
-	if f.Definition == nil || len(f.Definition.Arguments) < len(meta.KeyColumns) {
-		return rowKey{}, fmt.Errorf("nested_mutations: %s: missing key arguments", f.Name)
+// inputKey reads the key of an update mutation from its input of type
+// inputType.
+func (g *cteGen) inputKey(meta *schema.FieldMeta, inputType string, input map[string]any) (rowKey, error) {
+	vals, err := compile.InputKey(g.req.Built, inputType, input, meta.KeyColumns)
+	if err != nil {
+		return rowKey{}, err
 	}
 	var k rowKey
 	for i, cn := range meta.KeyColumns {
-		arg := f.Arguments.ForName(f.Definition.Arguments[i].Name)
-		if arg == nil {
-			return rowKey{}, compile.UserErrorf("nested_mutations: %s: missing argument %s", f.Name, f.Definition.Arguments[i].Name)
-		}
-		v, err := arg.Value.Value(g.req.Vars)
-		if err != nil {
-			return rowKey{}, err
-		}
-		param, err := g.addParam(meta.Table, cn, v)
+		param, err := g.addParam(meta.Table, cn, vals[i])
 		if err != nil {
 			return rowKey{}, err
 		}

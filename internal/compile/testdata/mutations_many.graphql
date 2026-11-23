@@ -1,17 +1,19 @@
 mutation {
-  createUsers(input: [
+  createManyUsers(input: {clientMutationId: "cm-many", users: [
     {email: "a@b.c", fullName: "Ada", mood: HAPPY}
     {email: "b@c.d"}
-  ], clientMutationId: "cm-many") {
+  ]}) {
     users { id email }
     affectedCount
     clientMutationId
   }
-  updateUsers(filter: {mood: {equalTo: SAD}}, patch: {mood: OK}) {
+  updateManyUsers(input: {clientMutationId: "cm-upd", filter: {mood: {equalTo: SAD}}, userPatch: {mood: OK}}) {
     users { id mood }
     affectedCount
+    clientMutationId
   }
-  deleteUsers(filter: {email: {endsWith: "@spam.example"}}) {
+  deleteManyUsers(input: {clientMutationId: "cm-del", filter: {email: {endsWith: "@spam.example"}}}) {
     affectedCount
+    clientMutationId
   }
 }

@@ -396,7 +396,7 @@ func TestContrib(t *testing.T) {
 
 	t.Run("mutations", func(t *testing.T) {
 		res := post(t, url, `mutation {
-			createDocument(input: {
+			createDocument(input: {document: {
 				title: "Created"
 				slug: "MiXeD"
 				search: "'alpha':1 'beta':2"
@@ -410,7 +410,7 @@ func TestContrib(t *testing.T) {
 				ip: "172.16.0.1"
 				net: "172.16.0.0/12"
 				docNotesByDocumentId: {create: [{meta: {source: "nested"}, period: {start: {value: "2025-01-01", inclusive: true}, end: {value: "2025-01-31", inclusive: true}}}]}
-			}) {
+			}}) {
 				document {
 					id slug attrs path paths search ip net
 					during { start { value inclusive } end { value } }
@@ -452,7 +452,7 @@ func TestContrib(t *testing.T) {
 		mustUnmarshal(t, doc["id"], &id)
 
 		res = post(t, url, `mutation {
-			updateDocumentBySlug(slug: "mixed", patch: {attrs: {}, span: {}, avail: [], path: "moved"}) {
+			updateDocumentBySlug(input: {slug: "mixed", documentPatch: {attrs: {}, span: {}, avail: [], path: "moved"}}) {
 				document { attrs span { start { value } end { value } } avail { start { value } } path }
 			}
 		}`, nil)
@@ -462,17 +462,17 @@ func TestContrib(t *testing.T) {
 		}
 
 		res = post(t, url, `mutation {
-			updateDocuments(filter: {path: {descendantOf: "moved"}}, patch: {ip: "10.9.9.9"}) { affectedCount }
-			deleteDocNotes(filter: {meta: {containsKey: "source"}}) { affectedCount }
+			updateManyDocuments(input: {filter: {path: {descendantOf: "moved"}}, documentPatch: {ip: "10.9.9.9"}}) { affectedCount }
+			deleteManyDocNotes(input: {filter: {meta: {containsKey: "source"}}}) { affectedCount }
 		}`, nil)
 		requireNoErrors(t, res)
-		if got := normalize(t, res.Data["updateDocuments"]); got != `{"affectedCount":1}` {
+		if got := normalize(t, res.Data["updateManyDocuments"]); got != `{"affectedCount":1}` {
 			t.Errorf("bulk update: %s", got)
 		}
-		if got := normalize(t, res.Data["deleteDocNotes"]); got != `{"affectedCount":1}` {
+		if got := normalize(t, res.Data["deleteManyDocNotes"]); got != `{"affectedCount":1}` {
 			t.Errorf("bulk delete: %s", got)
 		}
-		res = post(t, url, `mutation ($id: Int!) { deleteDocumentById(id: $id) { document { id } } }`, map[string]any{"id": id})
+		res = post(t, url, `mutation ($id: Int!) { deleteDocumentById(input: {id: $id}) { document { id } } }`, map[string]any{"id": id})
 		requireNoErrors(t, res)
 	})
 
@@ -515,11 +515,11 @@ func TestContrib(t *testing.T) {
 		query(`{documentById(id: 3) { span { isEmpty start { value } end { value } } }}`, `{"span":{"isEmpty":true,"start":null,"end":null}}`)
 		query(`{documentById(id: 1) { span { isEmpty } stay { nights { start { value } end { value } } extras } }}`,
 			`{"span":{"isEmpty":false},"stay":{"nights":{"start":{"value":1},"end":{"value":3}},"extras":{"a":"1"}}}`)
-		query(`mutation { createDocument(input: {title: "empty", slug: "empty-range", span: {isEmpty: true},
-			stay: {nights: {start: {value: 2, inclusive: true}, end: {value: 4, inclusive: true}}, extras: {q: "say \"hi\"", n: null}}}) {
+		query(`mutation { createDocument(input: {document: {title: "empty", slug: "empty-range", span: {isEmpty: true},
+			stay: {nights: {start: {value: 2, inclusive: true}, end: {value: 4, inclusive: true}}, extras: {q: "say \"hi\"", n: null}}}}) {
 			document { span { isEmpty } stay { nights { start { value } end { value inclusive } } extras } } } }`,
 			`{"document":{"span":{"isEmpty":true},"stay":{"nights":{"start":{"value":2},"end":{"value":5,"inclusive":false}},"extras":{"q":"say \"hi\"","n":null}}}}`)
-		query(`mutation { deleteDocumentBySlug(slug: "EMPTY-RANGE") { document { slug } } }`, `{"document":{"slug":"empty-range"}}`)
+		query(`mutation { deleteDocumentBySlug(input: {slug: "EMPTY-RANGE"}) { document { slug } } }`, `{"document":{"slug":"empty-range"}}`)
 	})
 
 	t.Run("keyset paging over extension orderings", func(t *testing.T) {
@@ -617,7 +617,7 @@ func TestContrib(t *testing.T) {
 		if got, want := normalize(t, res.Data["slugRefById"]), normalizeStr(t, `{"handleId":"ADA","handleByHandleId":{"name":"Ada"}}`); got != want {
 			t.Errorf("relation over citext FK: %s", got)
 		}
-		res = post(t, url, `mutation { createSlugRef(input: {id: 2, handleByHandleId: {connectByName: {name: "gRACE"}}}) {
+		res = post(t, url, `mutation { createSlugRef(input: {slugRef: {id: 2, handleByHandleId: {connectByName: {name: "gRACE"}}}}) {
 			slugRef { handleId handleByHandleId { name } } } }`, nil)
 		requireNoErrors(t, res)
 		if got, want := normalize(t, res.Data["createSlugRef"]), normalizeStr(t, `{"slugRef":{"handleId":"Grace","handleByHandleId":{"name":"Grace"}}}`); got != want {
@@ -626,13 +626,13 @@ func TestContrib(t *testing.T) {
 	})
 
 	t.Run("nested connect per referenced key", func(t *testing.T) {
-		res := post(t, url, `mutation { createDocNote(input: {documentByDocumentId: {connectById: {id: 1}}}) {
+		res := post(t, url, `mutation { createDocNote(input: {docNote: {documentByDocumentId: {connectById: {id: 1}}}}) {
 			docNote { documentId } } }`, nil)
 		requireNoErrors(t, res)
 		if got, want := normalize(t, res.Data["createDocNote"]), normalizeStr(t, `{"docNote":{"documentId":1}}`); got != want {
 			t.Errorf("connect by primary key: %s", got)
 		}
-		res = post(t, url, `mutation { createDocRef(input: {id: 1, documentByDocId: {connectBySlug: {slug: "hELLO"}}}) {
+		res = post(t, url, `mutation { createDocRef(input: {docRef: {id: 1, documentByDocId: {connectBySlug: {slug: "hELLO"}}}}) {
 			docRef { docId documentByDocId { id } } } }`, nil)
 		requireNoErrors(t, res)
 		if got, want := normalize(t, res.Data["createDocRef"]), normalizeStr(t, `{"docRef":{"docId":"Hello","documentByDocId":{"id":1}}}`); got != want {

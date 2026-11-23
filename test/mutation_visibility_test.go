@@ -43,19 +43,19 @@ func TestMutationVisibility(t *testing.T) {
 	const sel = `mvAuthorByAuthorId { mvPostsByAuthorId(orderBy: ID_ASC) { totalCount nodes { id title } } bs: mvPostsByAuthorId(filter: {title: {startsWith: "b"}}) { totalCount } }`
 
 	t.Run("create", func(t *testing.T) {
-		res := post(t, hs.URL, `mutation { createMvPost(input: {id: 2, authorId: 1, title: "b-new"}) { mvPost { `+sel+` } } }`, nil)
+		res := post(t, hs.URL, `mutation { createMvPost(input: {mvPost: {id: 2, authorId: 1, title: "b-new"}}) { mvPost { `+sel+` } } }`, nil)
 		expectField(t, res, "createMvPost", `{"mvPost": {"mvAuthorByAuthorId": {
 			"mvPostsByAuthorId": {"totalCount": 2, "nodes": [{"id": 1, "title": "a-old"}, {"id": 2, "title": "b-new"}]},
 			"bs": {"totalCount": 1}}}}`)
 	})
 
 	t.Run("create many", func(t *testing.T) {
-		res := post(t, hs.URL, `mutation { createMvPosts(input: [{id: 3, authorId: 1, title: "b-3"}, {id: 4, authorId: 1, title: "c-4"}]) { mvPosts { id `+sel+` } } }`, nil)
+		res := post(t, hs.URL, `mutation { createManyMvPosts(input: {mvPosts: [{id: 3, authorId: 1, title: "b-3"}, {id: 4, authorId: 1, title: "c-4"}]}) { mvPosts { id `+sel+` } } }`, nil)
 		requireNoErrors(t, res)
 		var out struct {
 			Rows []json.RawMessage `json:"mvPosts"`
 		}
-		mustUnmarshal(t, res.Data["createMvPosts"], &out)
+		mustUnmarshal(t, res.Data["createManyMvPosts"], &out)
 		want := normalizeStr(t, `{"mvPostsByAuthorId": {"totalCount": 4, "nodes": [{"id": 1, "title": "a-old"}, {"id": 2, "title": "b-new"}, {"id": 3, "title": "b-3"}, {"id": 4, "title": "c-4"}]}, "bs": {"totalCount": 2}}`)
 		if len(out.Rows) != 2 {
 			t.Fatalf("got %d rows", len(out.Rows))
@@ -72,14 +72,14 @@ func TestMutationVisibility(t *testing.T) {
 	})
 
 	t.Run("update", func(t *testing.T) {
-		res := post(t, hs.URL, `mutation { updateMvPostById(id: 1, patch: {title: "b-renamed"}) { mvPost { title `+sel+` } } }`, nil)
+		res := post(t, hs.URL, `mutation { updateMvPostById(input: {id: 1, mvPostPatch: {title: "b-renamed"}}) { mvPost { title `+sel+` } } }`, nil)
 		expectField(t, res, "updateMvPostById", `{"mvPost": {"title": "b-renamed", "mvAuthorByAuthorId": {
 			"mvPostsByAuthorId": {"totalCount": 4, "nodes": [{"id": 1, "title": "b-renamed"}, {"id": 2, "title": "b-new"}, {"id": 3, "title": "b-3"}, {"id": 4, "title": "c-4"}]},
 			"bs": {"totalCount": 3}}}}`)
 	})
 
 	t.Run("update changing the primary key", func(t *testing.T) {
-		res := post(t, hs.URL, `mutation { updateMvPostById(id: 4, patch: {id: 40}) { mvPost { id `+sel+` } } }`, nil)
+		res := post(t, hs.URL, `mutation { updateMvPostById(input: {id: 4, mvPostPatch: {id: 40}}) { mvPost { id `+sel+` } } }`, nil)
 		expectField(t, res, "updateMvPostById", `{"mvPost": {"id": 40, "mvAuthorByAuthorId": {
 			"mvPostsByAuthorId": {"totalCount": 4, "nodes": [{"id": 1, "title": "b-renamed"}, {"id": 2, "title": "b-new"}, {"id": 3, "title": "b-3"}, {"id": 40, "title": "c-4"}]},
 			"bs": {"totalCount": 3}}}}`)
@@ -87,23 +87,23 @@ func TestMutationVisibility(t *testing.T) {
 
 	t.Run("update by unique key", func(t *testing.T) {
 		execAll(t, conn, `UPDATE mv_posts SET code = 'k3' WHERE id = 3`)
-		res := post(t, hs.URL, `mutation { updateMvPostByCode(code: "k3", patch: {code: "k33", title: "c-3"}) { mvPost { code `+sel+` } } }`, nil)
+		res := post(t, hs.URL, `mutation { updateMvPostByCode(input: {code: "k3", mvPostPatch: {code: "k33", title: "c-3"}}) { mvPost { code `+sel+` } } }`, nil)
 		expectField(t, res, "updateMvPostByCode", `{"mvPost": {"code": "k33", "mvAuthorByAuthorId": {
 			"mvPostsByAuthorId": {"totalCount": 4, "nodes": [{"id": 1, "title": "b-renamed"}, {"id": 2, "title": "b-new"}, {"id": 3, "title": "c-3"}, {"id": 40, "title": "c-4"}]},
 			"bs": {"totalCount": 2}}}}`)
 	})
 
 	t.Run("update many", func(t *testing.T) {
-		res := post(t, hs.URL, `mutation { updateMvPosts(filter: {title: {startsWith: "c"}}, patch: {title: "b-bulk"}) { affectedCount } }`, nil)
-		expectField(t, res, "updateMvPosts", `{"affectedCount": 2}`)
-		res = post(t, hs.URL, `mutation { updateMvPosts(filter: {title: {equalTo: "b-bulk"}}, patch: {title: "c-bulk"}) { mvPosts { `+sel+` } } }`, nil)
+		res := post(t, hs.URL, `mutation { updateManyMvPosts(input: {filter: {title: {startsWith: "c"}}, mvPostPatch: {title: "b-bulk"}}) { affectedCount } }`, nil)
+		expectField(t, res, "updateManyMvPosts", `{"affectedCount": 2}`)
+		res = post(t, hs.URL, `mutation { updateManyMvPosts(input: {filter: {title: {equalTo: "b-bulk"}}, mvPostPatch: {title: "c-bulk"}}) { mvPosts { `+sel+` } } }`, nil)
 		requireNoErrors(t, res)
 		var out struct {
 			Rows []struct {
 				Author json.RawMessage `json:"mvAuthorByAuthorId"`
 			} `json:"mvPosts"`
 		}
-		mustUnmarshal(t, res.Data["updateMvPosts"], &out)
+		mustUnmarshal(t, res.Data["updateManyMvPosts"], &out)
 		want := normalizeStr(t, `{"mvPostsByAuthorId": {"totalCount": 4, "nodes": [{"id": 1, "title": "b-renamed"}, {"id": 2, "title": "b-new"}, {"id": 3, "title": "c-bulk"}, {"id": 40, "title": "c-bulk"}]}, "bs": {"totalCount": 2}}`)
 		if len(out.Rows) != 2 {
 			t.Fatalf("got %d rows", len(out.Rows))
@@ -116,37 +116,37 @@ func TestMutationVisibility(t *testing.T) {
 	})
 
 	t.Run("update many patching every key", func(t *testing.T) {
-		res := post(t, hs.URL, `mutation { updateMvPosts(filter: {title: {equalTo: "b-new"}}, patch: {id: 20, code: "k20"}) { mvPosts { id `+sel+` } } }`, nil)
-		expectField(t, res, "updateMvPosts", `{"mvPosts": [{"id": 20, "mvAuthorByAuthorId": {
+		res := post(t, hs.URL, `mutation { updateManyMvPosts(input: {filter: {title: {equalTo: "b-new"}}, mvPostPatch: {id: 20, code: "k20"}}) { mvPosts { id `+sel+` } } }`, nil)
+		expectField(t, res, "updateManyMvPosts", `{"mvPosts": [{"id": 20, "mvAuthorByAuthorId": {
 			"mvPostsByAuthorId": {"totalCount": 4, "nodes": [{"id": 1, "title": "b-renamed"}, {"id": 3, "title": "c-bulk"}, {"id": 20, "title": "b-new"}, {"id": 40, "title": "c-bulk"}]},
 			"bs": {"totalCount": 2}}}]}`)
 	})
 
 	t.Run("upsert", func(t *testing.T) {
-		res := post(t, hs.URL, `mutation { upsertMvPostById(input: {id: 1, authorId: 1, title: "c-upserted"}) { mvPost { `+sel+` } } }`, nil)
+		res := post(t, hs.URL, `mutation { upsertMvPostById(input: {mvPost: {id: 1, authorId: 1, title: "c-upserted"}}) { mvPost { `+sel+` } } }`, nil)
 		expectField(t, res, "upsertMvPostById", `{"mvPost": {"mvAuthorByAuthorId": {
 			"mvPostsByAuthorId": {"totalCount": 4, "nodes": [{"id": 1, "title": "c-upserted"}, {"id": 3, "title": "c-bulk"}, {"id": 20, "title": "b-new"}, {"id": 40, "title": "c-bulk"}]},
 			"bs": {"totalCount": 1}}}}`)
-		res = post(t, hs.URL, `mutation { upsertMvPostById(input: {id: 5, authorId: 1, title: "b-5"}) { mvPost { mvAuthorByAuthorId { mvPostsByAuthorId { totalCount } } } } }`, nil)
+		res = post(t, hs.URL, `mutation { upsertMvPostById(input: {mvPost: {id: 5, authorId: 1, title: "b-5"}}) { mvPost { mvAuthorByAuthorId { mvPostsByAuthorId { totalCount } } } } }`, nil)
 		expectField(t, res, "upsertMvPostById", `{"mvPost": {"mvAuthorByAuthorId": {"mvPostsByAuthorId": {"totalCount": 5}}}}`)
 	})
 
 	t.Run("delete", func(t *testing.T) {
-		res := post(t, hs.URL, `mutation { deleteMvPostById(id: 20) { mvPost { id `+sel+` } } }`, nil)
+		res := post(t, hs.URL, `mutation { deleteMvPostById(input: {id: 20}) { mvPost { id `+sel+` } } }`, nil)
 		expectField(t, res, "deleteMvPostById", `{"mvPost": {"id": 20, "mvAuthorByAuthorId": {
 			"mvPostsByAuthorId": {"totalCount": 4, "nodes": [{"id": 1, "title": "c-upserted"}, {"id": 3, "title": "c-bulk"}, {"id": 5, "title": "b-5"}, {"id": 40, "title": "c-bulk"}]},
 			"bs": {"totalCount": 1}}}}`)
 	})
 
 	t.Run("delete many", func(t *testing.T) {
-		res := post(t, hs.URL, `mutation { deleteMvPosts(filter: {title: {equalTo: "c-bulk"}}) { affectedCount mvPosts { mvAuthorByAuthorId { mvPostsByAuthorId { totalCount nodes { id } } } } } }`, nil)
-		expectField(t, res, "deleteMvPosts", `{"affectedCount": 2, "mvPosts": [
+		res := post(t, hs.URL, `mutation { deleteManyMvPosts(input: {filter: {title: {equalTo: "c-bulk"}}}) { affectedCount mvPosts { mvAuthorByAuthorId { mvPostsByAuthorId { totalCount nodes { id } } } } } }`, nil)
+		expectField(t, res, "deleteManyMvPosts", `{"affectedCount": 2, "mvPosts": [
 			{"mvAuthorByAuthorId": {"mvPostsByAuthorId": {"totalCount": 2, "nodes": [{"id": 1}, {"id": 5}]}}},
 			{"mvAuthorByAuthorId": {"mvPostsByAuthorId": {"totalCount": 2, "nodes": [{"id": 1}, {"id": 5}]}}}]}`)
 	})
 
 	t.Run("computed column over the merged table", func(t *testing.T) {
-		res := post(t, hs.URL, `mutation { createMvPost(input: {id: 6, authorId: 1, title: "loud"}) { mvPost { mvAuthorByAuthorId { mvPostsByAuthorId(filter: {id: {equalTo: 6}}) { nodes { shout } } } } } }`, nil)
+		res := post(t, hs.URL, `mutation { createMvPost(input: {mvPost: {id: 6, authorId: 1, title: "loud"}}) { mvPost { mvAuthorByAuthorId { mvPostsByAuthorId(filter: {id: {equalTo: 6}}) { nodes { shout } } } } } }`, nil)
 		expectField(t, res, "createMvPost", `{"mvPost": {"mvAuthorByAuthorId": {"mvPostsByAuthorId": {"nodes": [{"shout": "LOUD"}]}}}}`)
 	})
 }
@@ -205,21 +205,21 @@ func TestMutationVisibilityRLS(t *testing.T) {
 	const sel = `mvrAuthorByAuthorId { mvrPostsByAuthorId(orderBy: TITLE_ASC) { totalCount nodes { title } } }`
 
 	t.Run("create", func(t *testing.T) {
-		res := asGrace(t, `mutation { createMvrPost(input: {authorId: 1, ownerId: 2, title: "grace-2"}) { mvrPost { title `+sel+` } } }`)
+		res := asGrace(t, `mutation { createMvrPost(input: {mvrPost: {authorId: 1, ownerId: 2, title: "grace-2"}}) { mvrPost { title `+sel+` } } }`)
 		expectField(t, res, "createMvrPost", `{"mvrPost": {"title": "grace-2", "mvrAuthorByAuthorId": {"mvrPostsByAuthorId": {"totalCount": 3,
 			"nodes": [{"title": "ada-public"}, {"title": "grace-1"}, {"title": "grace-2"}]}}}}`)
 	})
 
 	t.Run("update many skips rows of others", func(t *testing.T) {
-		res := asGrace(t, `mutation { updateMvrPosts(filter: {authorId: {equalTo: 1}}, patch: {title: "grace-x"}) { affectedCount mvrPosts { `+sel+` } } }`)
-		expectField(t, res, "updateMvrPosts", `{"affectedCount": 2, "mvrPosts": [
+		res := asGrace(t, `mutation { updateManyMvrPosts(input: {filter: {authorId: {equalTo: 1}}, mvrPostPatch: {title: "grace-x"}}) { affectedCount mvrPosts { `+sel+` } } }`)
+		expectField(t, res, "updateManyMvrPosts", `{"affectedCount": 2, "mvrPosts": [
 			{"mvrAuthorByAuthorId": {"mvrPostsByAuthorId": {"totalCount": 3, "nodes": [{"title": "ada-public"}, {"title": "grace-x"}, {"title": "grace-x"}]}}},
 			{"mvrAuthorByAuthorId": {"mvrPostsByAuthorId": {"totalCount": 3, "nodes": [{"title": "ada-public"}, {"title": "grace-x"}, {"title": "grace-x"}]}}}]}`)
 	})
 
 	t.Run("delete many skips rows of others", func(t *testing.T) {
-		res := asGrace(t, `mutation { deleteMvrPosts(filter: {authorId: {equalTo: 1}}) { affectedCount mvrPosts { `+sel+` } } }`)
-		expectField(t, res, "deleteMvrPosts", `{"affectedCount": 2, "mvrPosts": [
+		res := asGrace(t, `mutation { deleteManyMvrPosts(input: {filter: {authorId: {equalTo: 1}}}) { affectedCount mvrPosts { `+sel+` } } }`)
+		expectField(t, res, "deleteManyMvrPosts", `{"affectedCount": 2, "mvrPosts": [
 			{"mvrAuthorByAuthorId": {"mvrPostsByAuthorId": {"totalCount": 1, "nodes": [{"title": "ada-public"}]}}},
 			{"mvrAuthorByAuthorId": {"mvrPostsByAuthorId": {"totalCount": 1, "nodes": [{"title": "ada-public"}]}}}]}`)
 	})

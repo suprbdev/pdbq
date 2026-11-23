@@ -119,8 +119,8 @@ func TestVectorTypeMapping(t *testing.T) {
 		if got := obj.Field(field).Type; got != want {
 			t.Errorf("Embedding.%s = %s, want %s", field, got, want)
 		}
-		if got := fieldType(t, b, "EmbeddingCreateInput", field); got != want {
-			t.Errorf("EmbeddingCreateInput.%s = %s, want %s", field, got, want)
+		if got := fieldType(t, b, "EmbeddingInput", field); got != want {
+			t.Errorf("EmbeddingInput.%s = %s, want %s", field, got, want)
 		}
 	}
 	fn := b.Query.Field("scaleVector")

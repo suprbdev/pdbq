@@ -168,13 +168,13 @@ func TestDomainScalars(t *testing.T) {
 
 	t.Run("mutations take base type literals", func(t *testing.T) {
 		res := post(t, url, `mutation($e: Email!, $s: Percent) {
-			createPerson(input: {id: 3, email: $e, aliases: ["c@x.org"], score: $s, visits: "9", lucky: [1]}) { person { email aliases score visits lucky } }
+			createPerson(input: {person: {id: 3, email: $e, aliases: ["c@x.org"], score: $s, visits: "9", lucky: [1]}}) { person { email aliases score visits lucky } }
 		}`, map[string]any{"e": "cy@example.com", "s": 5})
 		requireNoErrors(t, res)
 		if got := normalize(t, res.Data["createPerson"]); got != `{"person":{"aliases":["c@x.org"],"email":"cy@example.com","lucky":[1],"score":5,"visits":"9"}}` {
 			t.Errorf("createPerson = %s", got)
 		}
-		res = post(t, url, `mutation { updatePersonById(id: 3, patch: {score: 500}) { person { score } } }`, nil)
+		res = post(t, url, `mutation { updatePersonById(input: {id: 3, personPatch: {score: 500}}) { person { score } } }`, nil)
 		if len(res.Errors) == 0 || !strings.Contains(res.Errors[0].Message, "small_positive") {
 			t.Errorf("CHECK violation not reported: %+v", res.Errors)
 		}

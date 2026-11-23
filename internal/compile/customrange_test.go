@@ -108,7 +108,7 @@ func TestCustomRangeTypes(t *testing.T) {
 			1,
 		},
 		"create": {
-			`mutation { createReading(input: {temp: {start: {value: 1, inclusive: true}, end: {value: 2.5, inclusive: false}}, slot: {start: {value: 1, inclusive: true}}}) { reading { id } } }`,
+			`mutation { createReading(input: {reading: {temp: {start: {value: 1, inclusive: true}, end: {value: 2.5, inclusive: false}}, slot: {start: {value: 1, inclusive: true}}}}) { reading { id } } }`,
 			[]string{`"public"."floatrange"(`, `"public"."slotrange"(`},
 			0,
 		},

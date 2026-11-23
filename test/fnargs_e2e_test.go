@@ -19,7 +19,7 @@ func TestFunctionRowArguments(t *testing.T) {
 		_, _ = conn.Exec(context.Background(), `UPDATE users SET full_name = 'Grace Hopper' WHERE id = 2`)
 	})
 
-	res := post(t, hs.URL, `query ($u: UserInput) {
+	res := post(t, hs.URL, `query ($u: UserRowInput) {
 	  userGreeting(greeting: "Hello", u: $u)
 	  anon: userGreeting(greeting: "Hi", u: {email: "x@example.com"})
 	  totalTitleLength(ps: [{title: "abc"}, null, {title: "de", published: true}])

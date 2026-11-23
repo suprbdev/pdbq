@@ -250,7 +250,7 @@ surfaces. Its input shapes follow
 
 ### Input shape
 
-Every create input (`PostCreateInput`) and patch (`PostUpdateInput`) gets one
+Every row input (`PostInput`, the create values) and patch (`PostPatch`) gets one
 field per foreign key, in both directions, named like the relation field of
 the row type (`userByAuthorId`, `postsByAuthorId`; `@fieldName`/`@foreignFieldName`
 rename both). Its type lists the operations on the related rows:
@@ -271,7 +271,7 @@ coerced to a one-element list):
 
 ```graphql
 mutation {
-  updateUserById(id: 1, patch: {
+  updateUserById(input: {id: 1, userPatch: {
     fullName: "Ada"
     postsByAuthorId: {
       connectById: [{id: 7}]
@@ -279,8 +279,8 @@ mutation {
       updateById: [{id: 3, postPatch: {title: "Renamed"}}]
       deleteByNodeId: [{nodeId: "WyJQb3N0IiwgNF0="}]
     }
-  }) { user { postsByAuthorId { totalCount nodes { title } } } }
-  createPost(input: {title: "Hi", userByAuthorId: {connectByEmail: {email: "ada@example.com"}}}) {
+  }}) { user { postsByAuthorId { totalCount nodes { title } } } }
+  createPost(input: {post: {title: "Hi", userByAuthorId: {connectByEmail: {email: "ada@example.com"}}}}) {
     post { userByAuthorId { fullName } }
   }
 }
@@ -294,7 +294,8 @@ mutation {
 - Key inputs are `<Type><Verb>By<Key>Input` (`UserConnectByEmailInput {
   email }`, `UserDeleteByIdInput { id }`) and `<Type><Verb>ByNodeIdInput {
   nodeId }`; update inputs add the patch as `<type>Patch`
-  (`UserUpdateByIdInput { id, userPatch: UserUpdateInput! }`), which may
+  (`UserUpdateByIdInput { id, userPatch: UserPatch! }`), the same
+  `<type>Patch` field the root update mutations take, which may
   carry nested fields itself.
 - An operation is only offered when the role may run it and the input may
   write the columns it sets: `create` needs the related create input,
@@ -325,7 +326,7 @@ mutation {
 - At most `plugins.settings.nested_mutations.max_operations` operations
   (default 50, each list item counting once) run per root field, nested at
   most `max_depth` levels (default 3).
-- The bulk mutations (`createUsers`, `updateUsers`) and upserts take no
+- The bulk mutations (`createManyUsers`, `updateManyUsers`) and upserts take no
   nested fields; using one is an error.
 - A row may be modified only once per statement (a PostgreSQL rule for
   data-modifying CTEs): two operations updating the same row leave only one
@@ -339,10 +340,11 @@ mutation {
 
 Differences from the PostGraphile plugin: the relation fields keep pdbq's
 relation names instead of `<table>To<Columns>`/`<tables>Using<Columns>`,
-the root mutations keep pdbq's argument shapes (`createPost(input: {…})`,
-`updatePostById(id:, patch:)`), forward `update…`/`delete…` act on the
-referenced row instead of relinking, create inputs offer no
-update/delete/disconnect, and there is no `deleteOthers`.
+forward `update…`/`delete…` act on the referenced row instead of relinking,
+create inputs offer no update/delete/disconnect, and there is no
+`deleteOthers`. The root mutations take PostGraphile v4's shapes
+(`createPost(input: {post: {…}})`, `updatePostById(input: {id, postPatch})`),
+as without the plugin.
 
 ### Hooks
 

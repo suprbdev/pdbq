@@ -1,14 +1,14 @@
 # Spatial writes accept GeoJSON objects or WKT/EWKT strings; both collapse to a
 # single parameter wrapped in a PostGIS constructor.
 mutation {
-  create: createPlace(input: {
+  create: createPlace(input: {place: {
     name: "Trafalgar Square"
     location: {type: "Point", coordinates: [-0.1281, 51.508]}
     area: "SRID=4326;POLYGON((-0.130 51.507,-0.126 51.507,-0.126 51.509,-0.130 51.507))"
-  }) {
+  }}) {
     place { id name location areaArea }
   }
-  update: updatePlaceById(id: 1, patch: {location: "POINT(1 2)"}) {
+  update: updatePlaceById(input: {id: 1, placePatch: {location: "POINT(1 2)"}}) {
     place { id location }
   }
 }

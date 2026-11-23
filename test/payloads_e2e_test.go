@@ -148,16 +148,16 @@ func TestMutationPayloads(t *testing.T) {
 
 	t.Run("table mutation payload", func(t *testing.T) {
 		res := post(t, hs.URL, `mutation {
-		  createPayPost(input: {id: 3, authorId: 1, title: "three"}) {
+		  createPayPost(input: {payPost: {id: 3, authorId: 1, title: "three"}}) {
 		    payAuthorByAuthorId { name }
 		    payPostEdge { node { title } }
 		    query { allPayPosts(orderBy: [ID_ASC]) { totalCount nodes { id } } }
 		  }
-		  deletePayPostById(id: 3) {
+		  deletePayPostById(input: {id: 3}) {
 		    payPost { id }
 		    query { payPostById(id: 3) { id } allPayPosts { totalCount } }
 		  }
-		  updatePayPosts(filter: {authorId: {equalTo: 1}}, patch: {title: "same"}) {
+		  updateManyPayPosts(input: {filter: {authorId: {equalTo: 1}}, payPostPatch: {title: "same"}}) {
 		    affectedCount
 		    query { allPayPosts(filter: {title: {equalTo: "same"}}) { totalCount } }
 		  }
@@ -165,12 +165,12 @@ func TestMutationPayloads(t *testing.T) {
 		expectField(t, res, "createPayPost", `{"payAuthorByAuthorId": {"name": "ada"}, "payPostEdge": {"node": {"title": "three"}},
 			"query": {"allPayPosts": {"totalCount": 4, "nodes": [{"id": 1}, {"id": 2}, {"id": 3}, {"id": 10}]}}}`)
 		expectField(t, res, "deletePayPostById", `{"payPost": {"id": 3}, "query": {"payPostById": null, "allPayPosts": {"totalCount": 3}}}`)
-		expectField(t, res, "updatePayPosts", `{"affectedCount": 2, "query": {"allPayPosts": {"totalCount": 2}}}`)
+		expectField(t, res, "updateManyPayPosts", `{"affectedCount": 2, "query": {"allPayPosts": {"totalCount": 2}}}`)
 	})
 
 	t.Run("nested mutation payload", func(t *testing.T) {
 		res := post(t, hs.URL, `mutation {
-		  createPayPost(input: {id: 20, title: "nested", payAuthorByAuthorId: {create: {id: 20, name: "linus"}}}) {
+		  createPayPost(input: {payPost: {id: 20, title: "nested", payAuthorByAuthorId: {create: {id: 20, name: "linus"}}}}) {
 		    payAuthorByAuthorId { name }
 		    query { payAuthorById(id: 20) { name } }
 		  }
@@ -179,7 +179,7 @@ func TestMutationPayloads(t *testing.T) {
 	})
 
 	t.Run("not-found update still errors", func(t *testing.T) {
-		res := post(t, hs.URL, `mutation { updatePayPostById(id: 99, patch: {title: "x"}) { query { __typename } } }`, nil)
+		res := post(t, hs.URL, `mutation { updatePayPostById(input: {id: 99, payPostPatch: {title: "x"}}) { query { __typename } } }`, nil)
 		if len(res.Errors) != 1 || string(res.Data["updatePayPostById"]) != "null" {
 			raw, _ := json.Marshal(res)
 			t.Errorf("want a no-row error, got %s", raw)

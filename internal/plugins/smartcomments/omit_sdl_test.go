@@ -192,7 +192,10 @@ func occurrences(t *testing.T, s *ast.Schema, column string) map[string]bool {
 		if def.BuiltIn {
 			continue
 		}
-		if has(def.Name) {
+		switch {
+		case has(def.Name) && strings.HasPrefix(def.Name, "Upsert"):
+			add(sUpsert, "type "+def.Name)
+		case has(def.Name):
 			add(sKey, "type "+def.Name)
 		}
 		switch def.Kind {
@@ -233,10 +236,10 @@ func occurrences(t *testing.T, s *ast.Schema, column string) map[string]bool {
 					add(sFilter, loc)
 				case strings.HasSuffix(name, "SimilarToInput") || strings.HasSuffix(name, "NearVectorInput"):
 					add(sRef, loc)
-				case strings.HasSuffix(name, "CreateInput"):
-					add(sCreate, loc)
-				case strings.HasSuffix(name, "UpdateInput"):
+				case strings.HasSuffix(name, "Patch"):
 					add(sUpdate, loc)
+				case strings.HasSuffix(name, "Input"):
+					add(sCreate, loc)
 				default:
 					t.Errorf("unclassified input field %s", loc)
 				}
@@ -393,7 +396,7 @@ func TestOmitTableEverywhere(t *testing.T) {
 	base := buildAll(t, nil).Schema
 	wantFields(t, base, "Query", "allVaults", "vaultById", "vaultBySecretCode", "everyVault")
 	wantFields(t, base, "Vault", "label", "vaultDigest")
-	wantFields(t, base, "Mutation", "openVault", "updateVaults", "deleteVaults")
+	wantFields(t, base, "Mutation", "openVault", "updateManyVaults", "deleteManyVaults")
 	wantFields(t, base, "VaultLog", "snapshot")
 	if len(occurrences(t, base, "vaults_by_owner_id")) == 0 {
 		t.Fatal("fixture drift: no vaultsByOwnerId surface")
@@ -401,7 +404,7 @@ func TestOmitTableEverywhere(t *testing.T) {
 
 	t.Run("bare", func(t *testing.T) {
 		s := buildAll(t, setTable("@omit")).Schema
-		for _, name := range []string{"Vault", "VaultFilter", "VaultsOrderBy", "VaultCreateInput"} {
+		for _, name := range []string{"Vault", "VaultFilter", "VaultsOrderBy", "VaultInput"} {
 			if s.Types[name] != nil {
 				t.Errorf("type %s must not exist", name)
 			}
@@ -443,7 +446,7 @@ func TestOmitTableEverywhere(t *testing.T) {
 				t.Errorf("type %s must not exist", name)
 			}
 		}
-		rejectFields(t, s, "Mutation", "updateVaults", "deleteVaults")
+		rejectFields(t, s, "Mutation", "updateManyVaults", "deleteManyVaults")
 		wantFields(t, s, "Mutation", "updateVaultById", "deleteVaultById")
 	})
 	t.Run("order", func(t *testing.T) {

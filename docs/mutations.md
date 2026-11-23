@@ -8,19 +8,80 @@ tables compiles into two, run in one transaction (see
 
 ## Table mutations
 
-Per table (gated by the role's privileges): `create<Type>(input:)`,
-`update<Type>By<Key>(…, patch:)`, `delete<Type>By<Key>(…)`,
-`upsert<Type>By<Key>(input:)`, and the bulk `create<Types>`,
-`update<Types>(filter:, patch:)`, `delete<Types>(filter:)`.
+Per table, gated by the role's privileges, pdbq generates PostGraphile v4's
+CRUD mutations plus bulk ones. Every one takes exactly one argument,
+`input`, of its own input type named after the mutation field
+(`UpperCamel(<field>) + "Input"`, so it follows `@name`, `simple_names` and
+naming plugins). That input holds `clientMutationId`, the key or filter
+selecting the rows, and the row values:
 
-An upsert takes the create input and, on a key conflict, overwrites only
-the provided columns that the update patch (`<Type>UpdateInput`) also has:
+| Mutation | Field | Input |
+|---|---|---|
+| create | `createUser(input: CreateUserInput!): CreateUserPayload!` | `{clientMutationId: String, user: UserInput!}` |
+| update by key | `updateUserById(input: UpdateUserByIdInput!): UpdateUserPayload!` | `{clientMutationId: String, id: Int!, userPatch: UserPatch!}` |
+| update by unique key | `updateUserByEmail(input: UpdateUserByEmailInput!): UpdateUserPayload!` | `{clientMutationId: String, email: String!, userPatch: UserPatch!}` |
+| delete by key | `deleteUserById(input: DeleteUserByIdInput!): DeleteUserPayload!` | `{clientMutationId: String, id: Int!}` |
+| delete by unique key | `deleteUserByEmail(input: DeleteUserByEmailInput!): DeleteUserPayload!` | `{clientMutationId: String, email: String!}` |
+| upsert | `upsertUserByEmail(input: UpsertUserByEmailInput!): UpsertUserPayload!` | `{clientMutationId: String, user: UserInput!}` |
+| bulk create | `createManyUsers(input: CreateManyUsersInput!): CreateManyUsersPayload!` | `{clientMutationId: String, users: [UserInput!]!}` |
+| bulk update | `updateManyUsers(input: UpdateManyUsersInput!): UpdateManyUsersPayload!` | `{clientMutationId: String, filter: UserFilter!, userPatch: UserPatch!}` |
+| bulk delete | `deleteManyUsers(input: DeleteManyUsersInput!): DeleteManyUsersPayload!` | `{clientMutationId: String, filter: UserFilter!}` |
+
+- The row values are `<Type>Input` (`UserInput`: the columns a create can
+  set, required where the column is `NOT NULL` without a default) and
+  `<Type>Patch` (`UserPatch`: the columns an update can set, all optional;
+  setting none is an error). Neither carries `clientMutationId`. The field
+  holding them is the lowerCamel type name (`user`), `<type>Patch`
+  (`userPatch`) for a patch and the plural (`users`) for a bulk create.
+- `<Key>` is the primary key (`ById`, shortened away by `simple_names`:
+  `updateUser`, `deleteUser`, `upsertUser`) and each unique constraint
+  (`ByEmail`). A keyed update or delete that matches no row is the
+  `no row matched` error.
+- The bulk mutations `createMany<Types>`, `updateMany<Types>` and
+  `deleteMany<Types>` are named apart from the single-row ones, so a table
+  named by an uncountable noun (`news`: `createNews`, `createManyNews`)
+  gets both. The filter of a bulk update or delete is required; `{}`
+  matches every row. They are generated only for tables with a filter
+  type.
+- A table whose every column PostgreSQL computes gets a create without row
+  values (`createTick(input: {clientMutationId})` inserts the defaults) and
+  no bulk create, upsert or update.
+
+```graphql
+mutation {
+  createUser(input: {clientMutationId: "1", user: {email: "ada@example.com"}}) {
+    clientMutationId
+    user { id }
+  }
+  updateUserById(input: {id: 1, userPatch: {fullName: "Ada"}}) { user { fullName } }
+  deleteUserByEmail(input: {email: "old@example.com"}) { deletedUserNodeId }
+  updateManyUsers(input: {filter: {mood: {equalTo: SAD}}, userPatch: {mood: OK}}) { affectedCount }
+}
+```
+
+The whole input can be one variable:
+`mutation ($in: CreateUserInput!) { createUser(input: $in) { user { id } } }`.
+
+Two table mutations never share a name: when two would get the same root
+field name, or the same input or payload type name (two tables of the same
+name in different schemas, a naming plugin mapping two kinds to one name,
+an enum named `user_patch`), the schema build fails naming both, e.g.
+`schema: mutation name collision: "createNews" is both the create mutation
+of table public.news and the create mutation of table app.news; rename the
+table or column with the @name smart comment, or the generated name in an
+InflectionHook plugin`. A key column named like the input's own fields
+(`clientMutationId`, `userPatch`) is an `input field collision` error. A
+custom mutation colliding with a table mutation is skipped with a warning,
+the table mutation kept.
+
+An upsert takes the row values and, on a key conflict, overwrites only
+the provided columns that the patch (`<Type>Patch`) also has:
 a column tagged `@omit update` is set when the row is inserted and kept
 when it already exists. Upserts are generated only for keys every column of
-which the create input can set.
+which the row values can set.
 
 Identity `GENERATED ALWAYS` columns and generated (`STORED` or `VIRTUAL`)
-columns are left out of the create and update inputs: PostgreSQL computes
+columns are left out of `<Type>Input` and `<Type>Patch`: PostgreSQL computes
 them. Identity `GENERATED BY DEFAULT` columns are in both, optional on
 create like a serial column: an omitted value takes the sequence's next
 one. A key on such a column therefore gets an upsert.
@@ -31,7 +92,7 @@ The single-row payloads (`CreatePostPayload`, `UpdatePostPayload`,
 | Field | Type | |
 |---|---|---|
 | `post` | `Post` | The mutated row (as it was, for a delete). |
-| `clientMutationId` | `String` | Echoes `input.clientMutationId` (`patch.clientMutationId` for updates, the `clientMutationId` argument for deletes). |
+| `clientMutationId` | `String` | Echoes `input.clientMutationId`. |
 | `query` | `Query` | The query root: read anything alongside the mutation's result. |
 | `userByAuthorId`, … | | The row's forward relations, named as on the row type. |
 | `postEdge(orderBy:)` | `PostEdge` | An edge for adding the row to a Relay connection (tables with a primary key). |
@@ -46,7 +107,7 @@ column). A delete that matches no row is still the not-found error.
 
 ```graphql
 mutation {
-  createPost(input: {authorId: 1, title: "Hello"}) {
+  createPost(input: {post: {authorId: 1, title: "Hello"}}) {
     post { id title }
     userByAuthorId { email }
     postEdge { cursor node { id } }
@@ -55,8 +116,10 @@ mutation {
 }
 ```
 
-The bulk payloads carry the mutated rows (`posts: [Post!]!`),
-`affectedCount`, `clientMutationId` and `query`.
+The bulk payloads (`CreateManyPostsPayload`, `UpdateManyPostsPayload`,
+`DeleteManyPostsPayload`, named `UpperCamel(<field>) + "Payload"`) carry the
+mutated rows (`posts: [Post!]!`), `affectedCount`, `clientMutationId` and
+`query`.
 
 A forward relation whose name is already one of the payload's own fields
 (`clientMutationId`, `query`, the row field, `<row>Edge`,
@@ -114,8 +177,9 @@ their parameters the same way: scalars, enums, domains, PostGIS values and
 arrays to the matching GraphQL types, a composite type to its `<Type>Input`.
 
 **Table rows.** A parameter typed as a table's row type, in any position, or
-an array of rows (`posts[]`), takes `<Type>Input` (`UserInput`,
-`[PostInput]`). It has one nullable field per column of the table,
+an array of rows (`posts[]`), takes `<Type>RowInput` (`UserRowInput`,
+`[PostRowInput]`; `<Type>Input` is a create's row values). It has one
+nullable field per column of the table,
 including generated, identity and primary-key columns. The argument is a
 value handed to the function, not a write to the table, so `@omit create`
 and `@omit update` do not apply. Columns tagged `@omit read` are left out:
@@ -126,17 +190,17 @@ the values.
 
 ```graphql
 # CREATE FUNCTION user_greeting(greeting text, u users) RETURNS text STABLE
-userGreeting(greeting: String, u: UserInput): String
+userGreeting(greeting: String, u: UserRowInput): String
 # CREATE FUNCTION rename_user(u users, new_name text) RETURNS users VOLATILE
-renameUser(input: RenameUserInput!): RenameUserPayload!   # input RenameUserInput { u: UserInput  newName: String  clientMutationId: String }
+renameUser(input: RenameUserInput!): RenameUserPayload!   # input RenameUserInput { u: UserRowInput  newName: String  clientMutationId: String }
 ```
 
 A *stable* function whose first parameter is a row is a computed column on
 that type (see [smart comments](smart-comments.md)), not a root field. A
 *volatile* one is a custom mutation taking the row. PostGraphile takes
 `UserInput` (its create input) by default and selects other variants with
-`@arg0variant`. pdbq has one row input type, with every readable column,
-and does not read `@argNvariant`.
+`@arg0variant`. pdbq has one row input type, `<Type>RowInput`, with every
+readable column, and does not read `@argNvariant`.
 
 **Polymorphic parameters** (`anyelement`, `anyarray`, `anynonarray`,
 `anyenum`, `anyrange`, `anymultirange` and the `anycompatible*` family)
@@ -238,7 +302,7 @@ and a request asks for it with a request extension:
 
 ```json
 {
-  "query": "mutation { a: createUser(input: {email: \"a@x.io\"}) { user { id } } b: createUser(input: {email: \"a@x.io\"}) { user { id } } c: createUser(input: {email: \"c@x.io\"}) { user { id } } }",
+  "query": "mutation { a: createUser(input: {user: {email: \"a@x.io\"}}) { user { id } } b: createUser(input: {user: {email: \"a@x.io\"}}) { user { id } } c: createUser(input: {user: {email: \"c@x.io\"}}) { user { id } } }",
   "extensions": { "partialMutations": true }
 }
 ```
@@ -292,6 +356,10 @@ Interactions:
 
 ## Differences from PostGraphile
 
+- The bulk mutations (`createManyUsers`, `updateManyUsers`,
+  `deleteManyUsers`) and upserts have no PostGraphile v4 counterpart; no
+  `nodeId`-keyed root mutations (`updateUser(input: {nodeId, userPatch})`)
+  are generated.
 - A payload's forward relation named like one of the payload's own fields is
   left out of the payload (with a build warning) rather than renamed.
 - `query` fields compile in the core compiler: `CompileHook` plugins do not

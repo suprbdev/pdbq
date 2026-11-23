@@ -160,10 +160,18 @@ type FieldMeta struct {
 	PeriodColumn string
 	// Aggregate binds a KindAggregateValue field to its aggregate expression.
 	Aggregate *Aggregate
-	// Patch names the table's update input on a KindUpsert field: only the
-	// columns it binds are overwritten on conflict, so a column the patch
-	// leaves out (`@omit update`) keeps its value.
+	// Patch names the table's patch input (<Type>Patch) on a KindUpsert
+	// field: only the columns it binds are overwritten on conflict, so a
+	// column the patch leaves out (`@omit update`) keeps its value.
 	Patch string
+	// Values names the field of a table mutation's input argument holding
+	// the row values: the row (<Type>Input) of a create or upsert, the rows
+	// of a bulk create, the patch (<Type>Patch) of an update or bulk
+	// update. It is empty for deletes and for a create without settable
+	// columns, which inserts the column defaults. The key fields of a keyed
+	// update or delete are the input's fields bound to KeyColumns
+	// ([Built.InputColumns]).
+	Values string
 	// Score binds a KindScore field to its reference argument and
 	// expression.
 	Score *Score

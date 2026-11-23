@@ -37,6 +37,17 @@ becomes the release notes of the next tag.
   `@fieldName`/`@foreignFieldName`), and a payload relation named like a
   payload field is left out of that payload. See
   [docs/upgrading.md](docs/upgrading.md#default-naming).
+- **Breaking:** table mutations take PostGraphile v4's shapes: one `input`
+  argument per mutation, of a type named after the field, holding
+  `clientMutationId`, the key or filter and the row values
+  (`createUser(input: {user})`, `updateUserById(input: {id, userPatch})`,
+  `deleteUserById(input: {id})`). The row values are `UserInput` (was
+  `UserCreateInput`) and `UserPatch` (was `UserUpdateInput`), without
+  `clientMutationId`; a function's row argument takes `UserRowInput` (was
+  `UserInput`). Bulk mutations are `createManyUsers`, `updateManyUsers` and
+  `deleteManyUsers`, so uncountable table names no longer collide, and a
+  table mutation name or type collision is a schema build error. See
+  [docs/upgrading.md](docs/upgrading.md#mutation-shapes).
 - `go install github.com/suprbdev/pdbq/cmd/pdbq@vX.Y.Z` builds report the
   module version in `pdbq --version`.
 - `pdbq query` exits 2 on GraphQL errors only after closing the pool

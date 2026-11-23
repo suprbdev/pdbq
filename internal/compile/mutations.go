@@ -28,7 +28,7 @@ func (s *stmt) mutation(meta *schema.FieldMeta, f *ast.Field) (string, error) {
 	var err error
 	switch meta.Kind {
 	case schema.KindCreate:
-		d.sql, err = s.insertCTE(t, f)
+		d.sql, err = s.insertCTE(t, meta, f)
 	case schema.KindUpdate:
 		d, err = s.updateCTE(t, meta, f)
 	case schema.KindDelete:
@@ -36,9 +36,9 @@ func (s *stmt) mutation(meta *schema.FieldMeta, f *ast.Field) (string, error) {
 	case schema.KindUpsert:
 		d, err = s.upsertCTE(t, meta, f)
 	case schema.KindCreateMany:
-		d.sql, err = s.createManyCTE(t, f)
+		d.sql, err = s.createManyCTE(t, meta, f)
 	case schema.KindUpdateMany:
-		d, err = s.updateManyCTE(t, f)
+		d, err = s.updateManyCTE(t, meta, f)
 	case schema.KindDeleteMany:
 		d, err = s.deleteManyCTE(t, f)
 	}
@@ -200,25 +200,70 @@ func columnList(t *introspect.Table, cols []string) string {
 	return strings.Join(out, ", ")
 }
 
-// clientMutationID extracts the clientMutationId sent by the client, if any.
-// For create/update it's nested inside the input/patch object; for delete
-// (which has no input object) it's a plain top-level argument.
+// clientMutationID extracts the clientMutationId sent by the client in the
+// input argument of mutation field f, if any.
 func (s *stmt) clientMutationID(f *ast.Field) (string, bool) {
-	for _, argName := range [...]string{"input", "patch"} {
-		if v, ok := s.argValue(f, argName); ok {
-			if obj, ok := v.(map[string]any); ok {
-				if id, ok := obj["clientMutationId"].(string); ok {
-					return id, true
-				}
+	if v, ok := s.argValue(f, "input"); ok {
+		if obj, ok := v.(map[string]any); ok {
+			if id, ok := obj["clientMutationId"].(string); ok {
+				return id, true
 			}
 		}
 	}
-	if v, ok := s.argValue(f, "clientMutationId"); ok {
-		if id, ok := v.(string); ok {
-			return id, true
-		}
-	}
 	return "", false
+}
+
+// mutationInput returns the input argument of table mutation field f and
+// the name of its input type.
+func (s *stmt) mutationInput(f *ast.Field) (map[string]any, string, error) {
+	return MutationInput(f, s.req.Vars)
+}
+
+// mutationValues returns the row values of table mutation field f (the
+// meta.Values field of its input) and the name of their input type; ok is
+// false when the input leaves them out.
+func (s *stmt) mutationValues(meta *schema.FieldMeta, f *ast.Field) (v any, typeName string, ok bool, err error) {
+	input, inputType, err := s.mutationInput(f)
+	if err != nil {
+		return nil, "", false, err
+	}
+	v, ok = input[meta.Values]
+	return v, inputFieldType(s.c.Built, inputType, meta.Values), ok && v != nil, nil
+}
+
+// inputFieldType returns the named type of field of input type inputType,
+// or "".
+func inputFieldType(built *schema.Built, inputType, field string) string {
+	if built.Schema == nil {
+		return ""
+	}
+	def := built.Schema.Types[inputType]
+	if def == nil {
+		return ""
+	}
+	if fd := def.Fields.ForName(field); fd != nil {
+		return fd.Type.Name()
+	}
+	return ""
+}
+
+// inputKeyConds builds `alias."col" = $n` for each key column of a keyed
+// update or delete, reading the field of its input bound to the column.
+func (s *stmt) inputKeyConds(t *introspect.Table, meta *schema.FieldMeta, f *ast.Field, alias string) ([]string, error) {
+	input, inputType, err := s.mutationInput(f)
+	if err != nil {
+		return nil, err
+	}
+	vals, err := InputKey(s.c.Built, inputType, input, meta.KeyColumns)
+	if err != nil {
+		return nil, err
+	}
+	conds := make([]string, len(vals))
+	for i, col := range meta.KeyColumns {
+		c := t.Column(col)
+		conds[i] = fmt.Sprintf("%s.%s %s %s", alias, quoteIdent(col), s.contrib(c).Operator("="), s.valueExpr(c, vals[i]))
+	}
+	return conds, nil
 }
 
 // payloadSelect compiles a single-row payload selection against the __mut
@@ -397,16 +442,15 @@ func (s *stmt) payloadSelectMany(t *introspect.Table, f *ast.Field) (string, err
 
 // createManyCTE compiles a multi-row INSERT. The column list is the union of
 // columns provided across rows; rows missing a column insert DEFAULT there.
-func (s *stmt) createManyCTE(t *introspect.Table, f *ast.Field) (string, error) {
-	input, ok := s.argValue(f, "input")
-	if !ok {
-		return "", errUser("%s: missing input", f.Name)
+func (s *stmt) createManyCTE(t *introspect.Table, meta *schema.FieldMeta, f *ast.Field) (string, error) {
+	v, inputType, _, err := s.mutationValues(meta, f)
+	if err != nil {
+		return "", err
 	}
-	rows, ok := input.([]any)
+	rows, ok := v.([]any)
 	if !ok || len(rows) == 0 {
-		return "", errUser("%s: input must be a non-empty list", f.Name)
+		return "", errUser("%s: %s must be a non-empty list", f.Name, meta.Values)
 	}
-	inputType := argTypeName(f, "input")
 	binding := s.c.Built.InputColumns[inputType]
 	if binding == nil {
 		return "", fmt.Errorf("compile: unknown input type %q", inputType)
@@ -422,7 +466,7 @@ func (s *stmt) createManyCTE(t *introspect.Table, f *ast.Field) (string, error) 
 	for i, r := range rows {
 		obj, ok := r.(map[string]any)
 		if !ok {
-			return "", errUser("%s: input rows must be objects", f.Name)
+			return "", errUser("%s: %s must be objects", f.Name, meta.Values)
 		}
 		objs[i] = obj
 		for name := range obj {
@@ -438,7 +482,7 @@ func (s *stmt) createManyCTE(t *introspect.Table, f *ast.Field) (string, error) 
 		}
 	}
 	if len(useFields) == 0 {
-		return "", errUser("%s: input rows set no columns", f.Name)
+		return "", errUser("%s: %s set no columns", f.Name, meta.Values)
 	}
 	cols := make([]string, len(useFields))
 	for i, name := range useFields {
@@ -465,21 +509,10 @@ func (s *stmt) createManyCTE(t *introspect.Table, f *ast.Field) (string, error) 
 		tableRef(t), strings.Join(cols, ", "), strings.Join(valueRows, ",\n       ")), nil
 }
 
-func (s *stmt) updateManyCTE(t *introspect.Table, f *ast.Field) (dml, error) {
-	patchVal, ok := s.argValue(f, "patch")
-	if !ok {
-		return dml{}, errUser("%s: missing patch", f.Name)
-	}
-	patch, ok := patchVal.(map[string]any)
-	if !ok || len(patch) == 0 {
-		return dml{}, errUser("%s: patch must set at least one column", f.Name)
-	}
-	cols, params, err := s.inputColumns(t, argTypeName(f, "patch"), patch)
+func (s *stmt) updateManyCTE(t *introspect.Table, meta *schema.FieldMeta, f *ast.Field) (dml, error) {
+	cols, params, err := s.patchColumns(t, meta, f)
 	if err != nil {
 		return dml{}, err
-	}
-	if len(cols) == 0 {
-		return dml{}, errUser("%s: patch must set at least one column", f.Name)
 	}
 	sets := make([]string, len(cols))
 	patched := make(map[string]bool, len(cols))
@@ -511,11 +544,15 @@ func (s *stmt) deleteManyCTE(t *introspect.Table, f *ast.Field) (dml, error) {
 // deliberately matches every row — the argument itself is non-null so the
 // caller must always write one.
 func (s *stmt) bulkFilterCond(t *introspect.Table, f *ast.Field) (string, error) {
-	fv, ok := s.argValue(f, "filter")
-	if !ok {
+	input, inputType, err := s.mutationInput(f)
+	if err != nil {
+		return "", err
+	}
+	fv, ok := input["filter"]
+	if !ok || fv == nil {
 		return "", errUser("%s: missing filter", f.Name)
 	}
-	cond, err := s.filterCond(t, argTypeName(f, "filter"), fv, tableRef(t))
+	cond, err := s.filterCond(t, inputFieldType(s.c.Built, inputType, "filter"), fv, tableRef(t))
 	if err != nil {
 		return "", err
 	}
@@ -525,18 +562,21 @@ func (s *stmt) bulkFilterCond(t *introspect.Table, f *ast.Field) (string, error)
 	return cond, nil
 }
 
-func (s *stmt) insertCTE(t *introspect.Table, f *ast.Field) (string, error) {
-	input, ok := s.argValue(f, "input")
-	if !ok {
-		return "", errUser("%s: missing input", f.Name)
-	}
-	vals, ok := input.(map[string]any)
-	if !ok {
-		return "", errUser("%s: input must be an object", f.Name)
-	}
-	inputType := argTypeName(f, "input")
-	cols, params, err := s.inputColumns(t, inputType, vals)
-	if err != nil {
+func (s *stmt) insertCTE(t *introspect.Table, meta *schema.FieldMeta, f *ast.Field) (string, error) {
+	var cols, params []string
+	if meta.Values != "" {
+		v, inputType, ok, err := s.mutationValues(meta, f)
+		if err != nil {
+			return "", err
+		}
+		vals, isObj := v.(map[string]any)
+		if !ok || !isObj {
+			return "", errUser("%s: missing %s", f.Name, meta.Values)
+		}
+		if cols, params, err = s.inputColumns(t, inputType, vals); err != nil {
+			return "", err
+		}
+	} else if _, _, err := s.mutationInput(f); err != nil {
 		return "", err
 	}
 	if len(cols) == 0 {
@@ -591,15 +631,14 @@ func (s *stmt) inputColumns(t *introspect.Table, inputType string, vals map[stri
 // provided, the target updates to itself so the statement still returns the
 // existing row instead of DO NOTHING's zero rows.
 func (s *stmt) upsertCTE(t *introspect.Table, meta *schema.FieldMeta, f *ast.Field) (dml, error) {
-	input, ok := s.argValue(f, "input")
-	if !ok {
-		return dml{}, errUser("%s: missing input", f.Name)
+	v, inputType, ok, err := s.mutationValues(meta, f)
+	if err != nil {
+		return dml{}, err
 	}
-	vals, ok := input.(map[string]any)
-	if !ok {
-		return dml{}, errUser("%s: input must be an object", f.Name)
+	vals, isObj := v.(map[string]any)
+	if !ok || !isObj {
+		return dml{}, errUser("%s: missing %s", f.Name, meta.Values)
 	}
-	inputType := argTypeName(f, "input")
 	cols, params, err := s.inputColumns(t, inputType, vals)
 	if err != nil {
 		return dml{}, err
@@ -616,7 +655,7 @@ func (s *stmt) upsertCTE(t *introspect.Table, meta *schema.FieldMeta, f *ast.Fie
 	for i, kc := range meta.KeyColumns {
 		p, ok := provided[kc]
 		if !ok {
-			return dml{}, fmt.Errorf("compile: %s: input must set conflict column %q", f.Name, kc)
+			return dml{}, fmt.Errorf("compile: %s: %s must set conflict column %q", f.Name, meta.Values, kc)
 		}
 		keyConds[i] = fmt.Sprintf("%s.%s %s %s", tableRef(t), quoteIdent(kc), s.contrib(t.Column(kc)).Operator("="), p)
 	}
@@ -652,27 +691,15 @@ func (s *stmt) upsertCTE(t *introspect.Table, meta *schema.FieldMeta, f *ast.Fie
 }
 
 func (s *stmt) updateCTE(t *introspect.Table, meta *schema.FieldMeta, f *ast.Field) (dml, error) {
-	patchVal, ok := s.argValue(f, "patch")
-	if !ok {
-		return dml{}, errUser("%s: missing patch", f.Name)
-	}
-	patch, ok := patchVal.(map[string]any)
-	if !ok || len(patch) == 0 {
-		return dml{}, errUser("%s: patch must set at least one column", f.Name)
-	}
-	patchType := argTypeName(f, "patch")
-	cols, params, err := s.inputColumns(t, patchType, patch)
+	cols, params, err := s.patchColumns(t, meta, f)
 	if err != nil {
 		return dml{}, err
-	}
-	if len(cols) == 0 {
-		return dml{}, errUser("%s: patch must set at least one column", f.Name)
 	}
 	sets := make([]string, len(cols))
 	for i, c := range cols {
 		sets[i] = quoteIdent(c) + " = " + params[i]
 	}
-	conds, err := s.keyConds(t, meta.KeyColumns, f, tableRef(t))
+	conds, err := s.inputKeyConds(t, meta, f, tableRef(t))
 	if err != nil {
 		return dml{}, err
 	}
@@ -683,8 +710,26 @@ func (s *stmt) updateCTE(t *introspect.Table, meta *schema.FieldMeta, f *ast.Fie
 	}, nil
 }
 
+// patchColumns maps the patch of update mutation field f to (columns,
+// placeholders); a patch setting no column is an error.
+func (s *stmt) patchColumns(t *introspect.Table, meta *schema.FieldMeta, f *ast.Field) ([]string, []string, error) {
+	v, patchType, _, err := s.mutationValues(meta, f)
+	if err != nil {
+		return nil, nil, err
+	}
+	patch, _ := v.(map[string]any)
+	cols, params, err := s.inputColumns(t, patchType, patch)
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(cols) == 0 {
+		return nil, nil, errUser("%s: %s must set at least one column", f.Name, meta.Values)
+	}
+	return cols, params, nil
+}
+
 func (s *stmt) deleteCTE(t *introspect.Table, meta *schema.FieldMeta, f *ast.Field) (dml, error) {
-	conds, err := s.keyConds(t, meta.KeyColumns, f, tableRef(t))
+	conds, err := s.inputKeyConds(t, meta, f, tableRef(t))
 	if err != nil {
 		return dml{}, err
 	}

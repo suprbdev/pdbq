@@ -20,8 +20,8 @@ import (
 )
 
 const (
-	csrfMutation  = `mutation { createUser(input: {email: "x@example.com"}) { clientMutationId } }`
-	mixedDocument = `query q { __typename } mutation m { createUser(input: {email: "x@example.com"}) { clientMutationId } }`
+	csrfMutation  = `mutation { createUser(input: {user: {email: "x@example.com"}}) { clientMutationId } }`
+	mixedDocument = `query q { __typename } mutation m { createUser(input: {user: {email: "x@example.com"}}) { clientMutationId } }`
 )
 
 // csrfServer builds a server whose executor is in read-only mode, so a

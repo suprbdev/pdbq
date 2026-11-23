@@ -111,7 +111,7 @@ func TestTemporalSchema(t *testing.T) {
 			t.Errorf("SDL has %q", unwanted)
 		}
 	}
-	in := sdlBlock(sdl, "input BookingNoteCreateInput {")
+	in := sdlBlock(sdl, "input BookingNoteInput {")
 	if !strings.Contains(in, "roomId: Int\n") || !strings.Contains(in, "validAt: DateRangeInput!\n") {
 		t.Errorf("nested PERIOD FK: room id should be optional, the period required:\n%s", in)
 	}

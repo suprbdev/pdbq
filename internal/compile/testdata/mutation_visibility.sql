@@ -196,7 +196,7 @@ LEFT JOIN LATERAL (
 ) AS __l_7 ON true
 -- args: [1]
 
--- field: createPosts
+-- field: createManyPosts
 WITH __mut AS (
   INSERT INTO "public"."posts" ("author_id", "title")
   VALUES ($1, $2),
@@ -231,7 +231,7 @@ SELECT json_build_object('posts', (SELECT coalesce(json_agg(__s_8.data), '[]'::j
 ) AS __s_8)) AS data
 -- args: [1,"A",1,"B"]
 
--- field: updatePosts
+-- field: updateManyPosts
 WITH __mut AS (
   UPDATE "public"."posts"
   SET "published" = $1
@@ -266,7 +266,7 @@ SELECT json_build_object('posts', (SELECT coalesce(json_agg(__s_8.data), '[]'::j
 ) AS __s_8)) AS data
 -- args: [true,1,"P%","P%"]
 
--- field: deletePosts
+-- field: deleteManyPosts
 WITH __mut AS (
   DELETE FROM "public"."posts"
   WHERE "public"."posts"."title" LIKE $1

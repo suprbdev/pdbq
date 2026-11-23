@@ -113,21 +113,25 @@ privileges), upsert by unique key, `clientMutationId`, the payload fields
 with PostGraphile's payload naming; stable and immutable functions are queries
 and computed columns.
 
-Differences, on `main` today:
+The table mutations take v4's shapes: one `input` argument with
+`clientMutationId`, the key fields and the row values.
 
 | Area | PostGraphile v4 | pdbq |
 |---|---|---|
-| create | `createUser(input: {user: {...}})` | `createUser(input: {...})` with a flat `UserCreateInput` |
-| update | `updateUserById(input: {id, userPatch})` | `updateUserById(id:, patch: UserUpdateInput!)` |
-| delete | `deleteUserById(input: {id})` | `deleteUserById(id:)` |
-| bulk | not generated | `createUsers`, `updateUsers(filter:, patch:)`, `deleteUsers(filter:)` |
+| create | `createUser(input: {clientMutationId, user: UserInput!})` | the same |
+| update | `updateUserById(input: {clientMutationId, id, userPatch: UserPatch!})` | the same; `updateUserByEmail(input: {email, userPatch})` per unique key |
+| delete | `deleteUserById(input: {clientMutationId, id})` | the same |
+| upsert | `postgraphile-upsert-plugin` | `upsertUserByEmail(input: {clientMutationId, user: UserInput!})` per settable key |
+| `nodeId`-keyed | `updateUser(input: {nodeId, userPatch})`, `deleteUser(input: {nodeId})` | not generated; with `simple_names`, `updateUser` / `deleteUser` are the by-primary-key mutations |
+| bulk | not generated | `createManyUsers(input: {users})`, `updateManyUsers(input: {filter, userPatch})`, `deleteManyUsers(input: {filter})` |
 | nested | `postgraphile-plugin-nested-mutations` | the `nested_mutations` plugin, similar shapes, **experimental** ([compatibility.md](compatibility.md#experimental-features)) |
 
 - Payload relations have the row type's relation names (`userByAuthorId`).
 - Every mutation runs inside a transaction; there is no `transactions.mutations`
   switch.
-- `@arg0variant` is not supported: pdbq has one row input type, with every
-  readable column (see [mutations.md](mutations.md#function-arguments)).
+- `@arg0variant` is not supported: a function's row argument takes
+  `UserRowInput`, with every readable column, where v4 takes `UserInput`
+  (see [mutations.md](mutations.md#function-arguments)).
 
 ## Smart comments
 
@@ -251,8 +255,9 @@ closest key.
 2. Set `auth`, `roles` and `claims` to match your tokens, and check one policy
    per role end to end ([quickstart](quickstart.md#secure-setup)).
 3. Decide on naming: keep v4's names (the default), or enable
-   `simple_names` if your clients used pg-simplify-inflector. Then adapt
-   the mutation call sites (flat inputs, `id`/`patch` arguments).
+   `simple_names` if your clients used pg-simplify-inflector. Mutation
+   call sites keep v4's shapes; only `nodeId`-keyed mutations and
+   function row arguments (`UserRowInput`) need changes.
 4. Tighten: restore `filters.indexed_only: true` and add the indexes your
    clients' filters need, or opt columns in with `@filterable`.
 5. Set page sizes (`limits.max_page_size`), cost and depth limits, and

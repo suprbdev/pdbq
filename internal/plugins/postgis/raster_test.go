@@ -86,8 +86,8 @@ func TestRasterFields(t *testing.T) {
 			t.Errorf("RasterSummaryStats.%s: %+v", f.Name, sf)
 		}
 	}
-	if got := fieldType(b, "TileCreateInput", "rast"); got != "String" {
-		t.Errorf("TileCreateInput.rast = %q, want String (hex WKB input)", got)
+	if got := fieldType(b, "TileInput", "rast"); got != "String" {
+		t.Errorf("TileInput.rast = %q, want String (hex WKB input)", got)
 	}
 }
 

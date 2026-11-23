@@ -19,7 +19,7 @@ SELECT json_build_object('embedding', json_build_object('embedding', (__t_1."emb
 FROM __mut AS __t_1
 -- args: ["[0,0,1]",null,1]
 
--- field: createEmbeddings
+-- field: createManyEmbeddings
 WITH __mut AS (
   INSERT INTO "public"."embeddings" ("embedding", "half")
   VALUES ($1::"ext".vector, DEFAULT),

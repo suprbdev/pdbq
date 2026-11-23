@@ -188,7 +188,7 @@ func TestVector(t *testing.T) {
 
 	t.Run("create and read back", func(t *testing.T) {
 		res := post(t, url, `mutation {
-			createItem(input: {embedding: [1, 2.5, -3], half: [0.5, 1, 2], sparse: "{1:1.5,3:2}/3"}) {
+			createItem(input: {item: {embedding: [1, 2.5, -3], half: [0.5, 1, 2], sparse: "{1:1.5,3:2}/3"}}) {
 				item { id embedding half sparse }
 			}
 		}`, nil)
@@ -206,15 +206,15 @@ func TestVector(t *testing.T) {
 			t.Errorf("created item: %+v", payload.Item)
 		}
 		res = post(t, url, `mutation ($id: Int!) {
-			updateItemById(id: $id, patch: {embedding: [0, 0, 1]}) { item { embedding } }
-			deleteItemById(id: $id) { item { id } }
+			updateItemById(input: {id: $id, itemPatch: {embedding: [0, 0, 1]}}) { item { embedding } }
+			deleteItemById(input: {id: $id}) { item { id } }
 		}`, map[string]any{"id": payload.Item.ID})
 		requireNoErrors(t, res)
 		if got := normalize(t, res.Data["updateItemById"]); got != `{"item":{"embedding":[0,0,1]}}` {
 			t.Errorf("update: %s", got)
 		}
 
-		res = post(t, url, `mutation { createItem(input: {embedding: [1, 2]}) { item { id } } }`, nil)
+		res = post(t, url, `mutation { createItem(input: {item: {embedding: [1, 2]}}) { item { id } } }`, nil)
 		if len(res.Errors) == 0 {
 			t.Error("a vector of the wrong dimension was accepted")
 		}

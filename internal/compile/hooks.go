@@ -213,3 +213,53 @@ func QuoteIdent(s string) string { return quoteIdent(s) }
 func TableRefSQL(schemaName, table string) string {
 	return quoteIdent(schemaName) + "." + quoteIdent(table)
 }
+
+// MutationInput returns the input argument of table mutation field f (the
+// object every table mutation takes, holding clientMutationId, its key or
+// filter and its row values) and the name of its input type. A missing
+// input is a UserError.
+func MutationInput(f *ast.Field, vars map[string]any) (map[string]any, string, error) {
+	var v any
+	if arg := f.Arguments.ForName("input"); arg != nil {
+		var err error
+		if v, err = arg.Value.Value(vars); err != nil {
+			return nil, "", err
+		}
+	}
+	obj, ok := v.(map[string]any)
+	if !ok {
+		return nil, "", errUser("%s: missing input", f.Name)
+	}
+	return obj, argTypeName(f, "input"), nil
+}
+
+// InputFieldType returns the named type of field of input type inputType,
+// or "": the row values type (<Type>Input, <Type>Patch) of a table mutation
+// input's [schema.FieldMeta.Values] field.
+func InputFieldType(built *schema.Built, inputType, field string) string {
+	return inputFieldType(built, inputType, field)
+}
+
+// InputKey reads the key of a keyed table mutation from its input value of
+// input type inputType: the value of the field bound to each of keyCols
+// ([schema.Built.InputColumns]), in keyCols order. A missing key field is a
+// UserError.
+func InputKey(built *schema.Built, inputType string, input map[string]any, keyCols []string) ([]any, error) {
+	fields := map[string]string{}
+	for field, col := range built.InputColumns[inputType] {
+		fields[col] = field
+	}
+	vals := make([]any, len(keyCols))
+	for i, col := range keyCols {
+		field, ok := fields[col]
+		if !ok {
+			return nil, fmt.Errorf("compile: input type %s: no field for key column %q", inputType, col)
+		}
+		v, ok := input[field]
+		if !ok || v == nil {
+			return nil, errUser("missing key field %s", field)
+		}
+		vals[i] = v
+	}
+	return vals, nil
+}

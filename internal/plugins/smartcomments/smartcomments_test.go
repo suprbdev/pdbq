@@ -117,13 +117,13 @@ func TestOmitColumn(t *testing.T) {
 	rejectSDL(t, sdl, "settings: JSON")
 	// email still readable/creatable/filterable, not updatable.
 	wantSDL(t, sdl, "email: String!", "email: StringFilterOps", "EMAIL_ASC")
-	typ := sdlBlock(t, sdl, "input UserUpdateInput {")
+	typ := sdlBlock(t, sdl, "input UserPatch {")
 	if strings.Contains(typ, "email") {
-		t.Errorf("UserUpdateInput must not contain email:\n%s", typ)
+		t.Errorf("UserPatch must not contain email:\n%s", typ)
 	}
-	create := sdlBlock(t, sdl, "input UserCreateInput {")
+	create := sdlBlock(t, sdl, "input UserInput {")
 	if strings.Contains(create, "balance") {
-		t.Errorf("UserCreateInput must not contain balance:\n%s", create)
+		t.Errorf("UserInput must not contain balance:\n%s", create)
 	}
 	user := sdlBlock(t, sdl, "type User implements Node {")
 	if strings.Contains(user, "balance") {
@@ -138,7 +138,7 @@ func TestNameTable(t *testing.T) {
 	sdl := built.SDL
 	wantSDL(t, sdl,
 		"type Customer implements Node", "allCustomers(", "customerById(", "customerByEmail(",
-		"CustomerFilter", "CustomersOrderBy", "createCustomer(", "CustomerCreateInput",
+		"CustomerFilter", "CustomersOrderBy", "createCustomer(", "CustomerInput",
 		"customerByAuthorId: Customer", // forward relation retargets the renamed type
 		`"""A customer."""`,            // tag line stripped from the description
 	)
@@ -311,7 +311,7 @@ func TestComposesWithOtherBuiltins(t *testing.T) {
 	rejectSDL(t, sdl, "allCustomers(", "users(")
 	// @fieldName flows through the shared inflection, so the nested_mutations
 	// input field aligns with the renamed selection field.
-	if !strings.Contains(sdlBlock(t, sdl, "input PostCreateInput {"), "writer:") {
+	if !strings.Contains(sdlBlock(t, sdl, "input PostInput {"), "writer:") {
 		t.Error("nested_mutations input must use the @fieldName name")
 	}
 	wantSDL(t, sdl, "authored(")
@@ -365,8 +365,8 @@ func TestNestedMutationsHonorOmittedForeignKeyColumns(t *testing.T) {
 		}, nestedmutations.New(nestedmutations.DefaultSettings()))
 	}
 	sdl := omit("create").SDL
-	if strings.Contains(sdlBlock(t, sdl, "input PostCreateInput {"), "userByAuthorId:") {
-		t.Error("PostCreateInput must not set an omitted FK column through userByAuthorId")
+	if strings.Contains(sdlBlock(t, sdl, "input PostInput {"), "userByAuthorId:") {
+		t.Error("PostInput must not set an omitted FK column through userByAuthorId")
 	}
 	if strings.Contains(sdlBlock(t, sdl, "input UserPostsByAuthorIdNestedInput {"), "create:") {
 		t.Error("backward create must not fill an FK column omitted from the child create input")
@@ -381,7 +381,7 @@ func TestNestedMutationsHonorOmittedForeignKeyColumns(t *testing.T) {
 	bwd := sdlBlock(t, sdl, "input UserPostsByAuthorIdNestedPatchInput {")
 	rejectSDL(t, bwd, "connectById:")
 	wantSDL(t, bwd, "create:", "updateById:")
-	wantSDL(t, sdlBlock(t, sdl, "input PostCreateInput {"), "userByAuthorId: PostUserByAuthorIdNestedInput")
+	wantSDL(t, sdlBlock(t, sdl, "input PostInput {"), "userByAuthorId: PostUserByAuthorIdNestedInput")
 }
 
 func TestOmitReadColumnLeavesRowInput(t *testing.T) {
@@ -390,19 +390,19 @@ func TestOmitReadColumnLeavesRowInput(t *testing.T) {
 		u.Column("settings").Comment = "@omit read"
 		u.Column("email").Comment = "@omit create,update"
 	})
-	in := sdlBlock(t, built.SDL, "input UserInput {")
+	in := sdlBlock(t, built.SDL, "input UserRowInput {")
 	if strings.Contains(in, "settings") || !strings.Contains(in, "email: String") || !strings.Contains(in, "id: Int") {
-		t.Errorf("UserInput:\n%s", in)
+		t.Errorf("UserRowInput:\n%s", in)
 	}
-	wantSDL(t, built.SDL, "pickFirst(a: String, b: String): String", "userGreeting(greeting: String, u: UserInput): String")
+	wantSDL(t, built.SDL, "pickFirst(a: String, b: String): String", "userGreeting(greeting: String, u: UserRowInput): String")
 
 	built = build(t, func(c *introspect.Catalog) {
 		for _, col := range c.Table("public", "users").Columns {
 			col.Comment = "@omit read"
 		}
 	})
-	if strings.Contains(built.SDL, "input UserInput") {
-		t.Error("UserInput without fields must be removed")
+	if strings.Contains(built.SDL, "input UserRowInput") {
+		t.Error("UserRowInput without fields must be removed")
 	}
 	wantSDL(t, built.SDL, "userGreeting(greeting: String): String")
 }

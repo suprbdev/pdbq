@@ -1,4 +1,4 @@
--- field: createUsers
+-- field: createManyUsers
 WITH __mut AS (
   INSERT INTO "public"."users" ("email", "full_name", "mood")
   VALUES ($1, $2, $3),
@@ -11,7 +11,7 @@ SELECT json_build_object('users', (SELECT coalesce(json_agg(__s_2.data), '[]'::j
 ) AS __s_2), 'affectedCount', (SELECT count(*) FROM __mut), 'clientMutationId', $5::text) AS data
 -- args: ["a@b.c","Ada","happy","b@c.d","cm-many"]
 
--- field: updateUsers
+-- field: updateManyUsers
 WITH __mut AS (
   UPDATE "public"."users"
   SET "mood" = $1
@@ -21,15 +21,15 @@ WITH __mut AS (
 SELECT json_build_object('users', (SELECT coalesce(json_agg(__s_2.data), '[]'::json) FROM (
   SELECT json_build_object('id', __t_1."id", 'mood', CASE __t_1."mood" WHEN 'happy' THEN 'HAPPY' WHEN 'ok' THEN 'OK' WHEN 'sad' THEN 'SAD' END) AS data
   FROM __mut AS __t_1
-) AS __s_2), 'affectedCount', (SELECT count(*) FROM __mut)) AS data
--- args: ["ok","sad"]
+) AS __s_2), 'affectedCount', (SELECT count(*) FROM __mut), 'clientMutationId', $3::text) AS data
+-- args: ["ok","sad","cm-upd"]
 
--- field: deleteUsers
+-- field: deleteManyUsers
 WITH __mut AS (
   DELETE FROM "public"."users"
   WHERE "public"."users"."email" LIKE $1
   RETURNING 1
 )
-SELECT json_build_object('affectedCount', (SELECT count(*) FROM __mut)) AS data
--- args: ["%@spam.example"]
+SELECT json_build_object('affectedCount', (SELECT count(*) FROM __mut), 'clientMutationId', $2::text) AS data
+-- args: ["%@spam.example","cm-del"]
 

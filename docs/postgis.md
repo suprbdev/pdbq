@@ -37,14 +37,14 @@ Both input forms are accepted anywhere a spatial value is taken (filters,
 
 ```graphql
 mutation {
-  createPlace(input: {
+  createPlace(input: {place: {
     name: "Trafalgar Square"
     location: {type: "Point", coordinates: [-0.1281, 51.508]}
-  }) { place { id } }
+  }}) { place { id } }
 }
 
 mutation {
-  createPlace(input: {name: "Elsewhere", location: "SRID=4326;POINT(1 2)"}) {
+  createPlace(input: {place: {name: "Elsewhere", location: "SRID=4326;POINT(1 2)"}}) {
     place { id }
   }
 }
@@ -489,7 +489,7 @@ column, for example
 `CREATE FUNCTION tiles_png(t tiles) RETURNS text STABLE LANGUAGE sql AS
 $$ SELECT encode(ST_AsPNG(t.rast), 'base64') $$` (or `ST_AsGDALRaster`,
 `ST_AsHexWKB`). Writes keep the raster's text form: `createTile(input:
-{rast: "0100..."})` takes hex WKB as a `String`. Raster columns get no
+{tile: {rast: "0100..."}})` takes hex WKB as a `String`. Raster columns get no
 generic comparison filter, `condition:` field, orderBy or `distinctOn:` value
 and no aggregates (raster has no btree operator class).
 

@@ -124,12 +124,12 @@ INSERT INTO `+customRangeSchema+`.readings (temp, temps, slot, moods) VALUES
 	})
 
 	t.Run("create", func(t *testing.T) {
-		res := post(t, hs.URL, `mutation { createReading(input: {
+		res := post(t, hs.URL, `mutation { createReading(input: {reading: {
 			temp: {start: {value: 0.25, inclusive: false}, end: {value: 0.75, inclusive: true}}
 			temps: [{start: {value: 5, inclusive: true}, end: {value: 6, inclusive: false}}]
 			slot: {start: {value: 2, inclusive: true}, end: {value: 3, inclusive: true}}
 			moods: "[low,high]"
-		}) { reading { temp { start { value inclusive } } slot { start { value } end { value inclusive } } moods } } }`, nil)
+		}}) { reading { temp { start { value inclusive } } slot { start { value } end { value inclusive } } moods } } }`, nil)
 		requireNoErrors(t, res)
 		var out struct {
 			Reading struct {

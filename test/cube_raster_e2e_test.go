@@ -135,7 +135,7 @@ func TestCubeEarthdistance(t *testing.T) {
 
 	t.Run("write", func(t *testing.T) {
 		res := post(t, url, `mutation {
-			createSite(input: {id: 7, name: "Box", pos: [[0, 0], [2, 3]], spot: {lat: -33.8688, lon: 151.2093}, pt: "(151.2093,-33.8688)"}) {
+			createSite(input: {site: {id: 7, name: "Box", pos: [[0, 0], [2, 3]], spot: {lat: -33.8688, lon: 151.2093}, pt: "(151.2093,-33.8688)"}}) {
 				site { id pos spot { lat lon } }
 			}
 		}`, nil)
@@ -143,20 +143,20 @@ func TestCubeEarthdistance(t *testing.T) {
 		if got := normalize(t, res.Data["createSite"]); !strings.Contains(got, `"pos":[[0,0],[2,3]]`) || !strings.Contains(got, `"lat":-33.868`) {
 			t.Errorf("created = %s", got)
 		}
-		res = post(t, url, `mutation { updateSiteById(id: 7, patch: {pos: "(4, 5)", spot: null}) { site { pos spot { lat } } } }`, nil)
+		res = post(t, url, `mutation { updateSiteById(input: {id: 7, sitePatch: {pos: "(4, 5)", spot: null}}) { site { pos spot { lat } } } }`, nil)
 		requireNoErrors(t, res)
 		if got := normalize(t, res.Data["updateSiteById"]); got != `{"site":{"pos":[4,5],"spot":null}}` {
 			t.Errorf("updated = %s", got)
 		}
-		res = post(t, url, `mutation { createSite(input: {id: 8, name: "x", spot: {lat: 91, lon: 0}}) { site { id } } }`, nil)
+		res = post(t, url, `mutation { createSite(input: {site: {id: 8, name: "x", spot: {lat: 91, lon: 0}}}) { site { id } } }`, nil)
 		if len(res.Errors) == 0 || !strings.Contains(res.Errors[0].Message, "lat must be between") {
 			t.Errorf("out-of-range latitude: %+v", res.Errors)
 		}
-		res = post(t, url, `mutation { createSite(input: {id: 8, name: "x", pos: "(1, x)"}) { site { id } } }`, nil)
+		res = post(t, url, `mutation { createSite(input: {site: {id: 8, name: "x", pos: "(1, x)"}}) { site { id } } }`, nil)
 		if len(res.Errors) == 0 {
 			t.Error("malformed cube text accepted")
 		}
-		post(t, url, `mutation { deleteSiteById(id: 7) { deletedSiteNodeId } }`, nil)
+		post(t, url, `mutation { deleteSiteById(input: {id: 7}) { deletedSiteNodeId } }`, nil)
 	})
 
 	t.Run("filters", func(t *testing.T) {
@@ -446,7 +446,7 @@ func TestRaster(t *testing.T) {
 		if err := testConn(t).QueryRow(context.Background(), `SELECT rast::text FROM `+rasterSchema+`.tiles WHERE id = 2`).Scan(&hex); err != nil {
 			t.Fatal(err)
 		}
-		res := post(t, url, `mutation ($r: String) { createTile(input: {id: 4, rast: $r}) { tile { id rastSrid rastWidth } } }`, map[string]any{"r": hex})
+		res := post(t, url, `mutation ($r: String) { createTile(input: {tile: {id: 4, rast: $r}}) { tile { id rastSrid rastWidth } } }`, map[string]any{"r": hex})
 		requireNoErrors(t, res)
 		if got := normalize(t, res.Data["createTile"]); got != `{"tile":{"id":4,"rastSrid":3857,"rastWidth":2}}` {
 			t.Errorf("created = %s", got)

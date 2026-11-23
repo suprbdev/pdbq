@@ -146,7 +146,7 @@ The SQL is identical for pdbr.
    ```console
    $ curl -s localhost:8080/graphql -H "Authorization: Bearer $TOKEN" \
        -H 'Content-Type: application/json' \
-       -d '{"query":"mutation { createTodo(input: {title: \"buy milk\"}) { todo { id owner title } } }"}'
+       -d '{"query":"mutation { createTodo(input: {todo: {title: \"buy milk\"}}) { todo { id owner title } } }"}'
    {"data":{"createTodo":{"todo":{"id":1,"owner":"alice","title":"buy milk"}}}}
    $ curl -s localhost:8080/graphql -H "Authorization: Bearer $TOKEN" \
        -H 'Content-Type: application/json' \
@@ -171,7 +171,7 @@ For each table/view the connection role can `SELECT`:
 | primary key | `userById(id)`, `node(nodeId)` |
 | unique constraints | `userByEmail(email)` |
 | foreign keys | `post.userByAuthorId`, `user.postsByAuthorId` (child connection) |
-| `INSERT`/`UPDATE`/`DELETE` privileges | `createUser`, `updateUserById`, `deleteUserById` |
+| `INSERT`/`UPDATE`/`DELETE` privileges | `createUser(input: {user})`, `updateUserById(input: {id, userPatch})`, `deleteUserById(input: {id})`, the bulk `createManyUsers` / `updateManyUsers` / `deleteManyUsers` |
 | enums | GraphQL enums (`HAPPY`, `SAD`, ...) |
 | composite types | object types with per-field selection (`address { street city }`), plus `AddressInput` on mutations; arrays too |
 | rows inside other values (`posts[]`, composite attributes, `RETURNS TABLE` columns) | `PostRow` object types holding the columns `Post` exposes |

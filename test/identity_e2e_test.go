@@ -20,25 +20,25 @@ func TestIdentityKinds(t *testing.T) {
 	})
 	hs := testServer(t, nil)
 
-	res := post(t, hs.URL, `mutation { createIdkSoft(input: {name: "auto"}) { idkSoft { id name } } }`, nil)
+	res := post(t, hs.URL, `mutation { createIdkSoft(input: {idkSoft: {name: "auto"}}) { idkSoft { id name } } }`, nil)
 	expectField(t, res, "createIdkSoft", `{"idkSoft": {"id": 1, "name": "auto"}}`)
 
-	res = post(t, hs.URL, `mutation { createIdkSoft(input: {id: 100, name: "explicit"}) { idkSoft { id name } } }`, nil)
+	res = post(t, hs.URL, `mutation { createIdkSoft(input: {idkSoft: {id: 100, name: "explicit"}}) { idkSoft { id name } } }`, nil)
 	expectField(t, res, "createIdkSoft", `{"idkSoft": {"id": 100, "name": "explicit"}}`)
 
-	res = post(t, hs.URL, `mutation { upsertIdkSoftById(input: {id: 100, name: "upserted"}) { idkSoft { id name } } }`, nil)
+	res = post(t, hs.URL, `mutation { upsertIdkSoftById(input: {idkSoft: {id: 100, name: "upserted"}}) { idkSoft { id name } } }`, nil)
 	expectField(t, res, "upsertIdkSoftById", `{"idkSoft": {"id": 100, "name": "upserted"}}`)
 
-	res = post(t, hs.URL, `mutation { updateIdkSoftById(id: 100, patch: {id: 200}) { idkSoft { id name } } }`, nil)
+	res = post(t, hs.URL, `mutation { updateIdkSoftById(input: {id: 100, idkSoftPatch: {id: 200}}) { idkSoft { id name } } }`, nil)
 	expectField(t, res, "updateIdkSoftById", `{"idkSoft": {"id": 200, "name": "upserted"}}`)
 
-	res = post(t, hs.URL, `mutation { createIdkHard(input: {name: "auto"}) { idkHard { id name } } }`, nil)
+	res = post(t, hs.URL, `mutation { createIdkHard(input: {idkHard: {name: "auto"}}) { idkHard { id name } } }`, nil)
 	expectField(t, res, "createIdkHard", `{"idkHard": {"id": 1, "name": "auto"}}`)
 
 	for q, want := range map[string]string{
-		`mutation { createIdkHard(input: {id: 5, name: "x"}) { idkHard { id } } }`: `Field "id" is not defined by type "IdkHardCreateInput"`,
-		`mutation { updateIdkHardById(id: 1, patch: {id: 5}) { idkHard { id } } }`: `Field "id" is not defined by type "IdkHardUpdateInput"`,
-		`mutation { upsertIdkHardById(input: {name: "x"}) { idkHard { id } } }`:    `Cannot query field "upsertIdkHardById"`,
+		`mutation { createIdkHard(input: {idkHard: {id: 5, name: "x"}}) { idkHard { id } } }`:      `Field "id" is not defined by type "IdkHardInput"`,
+		`mutation { updateIdkHardById(input: {id: 1, idkHardPatch: {id: 5}}) { idkHard { id } } }`: `Field "id" is not defined by type "IdkHardPatch"`,
+		`mutation { upsertIdkHardById(input: {idkHard: {name: "x"}}) { idkHard { id } } }`:         `Cannot query field "upsertIdkHardById"`,
 	} {
 		res := post(t, hs.URL, q, nil)
 		if len(res.Errors) == 0 || !strings.Contains(res.Errors[0].Message, want) {

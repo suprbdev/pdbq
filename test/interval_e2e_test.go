@@ -100,7 +100,7 @@ func TestInterval(t *testing.T) {
 
 	t.Run("round trip", func(t *testing.T) {
 		res := post(t, url, `mutation($t: TimingInput) {
-			createDuration(input: {id: 10, span: {hours: 1, minutes: 90, seconds: 0.25}, spans: [{days: 2}, {months: 14}], timing: $t}) {
+			createDuration(input: {duration: {id: 10, span: {hours: 1, minutes: 90, seconds: 0.25}, spans: [{days: 2}, {months: 14}], timing: $t}}) {
 				duration { span { hours minutes seconds } spans { days months years } timing { label span { days } spans { hours } } }
 			}
 		}`, map[string]any{"t": map[string]any{"label": "t", "span": map[string]any{"days": 3}, "spans": []any{map[string]any{"hours": 4}}}})
@@ -109,12 +109,12 @@ func TestInterval(t *testing.T) {
 		if got := normalize(t, res.Data["createDuration"]); got != want {
 			t.Errorf("createDuration = %s\nwant %s", got, want)
 		}
-		res = post(t, url, `mutation { updateDurationById(id: 10, patch: {span: {years: -1, seconds: -1.5}}) { duration { span { years seconds } } } }`, nil)
+		res = post(t, url, `mutation { updateDurationById(input: {id: 10, durationPatch: {span: {years: -1, seconds: -1.5}}}) { duration { span { years seconds } } } }`, nil)
 		requireNoErrors(t, res)
 		if got := normalize(t, res.Data["updateDurationById"]); got != `{"duration":{"span":{"seconds":-1.5,"years":-1}}}` {
 			t.Errorf("updateDurationById = %s", got)
 		}
-		res = post(t, url, `mutation { deleteDurationById(id: 10) { duration { id } } }`, nil)
+		res = post(t, url, `mutation { deleteDurationById(input: {id: 10}) { duration { id } } }`, nil)
 		requireNoErrors(t, res)
 	})
 

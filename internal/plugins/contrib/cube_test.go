@@ -23,8 +23,8 @@ func TestCubeEarthTypeMapping(t *testing.T) {
 		}
 	}
 	for field, want := range map[string]string{"pos": "Cube", "spot": "LatLonInput", "here": "String"} {
-		if got := fieldType(t, b, "LocationCreateInput", field); got != want {
-			t.Errorf("LocationCreateInput.%s = %s, want %s", field, got, want)
+		if got := fieldType(t, b, "LocationInput", field); got != want {
+			t.Errorf("LocationInput.%s = %s, want %s", field, got, want)
 		}
 	}
 	sdl := b.SDL()

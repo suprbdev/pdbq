@@ -3,7 +3,7 @@
 # unbounded), multiranges from lists of them, and schema-qualified casts for
 # citext and ltree.
 mutation {
-  createDocument(input: {
+  createDocument(input: {document: {
     title: "t"
     slug: "Hello"
     search: "'cat':1 'dog':2"
@@ -16,16 +16,16 @@ mutation {
     price: {start: {value: "9.99", inclusive: true}, end: {value: "19.99", inclusive: true}}
     ip: "192.168.0.1"
     net: "10.0.0.0/8"
-  }) {
+  }}) {
     document { id attrs span { start { value inclusive } end { value inclusive } } }
   }
-  updateDocumentBySlug(slug: "Hello", patch: {attrs: {}, avail: [], span: {}}) {
+  updateDocumentBySlug(input: {slug: "Hello", documentPatch: {attrs: {}, avail: [], span: {}}}) {
     document { id }
   }
-  updateDocuments(filter: {attrs: {containsKey: "stale"}}, patch: {path: "archive"}) {
+  updateManyDocuments(input: {filter: {attrs: {containsKey: "stale"}}, documentPatch: {path: "archive"}}) {
     affectedCount
   }
-  emptyRange: createDocument(input: {title: "e", span: {isEmpty: true}, stay: {nights: {start: {value: 1, inclusive: true}, end: {value: 3, inclusive: false}}, extras: {a: "x \"y\"", b: null}}}) {
+  emptyRange: createDocument(input: {document: {title: "e", span: {isEmpty: true}, stay: {nights: {start: {value: 1, inclusive: true}, end: {value: 3, inclusive: false}}, extras: {a: "x \"y\"", b: null}}}}) {
     document { span { isEmpty } stay { nights { start { value } } extras } }
   }
 }

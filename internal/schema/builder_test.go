@@ -107,7 +107,7 @@ func TestComputedColumns(t *testing.T) {
 			ReturnType: "text", ReturnTypeSchema: "pg_catalog",
 			Volatility: introspect.VolatilityVolatile,
 		},
-		// Row-type arg in non-first position: a root query taking UserInput.
+		// Row-type arg in non-first position: a root query taking UserRowInput.
 		&introspect.Function{
 			Schema: "public", Name: "tag_user",
 			Args: []introspect.FuncArg{
@@ -149,16 +149,16 @@ func TestComputedColumns(t *testing.T) {
 			t.Errorf("SDL should not contain %q", reject)
 		}
 	}
-	if q := sdlType(built.SDL, "type Query"); !strings.Contains(q, "tagUser(tag: String, u: UserInput): String") {
-		t.Errorf("Query missing tagUser(tag:, u: UserInput):\n%s", q)
+	if q := sdlType(built.SDL, "type Query"); !strings.Contains(q, "tagUser(tag: String, u: UserRowInput): String") {
+		t.Errorf("Query missing tagUser(tag:, u: UserRowInput):\n%s", q)
 	}
 	if m := sdlType(built.SDL, "type Mutation"); !strings.Contains(m, "usersTouch(input: UsersTouchInput!): UsersTouchPayload!") {
 		t.Errorf("Mutation missing usersTouch:\n%s", m)
 	}
-	if in := sdlType(built.SDL, "input UserInput"); !strings.Contains(in, "  id: Int\n") || !strings.Contains(in, "  prevAddresses: [AddressInput!]\n") || strings.Contains(in, "!\n  email") || strings.Contains(in, "clientMutationId") {
-		t.Errorf("UserInput must hold every column, all nullable:\n%s", in)
+	if in := sdlType(built.SDL, "input UserRowInput"); !strings.Contains(in, "  id: Int\n") || !strings.Contains(in, "  prevAddresses: [AddressInput!]\n") || strings.Contains(in, "!\n  email") || strings.Contains(in, "clientMutationId") {
+		t.Errorf("UserRowInput must hold every column, all nullable:\n%s", in)
 	}
-	if built.RowInputForPG["public.users"] != "UserInput" {
+	if built.RowInputForPG["public.users"] != "UserRowInput" {
 		t.Errorf("RowInputForPG = %v", built.RowInputForPG)
 	}
 }
@@ -258,9 +258,9 @@ func TestFunctionMutationShape(t *testing.T) {
 			t.Errorf("CreatePostPayload missing %q:\n%s", want, pay)
 		}
 	}
-	pay = sdlType(built.SDL, "type CreateManyPostPayload")
+	pay = sdlType(built.SDL, "type CreateManyPostsPayload")
 	if !strings.Contains(pay, "query: Query") || strings.Contains(pay, "postEdge") || strings.Contains(pay, "userByAuthorId") {
-		t.Errorf("CreateManyPostPayload should carry query only:\n%s", pay)
+		t.Errorf("CreateManyPostsPayload should carry query only:\n%s", pay)
 	}
 	// Stable functions keep flat args on Query.
 	if !strings.Contains(built.SDL, "searchPosts(term: String): [Post!]!") {
@@ -313,17 +313,17 @@ func TestNestedMutationsSchema(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	postCreate := sdlType(built.SDL, "input PostCreateInput")
+	postCreate := sdlType(built.SDL, "input PostInput")
 	if !strings.Contains(postCreate, "userByAuthorId: PostUserByAuthorIdNestedInput") {
-		t.Errorf("PostCreateInput missing nested userByAuthorId field:\n%s", postCreate)
+		t.Errorf("PostInput missing nested userByAuthorId field:\n%s", postCreate)
 	}
 	// FK column must have become optional (nested input can supply it).
 	if strings.Contains(postCreate, "authorId: Int!") {
 		t.Error("authorId should be optional once nested input exists")
 	}
-	userCreate := sdlType(built.SDL, "input UserCreateInput")
+	userCreate := sdlType(built.SDL, "input UserInput")
 	if !strings.Contains(userCreate, "postsByAuthorId: UserPostsByAuthorIdNestedInput") {
-		t.Errorf("UserCreateInput missing nested children field:\n%s", userCreate)
+		t.Errorf("UserInput missing nested children field:\n%s", userCreate)
 	}
 	if !strings.Contains(built.SDL, "input UserConnectByIdInput") {
 		t.Error("missing UserConnectByIdInput")

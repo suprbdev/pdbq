@@ -43,11 +43,11 @@ const (
 	KindDeleteByUniqueMutation Kind = "delete_by_unique_mutation" // deleteUserByEmail
 	KindUpsertMutation         Kind = "upsert_mutation"           // upsertUserById (primary key)
 	KindUpsertByUniqueMutation Kind = "upsert_by_unique_mutation" // upsertUserByEmail
-	KindCreateManyMutation     Kind = "create_many_mutation"      // createUsers
-	KindUpdateManyMutation     Kind = "update_many_mutation"      // updateUsers (filtered)
-	KindDeleteManyMutation     Kind = "delete_many_mutation"      // deleteUsers (filtered)
-	KindCreateInput            Kind = "create_input"              // UserCreateInput
-	KindUpdateInput            Kind = "update_input"              // UserUpdateInput
+	KindCreateManyMutation     Kind = "create_many_mutation"      // createManyUsers
+	KindUpdateManyMutation     Kind = "update_many_mutation"      // updateManyUsers (filtered)
+	KindDeleteManyMutation     Kind = "delete_many_mutation"      // deleteManyUsers (filtered)
+	KindCreateInput            Kind = "create_input"              // UserInput (the values of a created row)
+	KindPatchInput             Kind = "patch_input"               // UserPatch (the values an update sets)
 	KindPayloadTypeName        Kind = "payload_type_name"         // CreateUserPayload
 	KindPayloadDeletedNodeID   Kind = "payload_deleted_node_id"   // DeleteUserPayload -> deletedUserNodeId
 	KindRelationForward        Kind = "relation_forward"          // FK -> parent object field (userByAuthorId)
@@ -65,6 +65,13 @@ const (
 	// GraphQL type, empty for a record of several output parameters; IsList
 	// whether the result is a list (SETOF or an array).
 	KindFunctionResultField Kind = "function_result_field"
+	// KindMutationInput names the input object of a table mutation's single
+	// input argument (CreateUserInput, UpdateUserByIdInput,
+	// CreateManyUsersInput). Value carries the mutation's field name.
+	KindMutationInput Kind = "mutation_input"
+	// KindManyPayloadTypeName names the payload of a bulk table mutation
+	// (CreateManyUsersPayload). Value carries the mutation's field name.
+	KindManyPayloadTypeName Kind = "many_payload_type_name"
 )
 
 // Default is the built-in PostGraphile-flavoured verbose naming.
@@ -103,17 +110,21 @@ func Default(kind Kind, in Input) string {
 	case KindUpsertMutation, KindUpsertByUniqueMutation:
 		return "upsert" + inflect.UpperCamel(inflect.Singularize(in.Table)) + "By" + inflect.ByColumns(in.Columns)
 	case KindCreateManyMutation:
-		return "create" + inflect.UpperCamel(inflect.Pluralize(inflect.Singularize(in.Table)))
+		return "createMany" + inflect.UpperCamel(inflect.Pluralize(inflect.Singularize(in.Table)))
 	case KindUpdateManyMutation:
-		return "update" + inflect.UpperCamel(inflect.Pluralize(inflect.Singularize(in.Table)))
+		return "updateMany" + inflect.UpperCamel(inflect.Pluralize(inflect.Singularize(in.Table)))
 	case KindDeleteManyMutation:
-		return "delete" + inflect.UpperCamel(inflect.Pluralize(inflect.Singularize(in.Table)))
+		return "deleteMany" + inflect.UpperCamel(inflect.Pluralize(inflect.Singularize(in.Table)))
 	case KindCreateInput:
-		return inflect.UpperCamel(inflect.Singularize(in.Table)) + "CreateInput"
-	case KindUpdateInput:
-		return inflect.UpperCamel(inflect.Singularize(in.Table)) + "UpdateInput"
+		return inflect.UpperCamel(inflect.Singularize(in.Table)) + "Input"
+	case KindPatchInput:
+		return inflect.UpperCamel(inflect.Singularize(in.Table)) + "Patch"
+	case KindMutationInput:
+		return inflect.UpperCamel(in.Value) + "Input"
 	case KindPayloadTypeName:
 		return inflect.UpperCamel(in.Column) + inflect.UpperCamel(inflect.Singularize(in.Table)) + "Payload" // Column carries the verb here
+	case KindManyPayloadTypeName:
+		return inflect.UpperCamel(in.Value) + "Payload"
 	case KindPayloadDeletedNodeID:
 		return "deleted" + inflect.UpperCamel(inflect.Singularize(in.Table)) + "NodeId"
 	case KindRelationForward:

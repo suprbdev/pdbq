@@ -1,8 +1,8 @@
 mutation {
-  updateUserByEmail(email: "a@b.c", patch: {fullName: "Grace"}) {
+  updateUserByEmail(input: {email: "a@b.c", userPatch: {fullName: "Grace"}}) {
     user { id email fullName }
   }
-  deleteUserByEmail(email: "b@c.d") {
+  deleteUserByEmail(input: {email: "b@c.d"}) {
     user { id }
     deletedUserNodeId
     clientMutationId

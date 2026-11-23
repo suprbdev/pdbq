@@ -1,5 +1,5 @@
 # variables: {"u": {"id": 1, "email": "ada@example.com", "fullName": "Ada", "mood": "HAPPY", "address": {"city": "London"}}}
-query ($u: UserInput) {
+query ($u: UserRowInput) {
   userGreeting(greeting: "Hello", u: $u)
   totalTitleLength(ps: [{title: "abc"}, null, {title: "de", published: true}])
   addressCities(addrs: [{city: "Paris"}, null])

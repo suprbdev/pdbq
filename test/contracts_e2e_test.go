@@ -333,8 +333,8 @@ func TestContractsIntegrityErrorsHideNames(t *testing.T) {
 		`COMMENT ON COLUMN `+contractsSchema+`.customers.pin IS '@behavior -contract:public'`,
 	)
 	const (
-		del    = `mutation { deleteCustomerById(id: 1) { clientMutationId } }`
-		create = `mutation { createCustomer(input: {name: "x"}) { clientMutationId } }`
+		del    = `mutation { deleteCustomerById(input: {id: 1}) { clientMutationId } }`
+		create = `mutation { createCustomer(input: {customer: {name: "x"}}) { clientMutationId } }`
 	)
 	for _, tc := range []struct {
 		name, url, query, want string
@@ -345,7 +345,7 @@ func TestContractsIntegrityErrorsHideNames(t *testing.T) {
 			`{"data":{"createCustomer":null},"errors":[{"message":"not-null violation","path":["createCustomer"],"extensions":{"code":"23502"}}]}`},
 		{"visible foreign key error", base, del,
 			`{"data":{"deleteCustomerById":null},"errors":[{"message":"update or delete on table \"customers\" violates foreign key constraint \"invoices_customer_id_fkey\" on table \"invoices\"","path":["deleteCustomerById"],"extensions":{"code":"23503"}}]}`},
-		{"visible not-null error", base, `mutation { updateCustomerById(id: 1, patch: {pin: null}) { clientMutationId } }`,
+		{"visible not-null error", base, `mutation { updateCustomerById(input: {id: 1, customerPatch: {pin: null}}) { clientMutationId } }`,
 			`{"data":{"updateCustomerById":null},"errors":[{"message":"null value in column \"pin\" of relation \"customers\" violates not-null constraint","path":["updateCustomerById"],"extensions":{"code":"23502"}}]}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
