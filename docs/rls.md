@@ -92,7 +92,11 @@ Two consequences for generated mutations:
   `DELETE` policy (or, for a forward `connect`, `SELECT` policy) filters out
   matches nothing, which fails and rolls back the whole mutation
   (`nested-mutations: … matched 0 rows`); a filtered `disconnectBy…` leaves
-  the row as it was.
+  the row as it was. An update mutation whose patch only carries nested
+  fields still locks its row with `SELECT … FOR UPDATE`, so it needs the
+  `UPDATE` privilege and passes the `UPDATE` policies like any update. The
+  statement selects and returns only the columns the payload and the
+  nested operations read, so roles with column-level `SELECT` grants work.
 
 ## Restricting assumable roles
 

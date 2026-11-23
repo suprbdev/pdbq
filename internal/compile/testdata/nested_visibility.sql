@@ -1,24 +1,24 @@
 -- field: createComment
 WITH __p_2 AS (
-  INSERT INTO "public"."users" ("email") VALUES ($3) RETURNING *
+  INSERT INTO "public"."users" ("email") VALUES ($3) RETURNING "id", "email"
 ),
 __p_1 AS (
-  INSERT INTO "public"."posts" ("title", "author_id") SELECT $2, __p_2."id" FROM __p_2 RETURNING *
+  INSERT INTO "public"."posts" ("title", "author_id") SELECT $2, __p_2."id" FROM __p_2 RETURNING "id", "author_id", "title"
 ),
 __mut AS (
-  INSERT INTO "public"."comments" ("body", "post_id") SELECT $1, __p_1."id" FROM __p_1 RETURNING *
+  INSERT INTO "public"."comments" ("body", "post_id") SELECT $1, __p_1."id" FROM __p_1 RETURNING "id", "post_id", "parent_id", "body"
 ),
 __vis_3 AS NOT MATERIALIZED (
-  SELECT * FROM "public"."users"
-  UNION ALL SELECT * FROM __p_2
+  SELECT "id", "email" FROM "public"."users"
+  UNION ALL SELECT "id", "email" FROM __p_2
 ),
 __vis_4 AS NOT MATERIALIZED (
-  SELECT * FROM "public"."posts"
-  UNION ALL SELECT * FROM __p_1
+  SELECT "id", "author_id", "title" FROM "public"."posts"
+  UNION ALL SELECT "id", "author_id", "title" FROM __p_1
 ),
 __vis_5 AS NOT MATERIALIZED (
-  SELECT * FROM "public"."comments"
-  UNION ALL SELECT * FROM __mut
+  SELECT "id", "post_id", "parent_id", "body" FROM "public"."comments"
+  UNION ALL SELECT "id", "post_id", "parent_id", "body" FROM __mut
 )
 SELECT json_build_object('comment', __row.data) AS data
 FROM (
@@ -65,33 +65,33 @@ FROM (
 
 -- field: createUser
 WITH __mut AS (
-  INSERT INTO "public"."users" ("email") VALUES ($1) RETURNING *
+  INSERT INTO "public"."users" ("email") VALUES ($1) RETURNING "id", "email"
 ),
 __c_1 AS (
-  INSERT INTO "public"."posts" ("title", "author_id") SELECT $2, __mut."id" FROM __mut RETURNING *
+  INSERT INTO "public"."posts" ("title", "author_id") SELECT $2, __mut."id" FROM __mut RETURNING "id", "author_id", "title"
 ),
 __c_2 AS (
-  INSERT INTO "public"."comments" ("body", "post_id") SELECT $3, __c_1."id" FROM __c_1 RETURNING *
+  INSERT INTO "public"."comments" ("body", "post_id") SELECT $3, __c_1."id" FROM __c_1 RETURNING "id", "post_id", "parent_id", "body"
 ),
 __c_3 AS (
-  INSERT INTO "public"."comments" ("body", "post_id") SELECT $4, __c_1."id" FROM __c_1 RETURNING *
+  INSERT INTO "public"."comments" ("body", "post_id") SELECT $4, __c_1."id" FROM __c_1 RETURNING "id", "post_id", "parent_id", "body"
 ),
 __c_4 AS (
-  INSERT INTO "public"."posts" ("title", "author_id") SELECT $5, __mut."id" FROM __mut RETURNING *
+  INSERT INTO "public"."posts" ("title", "author_id") SELECT $5, __mut."id" FROM __mut RETURNING "id", "author_id", "title"
 ),
 __vis_5 AS NOT MATERIALIZED (
-  SELECT * FROM "public"."users"
-  UNION ALL SELECT * FROM __mut
+  SELECT "id", "email" FROM "public"."users"
+  UNION ALL SELECT "id", "email" FROM __mut
 ),
 __vis_6 AS NOT MATERIALIZED (
-  SELECT * FROM "public"."posts"
-  UNION ALL SELECT * FROM __c_1
-  UNION ALL SELECT * FROM __c_4
+  SELECT "id", "author_id", "title" FROM "public"."posts"
+  UNION ALL SELECT "id", "author_id", "title" FROM __c_1
+  UNION ALL SELECT "id", "author_id", "title" FROM __c_4
 ),
 __vis_7 AS NOT MATERIALIZED (
-  SELECT * FROM "public"."comments"
-  UNION ALL SELECT * FROM __c_2
-  UNION ALL SELECT * FROM __c_3
+  SELECT "id", "post_id", "parent_id", "body" FROM "public"."comments"
+  UNION ALL SELECT "id", "post_id", "parent_id", "body" FROM __c_2
+  UNION ALL SELECT "id", "post_id", "parent_id", "body" FROM __c_3
 )
 SELECT json_build_object('user', __row.data) AS data
 FROM (
@@ -135,21 +135,25 @@ WITH __p_1 AS (
   SELECT "id" FROM "public"."users" WHERE "public"."users"."id" = $2
 ),
 __mut AS (
-  INSERT INTO "public"."posts" ("title", "author_id") SELECT $1, __p_1."id" FROM __p_1 RETURNING *
+  INSERT INTO "public"."posts" ("title", "author_id") SELECT $1, __p_1."id" FROM __p_1 RETURNING "id", "author_id", "title"
 ),
 __c_2 AS (
-  INSERT INTO "public"."comments" ("body", "post_id") SELECT $3, __mut."id" FROM __mut RETURNING *
+  INSERT INTO "public"."comments" ("body", "post_id") SELECT $3, __mut."id" FROM __mut RETURNING "id", "post_id", "body"
 ),
 __vis_3 AS NOT MATERIALIZED (
-  SELECT * FROM "public"."posts"
-  UNION ALL SELECT * FROM __mut
+  SELECT "id", "author_id" FROM "public"."posts"
+  UNION ALL SELECT "id", "author_id" FROM __mut
 ),
 __vis_4 AS NOT MATERIALIZED (
-  SELECT * FROM "public"."comments"
-  UNION ALL SELECT * FROM __c_2
+  SELECT "id", "post_id", "body" FROM "public"."comments"
+  UNION ALL SELECT "id", "post_id", "body" FROM __c_2
+),
+__guard AS MATERIALIZED (
+  SELECT (SELECT CASE WHEN count(*) > 0 THEN true ELSE concat('nested-mutations: author.connectById matched ', count(*), ' rows')::boolean END FROM __p_1) AS ok
 )
 SELECT __guarded.data
-FROM (
+FROM __guard
+LEFT JOIN LATERAL (
   SELECT json_build_object('post', __row.data) AS data
   FROM (
     SELECT json_build_object('title', __t_1."title", 'author', __l_7.data, 'commentsByPostId', __l_10.data) AS data
@@ -184,7 +188,7 @@ FROM (
       GROUP BY ()
     ) AS __l_10 ON true
   ) AS __row
-) AS __guarded
-WHERE (SELECT CASE WHEN count(*) > 0 THEN true ELSE concat('nested-mutations: author.connectById matched ', count(*), ' rows')::boolean END FROM __p_1)
+) AS __guarded ON true
+WHERE __guard.ok
 -- args: ["Connected",1,"c",101,101,100]
 

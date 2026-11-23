@@ -171,9 +171,9 @@ rename both). Its type lists the operations on the related rows:
 |---|---|---|
 | `connectBy<Key>`, `connectByNodeId` | look the row up and point this row's FK at it | point the row's FK at this row |
 | `create` | insert the row and point this row's FK at it | insert rows referencing this row |
-| `updateBy<Key>`, `updateByNodeId` | patch the row and point this row's FK at it | patch rows that reference this row |
-| `deleteBy<Key>`, `deleteByNodeId` | delete the row | delete rows that reference this row |
-| `disconnectBy<Key>`, `disconnectByNodeId` | clear this row's FK if it references the row (update mutations only) | clear the FK of rows that reference this row |
+| `updateBy<Key>`, `updateByNodeId` (patches only) | patch the row this row references | patch rows that reference this row |
+| `deleteBy<Key>`, `deleteByNodeId` (patches only) | delete the row this row references | delete rows that reference this row |
+| `disconnectBy<Key>`, `disconnectByNodeId` (patches only) | clear this row's FK if it references the row | clear the FK of rows that reference this row |
 
 `<Key>` is each primary key and unique constraint of the related table
 (`connectById`, `connectByEmail`, `connectByRoomIdAndValidAt`); the
@@ -198,41 +198,59 @@ mutation {
 }
 ```
 
+- Create inputs take `<Type><Relation>NestedInput` (`PostAuthorNestedInput`,
+  `UserPostsByAuthorIdNestedInput`), which only offers `connect…` and
+  `create`: a row being created references nothing yet and nothing
+  references it. Patches take `<Type><Relation>NestedPatchInput` with every
+  operation.
 - Key inputs are `<Type><Verb>By<Key>Input` (`UserConnectByEmailInput {
   email }`, `UserDeleteByIdInput { id }`) and `<Type><Verb>ByNodeIdInput {
   nodeId }`; update inputs add the patch as `<type>Patch`
   (`UserUpdateByIdInput { id, userPatch: UserUpdateInput! }`), which may
-  carry nested fields itself. The nested inputs are
-  `<Type><Relation>NestedInput` (`PostAuthorNestedInput`,
-  `UserPostsByAuthorIdNestedInput`).
-- An operation is only offered when the role may run it: `create` needs the
-  related create input, `update` its patch, `delete` the `DELETE` privilege,
-  backward `connect` the `UPDATE` privilege on the referencing table, and
-  `disconnect` an FK whose columns are all nullable (a `NOT NULL` FK has no
-  disconnect fields).
-- A forward field takes at most one of `create`, `connect…`, `update…` and
-  `disconnect…` (they all set this row's FK), plus any `delete…`. Forward
-  delete leaves the FK alone, so the database's `ON DELETE` action applies;
-  pair it with `disconnect…` to clear a nullable FK in the same mutation.
-  Backward fields take any combination.
-- Backward `update…`, `delete…` and `disconnect…` only reach rows that
-  reference this row (on a create mutation there are none yet).
-- `connect…`, `update…` and `delete…` must match a row: a key that matches
-  nothing (missing, or filtered out by RLS) fails the whole mutation with
+  carry nested fields itself.
+- An operation is only offered when the role may run it and the input may
+  write the columns it sets: `create` needs the related create input,
+  `update` its patch, `delete` the `DELETE` privilege; operations that set
+  an FK (`connect…`, `create`, `disconnect…`) need its columns in the input
+  that would otherwise set them (an FK column hidden by `@omit create` or
+  `@omit update` gets no such operation on that input), and `disconnect…`
+  needs all of them nullable (a `NOT NULL` FK has no disconnect fields).
+- A forward field takes at most one of `create`, `connect…` and
+  `disconnect…` (they set this row's FK), plus any `update…` and
+  `delete…`, which only reach the row this row references before the
+  mutation. Forward delete leaves the FK alone, so the database's `ON
+  DELETE` action applies; pair it with `disconnect…` to clear a nullable FK
+  in the same mutation. Backward fields take any combination; `update…`,
+  `delete…` and `disconnect…` only reach rows that reference this row.
+- A patch may not change a column that a backward nested field of the same
+  row matches its children on (the referenced key); that is a client error.
+- `connect…`, `update…` and `delete…` must match a row, and so must the key
+  of an update mutation using nested fields: a key that matches nothing
+  (missing, or filtered out by RLS) fails the whole mutation with
   `nested-mutations: <path> matched 0 rows` (SQLSTATE `22P02`, e.g.
-  `postsByAuthorId.updateById[0]`). `disconnect…` of a row that is not
-  linked does nothing. An update mutation whose own key matches nothing
-  fails as usual (`no row matched`), rolling back its nested operations.
+  `postsByAuthorId.updateById[0]` or `updateUserById`). `disconnect…` of a
+  row that is not linked does nothing.
+- At most `plugins.settings.nested-mutations.max_operations` operations
+  (default 50, each list item counting once) run per root field, nested at
+  most `max_depth` levels (default 3).
 - The bulk mutations (`createUsers`, `updateUsers`) and upserts take no
   nested fields; using one is an error.
 - A row may be modified only once per statement (a PostgreSQL rule for
   data-modifying CTEs): two operations updating the same row leave only one
   change, and an operation then reports `matched 0 rows`.
+- **Referential actions are not reflected in the payload.** `ON DELETE
+  CASCADE`/`SET NULL`/`SET DEFAULT` and `ON UPDATE CASCADE` run as
+  triggers after the statement's last query, so rows they change or delete
+  still show in the payload as they were before them (a forward
+  `deleteBy…` whose FK cascades to this row returns the row although it is
+  gone). The database state is correct; query it again to see the result.
 
 Differences from the PostGraphile plugin: the relation fields keep pdbq's
 relation names instead of `<table>To<Columns>`/`<tables>Using<Columns>`,
 the root mutations keep pdbq's argument shapes (`createPost(input: {…})`,
-`updatePostById(id:, patch:)`), and there is no `deleteOthers`.
+`updatePostById(id:, patch:)`), forward `update…`/`delete…` act on the
+referenced row instead of relinking, create inputs offer no
+update/delete/disconnect, and there is no `deleteOthers`.
 
 ### Hooks
 
@@ -243,36 +261,48 @@ the root mutations keep pdbq's argument shapes (`createPost(input: {…})`,
 - **CompileHook** — when a create or update mutation actually uses a nested
   field, it replaces the DML with one multi-CTE statement: forward
   operations (lookups, inserts, `UPDATE … RETURNING`, `DELETE … RETURNING`)
-  first, then the main row's `INSERT` or `UPDATE … FROM <parent CTEs>` (a
-  patch setting no column selects the row instead), then the backward
-  operations joined to the main row's CTE. Each operation that must match a
-  row adds a guard, `(SELECT CASE WHEN count(*) > 0 THEN true ELSE
-  concat('nested-mutations: …', count(*), ' rows')::boolean END FROM
-  <cte>)`, which `compile.MutationWithCTEs` puts in the `WHERE` of the
-  statement's final `SELECT`: a failing guard raises inside the statement,
-  so it is atomic even without a transaction. Values go through
+  first, then the main row's `INSERT` or `UPDATE … FROM <parent CTEs>`,
+  then the backward operations joined to the main row's CTE. A patch that
+  sets no column locks the row with `SELECT … FOR UPDATE` instead, which
+  still requires the `UPDATE` privilege and passes the table's `UPDATE`
+  policies. Each operation that must match a row adds a guard, `(SELECT
+  CASE WHEN count(*) > 0 THEN true ELSE concat('nested-mutations: …',
+  count(*), ' rows')::boolean END FROM <cte>)`. `compile.MutationStatement`
+  evaluates the guards in a `MATERIALIZED` CTE scanned as the outer side of
+  a `LEFT JOIN LATERAL` with the payload, so they run even when the payload
+  is empty, and a failing guard raises inside the statement: it is atomic
+  even without a transaction. Values go through
   `compile.ParamSet.Value`/`KeyValue` (enum labels, contrib and PostGIS
   constructors) and key comparisons through `compile.EqualOperator`
-  (citext). The chain is handed to `compile.MutationWithCTEs`, which reuses
-  the core payload compiler. Rows written by CTEs are invisible to
-  same-statement table scans, so it also passes row-source overrides
-  mapping every table the chain wrote to a visibility CTE: `__vis_n AS NOT
-  MATERIALIZED (SELECT * FROM <table> WHERE <not replaced or deleted> UNION
-  ALL SELECT * FROM <insert and update CTEs> …)`. Replaced and deleted rows
-  are excluded by a `NOT NULL` key the operation leaves alone, matched
-  against its `RETURNING` rows (or by the operation's key lookup when it
-  patches every such key). Every payload relation, connection,
-  `totalCount`, relation filter and relational `orderBy` over that table
-  reads the CTE, so the payload sees the table as it stands after the
-  statement. The table half stays subject to the role's RLS policies, and
-  the `RETURNING` rows already passed them (an `INSERT`/`UPDATE …
-  RETURNING` whose new row fails a `SELECT` policy is an error, rolling
-  back the whole statement). Every operation runs as the request's role, so
-  `UPDATE`/`DELETE` policies narrow what it can match.
-- **RequestHook** — detects nested fields in a mutation's `input` or
+  (citext).
+
+  The payload is compiled with `compile.MutationPayload`. Rows written by
+  CTEs are invisible to same-statement table scans, so it passes row-source
+  overrides mapping every table the chain wrote to a visibility CTE:
+  `__vis_n AS NOT MATERIALIZED (SELECT <cols> FROM <table> WHERE <not
+  replaced or deleted> UNION ALL SELECT <cols> FROM <insert and update
+  CTEs> …)`. Replaced and deleted rows are excluded by a `NOT NULL` key the
+  operation leaves alone, matched against its returned rows (or by the
+  operation's key lookup when it patches every such key). Every payload
+  relation, connection, `totalCount`, relation filter and relational
+  `orderBy` over that table reads the CTE, so the payload sees the table as
+  it stands after the statement. The table half stays subject to the
+  role's RLS policies, and the returned rows already passed them (an
+  `INSERT`/`UPDATE … RETURNING` whose new row fails a `SELECT` policy is an
+  error, rolling back the whole statement). Every operation runs as the
+  request's role, so `UPDATE`/`DELETE` policies narrow what it can match.
+
+  `RETURNING` and `SELECT` need the `SELECT` privilege per column, so
+  nothing selects `*`: once the payload is compiled, its
+  `MutationPayload.Aliases` and `compile.ReferencedColumns` give the
+  columns it reads through each override and `__mut`. Visibility CTEs
+  project only those (and are left out for tables the payload does not
+  read), and each CTE's `RETURNING` list is resolved to the columns the
+  payload, the visibility CTEs and the other CTEs (FK copies, child
+  matching, exclusion keys) read from it.
+- **RequestHook** — collects the operation's root fields as the executor
+  does (`exec.CollectRootFields`: fragments, inline fragments,
+  `@skip`/`@include`), detects nested fields in a mutation's `input` or
   `patch` and sets `op.ForceTx`, so nested mutations (and the other fields
   of the operation) are atomic even when `transactions.mutations: false`
   (`plugins.settings.nested-mutations.force_transactions: false` opts out).
-
-Nesting depth is bounded (`plugins.settings.nested-mutations.max_depth`,
-default 3).

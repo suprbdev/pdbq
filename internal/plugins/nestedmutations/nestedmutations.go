@@ -1,12 +1,12 @@
 // Package nestedmutations is a built-in plugin exercising every hook
 // surface. It adds postgraphile-plugin-nested-mutations style input fields
 // to the create inputs and patches of tables, one per foreign key in either
-// direction (SchemaHook): connectBy<Key>/connectByNodeId, create,
-// updateBy<Key>/updateByNodeId, deleteBy<Key>/deleteByNodeId and
-// disconnectBy<Key>/disconnectByNodeId. Create and update mutations using
-// them compile into a single multi-CTE SQL statement respecting FK direction
-// (CompileHook), and the plugin forces a transaction for them even when
-// transactions are globally disabled (RequestHook), unless
+// direction (SchemaHook): connectBy<Key>/connectByNodeId and create, plus,
+// on patches, updateBy<Key>/updateByNodeId, deleteBy<Key>/deleteByNodeId
+// and disconnectBy<Key>/disconnectByNodeId. Create and update mutations
+// using them compile into a single multi-CTE SQL statement respecting FK
+// direction (CompileHook), and the plugin forces a transaction for them even
+// when transactions are globally disabled (RequestHook), unless
 // plugins.nested-mutations.force_transactions is false.
 package nestedmutations
 
@@ -26,14 +26,18 @@ import (
 	"github.com/suprbdev/pdbq/internal/schema"
 )
 
-const defaultMaxDepth = 3
+const (
+	defaultMaxDepth      = 3
+	defaultMaxOperations = 50
+)
 
 // Plugin is the nested-mutations plugin. One instance must serve both the
 // schema build and compilation, since compilation reads the bindings the
 // SchemaHook records.
 type Plugin struct {
-	forceTx  bool
-	maxDepth int
+	forceTx       bool
+	maxDepth      int
+	maxOperations int
 
 	// specs: row input type (create input or patch) -> nested field -> spec.
 	specs map[string]map[string]*nestedSpec
@@ -79,18 +83,30 @@ type opSpec struct {
 
 // New builds the plugin from its `plugins.settings.nested-mutations` map.
 func New(settings map[string]any) *Plugin {
-	p := &Plugin{forceTx: true, maxDepth: defaultMaxDepth}
+	p := &Plugin{forceTx: true, maxDepth: defaultMaxDepth, maxOperations: defaultMaxOperations}
 	p.reset()
 	if v, ok := settings["force_transactions"].(bool); ok {
 		p.forceTx = v
 	}
-	if v, ok := settings["max_depth"].(int); ok && v > 0 {
+	if v := intSetting(settings["max_depth"]); v > 0 {
 		p.maxDepth = v
 	}
-	if v, ok := settings["max_depth"].(float64); ok && v > 0 {
-		p.maxDepth = int(v)
+	if v := intSetting(settings["max_operations"]); v > 0 {
+		p.maxOperations = v
 	}
 	return p
+}
+
+func intSetting(v any) int {
+	switch v := v.(type) {
+	case int:
+		return v
+	case int64:
+		return int(v)
+	case float64:
+		return int(v)
+	}
+	return 0
 }
 
 func (p *Plugin) reset() {
@@ -121,17 +137,15 @@ func (p *Plugin) TransformSchema(_ context.Context, b *schema.Builder) error {
 	}
 	for _, t := range b.Catalog.Tables {
 		key := t.Schema + "." + t.Name
-		var rowInputs []*schema.Input
 		createIn := b.Inputs[p.inputForTable[key]]
-		if createIn != nil {
-			rowInputs = append(rowInputs, createIn)
-		}
-		if patch := b.Inputs[p.patchForTable[key]]; patch != nil {
-			rowInputs = append(rowInputs, patch)
-		}
-		if len(rowInputs) == 0 {
+		patch := b.Inputs[p.patchForTable[key]]
+		if createIn == nil && patch == nil {
 			continue
 		}
+		rowInputs := []struct {
+			in     *schema.Input
+			create bool
+		}{{createIn, true}, {patch, false}}
 
 		for _, fk := range t.ForeignKeys {
 			parent := b.Catalog.Table(fk.RefSchema, fk.RefTable)
@@ -139,16 +153,19 @@ func (p *Plugin) TransformSchema(_ context.Context, b *schema.Builder) error {
 				continue
 			}
 			relName := b.ForwardRelationName(t, fk)
-			nestedType := p.forwardInput(b, t, parent, fk, relName)
-			if nestedType == "" {
-				continue
-			}
-			spec := &nestedSpec{Forward: true, FK: fk, Owner: t, Target: parent, Input: nestedType}
-			if !p.addNested(rowInputs, relName, nestedType, "Nested mutation of the referenced "+fk.RefTable+" row.", spec) {
-				continue
-			}
-			if createIn != nil {
-				relax(b, createIn, t, fk)
+			for _, ri := range rowInputs {
+				if ri.in == nil || ri.in.Field(relName) != nil {
+					continue
+				}
+				nestedType := p.forwardInput(b, t, parent, fk, relName, ri.in, ri.create)
+				if nestedType == "" {
+					continue
+				}
+				p.addNested(ri.in, relName, nestedType, "Nested mutation of the referenced "+fk.RefTable+" row.",
+					&nestedSpec{Forward: true, FK: fk, Owner: t, Target: parent, Input: nestedType})
+				if ri.create {
+					relax(b, ri.in, t, fk)
+				}
 			}
 		}
 
@@ -164,16 +181,19 @@ func (p *Plugin) TransformSchema(_ context.Context, b *schema.Builder) error {
 					Schema: child.Schema, Table: child.Name, Columns: fk.Columns,
 					Constraint: fk.Name,
 				})
-				nestedType := p.backwardInput(b, t, child, fk, relName)
-				if nestedType == "" {
-					continue
-				}
-				spec := &nestedSpec{Forward: false, FK: fk, Owner: child, Target: child, Input: nestedType}
-				if !p.addNested(rowInputs, relName, nestedType, "Nested mutation of the referencing "+child.Name+" rows.", spec) {
-					continue
-				}
-				if childIn := b.Inputs[p.inputForTable[child.Schema+"."+child.Name]]; childIn != nil {
-					relax(b, childIn, child, fk)
+				for _, ri := range rowInputs {
+					if ri.in == nil || ri.in.Field(relName) != nil {
+						continue
+					}
+					nestedType, creates := p.backwardInput(b, t, child, fk, relName, ri.create)
+					if nestedType == "" {
+						continue
+					}
+					p.addNested(ri.in, relName, nestedType, "Nested mutation of the referencing "+child.Name+" rows.",
+						&nestedSpec{Forward: false, FK: fk, Owner: child, Target: child, Input: nestedType})
+					if childIn := b.Inputs[p.inputForTable[child.Schema+"."+child.Name]]; creates && childIn != nil {
+						relax(b, childIn, child, fk)
+					}
 				}
 			}
 		}
@@ -181,27 +201,18 @@ func (p *Plugin) TransformSchema(_ context.Context, b *schema.Builder) error {
 	return nil
 }
 
-// addNested adds the nested field relName to every row input lacking a
-// field of that name, reporting whether any received it.
-func (p *Plugin) addNested(rowInputs []*schema.Input, relName, nestedType, desc string, spec *nestedSpec) bool {
-	added := false
-	for _, in := range rowInputs {
-		if in.Field(relName) != nil {
-			continue
-		}
-		in.AddField(&schema.InputField{
-			Name:        relName,
-			Type:        nestedType,
-			Description: desc,
-			Nested:      map[string]any{"plugin": p.Name()},
-		})
-		if p.specs[in.Name] == nil {
-			p.specs[in.Name] = map[string]*nestedSpec{}
-		}
-		p.specs[in.Name][relName] = spec
-		added = true
+// addNested adds the nested field relName to a row input.
+func (p *Plugin) addNested(in *schema.Input, relName, nestedType, desc string, spec *nestedSpec) {
+	in.AddField(&schema.InputField{
+		Name:        relName,
+		Type:        nestedType,
+		Description: desc,
+		Nested:      map[string]any{"plugin": p.Name()},
+	})
+	if p.specs[in.Name] == nil {
+		p.specs[in.Name] = map[string]*nestedSpec{}
 	}
-	return added
+	p.specs[in.Name][relName] = spec
 }
 
 // relax makes the FK columns of t optional in its create input: a nested
@@ -215,68 +226,108 @@ func relax(b *schema.Builder, in *schema.Input, t *introspect.Table, fk *introsp
 	}
 }
 
-// forwardInput creates `<Owner><Rel>NestedInput`, the operations on the row
-// a forward relation references. Each operation takes a single input.
-func (p *Plugin) forwardInput(b *schema.Builder, owner, parent *introspect.Table, fk *introspect.ForeignKey, relName string) string {
-	ownerType := b.TypeForTable[owner.Schema+"."+owner.Name]
-	name := ownerType + coreinflect.UpperCamel(relName) + "NestedInput"
+// writesFK reports whether in has a field for every column fk copies, so a
+// nested operation may set them (a column left out, e.g. by `@omit create`
+// or `@omit update`, must not be written through a nested field either).
+func writesFK(in *schema.Input, fk *introspect.ForeignKey) bool {
+	if in == nil {
+		return false
+	}
+	for _, pair := range equalityPairs(fk) {
+		if !slices.ContainsFunc(in.Fields, func(f *schema.InputField) bool { return f.Column == pair.Column }) {
+			return false
+		}
+	}
+	return true
+}
+
+// nestedTypeName names the nested input type of a relation field:
+// `<Type><Rel>NestedInput` on create inputs, `<Type><Rel>NestedPatchInput`
+// on patches.
+func nestedTypeName(b *schema.Builder, t *introspect.Table, relName string, create bool) string {
+	suffix := "NestedPatchInput"
+	if create {
+		suffix = "NestedInput"
+	}
+	return b.TypeForTable[t.Schema+"."+t.Name] + coreinflect.UpperCamel(relName) + suffix
+}
+
+// forwardInput creates the operations on the row a forward relation of
+// owner references, for the owner's create input or patch (rowIn). Create
+// inputs get connect and create, which point the new row's FK at the
+// parent; patches also get update and delete of the parent the row
+// references and disconnect. Each operation takes a single input.
+func (p *Plugin) forwardInput(b *schema.Builder, owner, parent *introspect.Table, fk *introspect.ForeignKey, relName string, rowIn *schema.Input, create bool) string {
+	name := nestedTypeName(b, owner, relName, create)
 	if _, ok := b.Inputs[name]; ok {
 		return ""
 	}
-	in := &schema.Input{Name: name, Description: "Nested mutation of the " + relName + " relation: at most one of create, connect or update (which link the row), or disconnect, plus any deletes."}
+	desc := "Nested mutation of the " + relName + " relation: at most one of create or connect."
+	if !create {
+		desc = "Nested mutation of the " + relName + " relation: at most one of create, connect or disconnect, plus updates and deletes of the referenced row."
+	}
+	in := &schema.Input{Name: name, Description: desc}
 	ops := map[string]*opSpec{}
 	add := func(field, typ string, op *opSpec) {
 		in.AddField(&schema.InputField{Name: field, Type: typ})
 		ops[field] = op
 	}
 	keys := targetKeys(parent)
-	for _, k := range keys {
-		add("connectBy"+coreinflect.ByColumns(k), p.keyInput(b, parent, "Connect", k), &opSpec{kind: opConnect, key: k})
-	}
-	if eq := refKey(fk); fk.Period && !slices.ContainsFunc(keys, func(k []string) bool { return slices.Equal(k, eq) }) {
-		add("connectBy"+coreinflect.ByColumns(eq), p.keyInput(b, parent, "Connect", eq), &opSpec{kind: opConnect, key: eq, entity: true})
-	}
 	node := isNode(b, parent)
-	if node {
-		add("connectByNodeId", p.nodeIDInput(b, parent, "Connect"), &opSpec{kind: opConnect, nodeID: true})
-	}
-	if create := p.inputForTable[parent.Schema+"."+parent.Name]; create != "" {
-		add("create", create, &opSpec{kind: opCreate})
-	}
-	if p.patchForTable[parent.Schema+"."+parent.Name] != "" {
+	pkey := parent.Schema + "." + parent.Name
+	setsFK := writesFK(rowIn, fk)
+	if setsFK {
 		for _, k := range keys {
-			add("updateBy"+coreinflect.ByColumns(k), p.updateInput(b, parent, k), &opSpec{kind: opUpdate, key: k})
+			add("connectBy"+coreinflect.ByColumns(k), p.keyInput(b, parent, "Connect", k), &opSpec{kind: opConnect, key: k})
+		}
+		if eq := refKey(fk); fk.Period && !slices.ContainsFunc(keys, func(k []string) bool { return slices.Equal(k, eq) }) {
+			add("connectBy"+coreinflect.ByColumns(eq), p.keyInput(b, parent, "Connect", eq), &opSpec{kind: opConnect, key: eq, entity: true})
 		}
 		if node {
-			add("updateByNodeId", p.updateInput(b, parent, nil), &opSpec{kind: opUpdate, nodeID: true})
+			add("connectByNodeId", p.nodeIDInput(b, parent, "Connect"), &opSpec{kind: opConnect, nodeID: true})
+		}
+		if create := p.inputForTable[pkey]; create != "" {
+			add("create", create, &opSpec{kind: opCreate})
 		}
 	}
-	if parent.Deletable() {
-		for _, k := range keys {
-			add("deleteBy"+coreinflect.ByColumns(k), p.keyInput(b, parent, "Delete", k), &opSpec{kind: opDelete, key: k})
+	if !create {
+		if p.patchForTable[pkey] != "" {
+			for _, k := range keys {
+				add("updateBy"+coreinflect.ByColumns(k), p.updateInput(b, parent, k), &opSpec{kind: opUpdate, key: k})
+			}
+			if node {
+				add("updateByNodeId", p.updateInput(b, parent, nil), &opSpec{kind: opUpdate, nodeID: true})
+			}
 		}
-		if node {
-			add("deleteByNodeId", p.nodeIDInput(b, parent, "Delete"), &opSpec{kind: opDelete, nodeID: true})
+		if parent.Deletable() {
+			for _, k := range keys {
+				add("deleteBy"+coreinflect.ByColumns(k), p.keyInput(b, parent, "Delete", k), &opSpec{kind: opDelete, key: k})
+			}
+			if node {
+				add("deleteByNodeId", p.nodeIDInput(b, parent, "Delete"), &opSpec{kind: opDelete, nodeID: true})
+			}
 		}
-	}
-	if p.patchForTable[owner.Schema+"."+owner.Name] != "" && nullableFK(owner, fk) {
-		for _, k := range keys {
-			add("disconnectBy"+coreinflect.ByColumns(k), p.keyInput(b, parent, "Disconnect", k), &opSpec{kind: opDisconnect, key: k})
-		}
-		if node {
-			add("disconnectByNodeId", p.nodeIDInput(b, parent, "Disconnect"), &opSpec{kind: opDisconnect, nodeID: true})
+		if setsFK && nullableFK(owner, fk) {
+			for _, k := range keys {
+				add("disconnectBy"+coreinflect.ByColumns(k), p.keyInput(b, parent, "Disconnect", k), &opSpec{kind: opDisconnect, key: k})
+			}
+			if node {
+				add("disconnectByNodeId", p.nodeIDInput(b, parent, "Disconnect"), &opSpec{kind: opDisconnect, nodeID: true})
+			}
 		}
 	}
 	return p.register(b, in, ops)
 }
 
-// backwardInput creates `<Parent><Rel>NestedInput`, the operations on the
-// rows referencing the parent through fk. Each operation takes a list.
-func (p *Plugin) backwardInput(b *schema.Builder, parent, child *introspect.Table, fk *introspect.ForeignKey, relName string) string {
-	parentType := b.TypeForTable[parent.Schema+"."+parent.Name]
-	name := parentType + coreinflect.UpperCamel(relName) + "NestedInput"
+// backwardInput creates the operations on the rows of child referencing a
+// parent row through fk, for the parent's create input or patch. Create
+// inputs get connect and create; patches also get update, delete and
+// disconnect of the rows already referencing the parent. Each operation
+// takes a list. It reports whether the type offers create.
+func (p *Plugin) backwardInput(b *schema.Builder, parent, child *introspect.Table, fk *introspect.ForeignKey, relName string, create bool) (string, bool) {
+	name := nestedTypeName(b, parent, relName, create)
 	if _, ok := b.Inputs[name]; ok {
-		return ""
+		return "", false
 	}
 	in := &schema.Input{Name: name, Description: "Nested mutation of the " + relName + " relation."}
 	ops := map[string]*opSpec{}
@@ -287,7 +338,9 @@ func (p *Plugin) backwardInput(b *schema.Builder, parent, child *introspect.Tabl
 	keys := targetKeys(child)
 	node := isNode(b, child)
 	ckey := child.Schema + "." + child.Name
-	if child.Updatable() {
+	childPatch := b.Inputs[p.patchForTable[ckey]]
+	childCreate := b.Inputs[p.inputForTable[ckey]]
+	if writesFK(childPatch, fk) {
 		for _, k := range keys {
 			add("connectBy"+coreinflect.ByColumns(k), p.keyInput(b, child, "Connect", k), &opSpec{kind: opConnect, key: k})
 		}
@@ -295,34 +348,37 @@ func (p *Plugin) backwardInput(b *schema.Builder, parent, child *introspect.Tabl
 			add("connectByNodeId", p.nodeIDInput(b, child, "Connect"), &opSpec{kind: opConnect, nodeID: true})
 		}
 	}
-	if create := p.inputForTable[ckey]; create != "" {
-		add("create", create, &opSpec{kind: opCreate})
+	creates := writesFK(childCreate, fk)
+	if creates {
+		add("create", childCreate.Name, &opSpec{kind: opCreate})
 	}
-	if p.patchForTable[ckey] != "" {
-		for _, k := range keys {
-			add("updateBy"+coreinflect.ByColumns(k), p.updateInput(b, child, k), &opSpec{kind: opUpdate, key: k})
+	if !create {
+		if childPatch != nil {
+			for _, k := range keys {
+				add("updateBy"+coreinflect.ByColumns(k), p.updateInput(b, child, k), &opSpec{kind: opUpdate, key: k})
+			}
+			if node {
+				add("updateByNodeId", p.updateInput(b, child, nil), &opSpec{kind: opUpdate, nodeID: true})
+			}
 		}
-		if node {
-			add("updateByNodeId", p.updateInput(b, child, nil), &opSpec{kind: opUpdate, nodeID: true})
+		if child.Deletable() {
+			for _, k := range keys {
+				add("deleteBy"+coreinflect.ByColumns(k), p.keyInput(b, child, "Delete", k), &opSpec{kind: opDelete, key: k})
+			}
+			if node {
+				add("deleteByNodeId", p.nodeIDInput(b, child, "Delete"), &opSpec{kind: opDelete, nodeID: true})
+			}
+		}
+		if writesFK(childPatch, fk) && nullableFK(child, fk) {
+			for _, k := range keys {
+				add("disconnectBy"+coreinflect.ByColumns(k), p.keyInput(b, child, "Disconnect", k), &opSpec{kind: opDisconnect, key: k})
+			}
+			if node {
+				add("disconnectByNodeId", p.nodeIDInput(b, child, "Disconnect"), &opSpec{kind: opDisconnect, nodeID: true})
+			}
 		}
 	}
-	if child.Deletable() {
-		for _, k := range keys {
-			add("deleteBy"+coreinflect.ByColumns(k), p.keyInput(b, child, "Delete", k), &opSpec{kind: opDelete, key: k})
-		}
-		if node {
-			add("deleteByNodeId", p.nodeIDInput(b, child, "Delete"), &opSpec{kind: opDelete, nodeID: true})
-		}
-	}
-	if child.Updatable() && nullableFK(child, fk) {
-		for _, k := range keys {
-			add("disconnectBy"+coreinflect.ByColumns(k), p.keyInput(b, child, "Disconnect", k), &opSpec{kind: opDisconnect, key: k})
-		}
-		if node {
-			add("disconnectByNodeId", p.nodeIDInput(b, child, "Disconnect"), &opSpec{kind: opDisconnect, nodeID: true})
-		}
-	}
-	return p.register(b, in, ops)
+	return p.register(b, in, ops), creates
 }
 
 // register adds a nested input type with its operations, or drops it when
@@ -487,7 +543,7 @@ func (p *Plugin) WrapCompile(next compile.Func) compile.Func {
 		}
 		input, _ := val.(map[string]any)
 
-		g := &cteGen{p: p, req: req, ps: &compile.ParamSet{}, writeIdx: map[string]int{}}
+		g := &cteGen{p: p, req: req, ps: &compile.ParamSet{}, writeIdx: map[string]int{}, dml: map[string]*dmlCTE{}}
 		if meta.Kind == schema.KindCreate {
 			err = g.insertRow(meta.Table, argType, input, "__mut", 1, nil, "")
 		} else {
@@ -495,12 +551,17 @@ func (p *Plugin) WrapCompile(next compile.Func) compile.Func {
 			if key, err = g.argKey(meta); err == nil {
 				err = g.updateRow(meta.Table, argType, input, "__mut", 1, key, nil, "")
 			}
+			g.guard("__mut", req.Field.Name)
 		}
 		if err != nil {
 			return nil, err
 		}
-		overrides := g.visibility()
-		return compile.New(req.Built).MutationWithCTEs(req, req.Field, meta, strings.Join(g.ctes, ",\n"), g.ps, overrides, g.guards...)
+		overrides := g.overrides()
+		payload, err := compile.New(req.Built).MutationPayload(req, req.Field, meta, g.ps, overrides)
+		if err != nil {
+			return nil, err
+		}
+		return compile.MutationStatement(g.finish(meta.Table, payload), payload.SQL, g.ps, g.guards), nil
 	}
 }
 
@@ -548,6 +609,12 @@ func (p *Plugin) usesNested(inputType string, v any) bool {
 }
 
 // cteGen accumulates the WITH chain for one nested mutation.
+//
+// The RETURNING list of every data-modifying CTE starts as a placeholder
+// (retToken) and is resolved by finish once the payload is compiled, to the
+// columns the payload, the visibility CTEs and the other CTEs read from it:
+// RETURNING needs the SELECT privilege per returned column, so RETURNING *
+// would fail for roles holding column-level grants.
 type cteGen struct {
 	p      *Plugin
 	req    *compile.Request
@@ -555,20 +622,60 @@ type cteGen struct {
 	ctes   []string
 	guards []string
 	n      int
+	ops    int
 	// writes lists, in emission order, every table the chain writes to;
 	// writeIdx indexes it by "schema.table".
 	writes   []tableWrites
 	writeIdx map[string]int
+	// dml holds the data-modifying (and locking) CTEs by name.
+	dml map[string]*dmlCTE
+}
+
+// dmlCTE is a CTE whose RETURNING (or select) list finish resolves.
+type dmlCTE struct {
+	table *introspect.Table
+	// qual qualifies the returned columns ("" for an INSERT).
+	qual string
+	need map[string]bool
 }
 
 // tableWrites records how the chain changes one table: the CTEs whose
-// RETURNING rows are in it once the statement completes (inserted and
-// updated rows), and predicates over the bare table excluding the rows the
-// chain replaced or deleted.
+// returned rows are in it once the statement completes (inserted and
+// updated rows), and how to exclude from the bare table the rows the chain
+// replaced or deleted.
 type tableWrites struct {
 	table *introspect.Table
+	vis   string
 	adds  []string
-	excl  []string
+	excl  []exclusion
+}
+
+// exclusion removes from a visibility CTE's table half the rows one UPDATE
+// or DELETE CTE replaced: by a NOT NULL key the CTE leaves alone, matched
+// against its returned rows (stable), or by its key lookup (cond).
+type exclusion struct {
+	cte    string
+	stable []string
+	cond   string
+}
+
+func retToken(cte string) string { return "%%RET:" + cte + "%%" }
+
+// returning registers cte as a data-modifying CTE over t and returns the
+// placeholder of its returned columns.
+func (g *cteGen) returning(cte string, t *introspect.Table, qual string) string {
+	g.dml[cte] = &dmlCTE{table: t, qual: qual, need: map[string]bool{}}
+	return retToken(cte)
+}
+
+// need records that cols of cte's table are read from cte; CTEs that are
+// not data-modifying project their columns explicitly and are ignored.
+func (g *cteGen) need(cte string, cols ...string) {
+	if d := g.dml[cte]; d != nil {
+		for _, c := range cols {
+			d.need[c] = true
+		}
+	}
 }
 
 func (g *cteGen) write(t *introspect.Table) *tableWrites {
@@ -588,23 +695,14 @@ func (g *cteGen) recordInsert(t *introspect.Table, cte string) {
 }
 
 // recordChange records an UPDATE (keep) or DELETE CTE over t that targeted
-// the row key identifies. The pre-statement version of the row is excluded
-// by a NOT NULL key the CTE leaves alone, matched against its RETURNING
-// rows, so a row the CTE did not change stays; when every such key is
-// patched, by the key lookup itself.
+// the row key identifies.
 func (g *cteGen) recordChange(t *introspect.Table, cte string, key rowKey, patched map[string]bool, keep bool) {
 	w := g.write(t)
-	ref := compile.TableRefSQL(t.Schema, t.Name)
-	if stable := stableKey(t, patched); stable != nil {
-		conds := make([]string, len(stable))
-		for i, cn := range stable {
-			q := compile.QuoteIdent(cn)
-			conds[i] = fmt.Sprintf("__m.%s %s %s.%s", q, compile.EqualOperator(g.req.Built, t.Column(cn)), ref, q)
-		}
-		w.excl = append(w.excl, fmt.Sprintf("NOT EXISTS (SELECT 1 FROM %s AS __m WHERE %s)", cte, strings.Join(conds, " AND ")))
-	} else {
-		w.excl = append(w.excl, "("+key.cond(g, t, ref)+") IS NOT TRUE")
+	ex := exclusion{cte: cte, stable: stableKey(t, patched)}
+	if ex.stable == nil {
+		ex.cond = "(" + key.cond(g, t, compile.TableRefSQL(t.Schema, t.Name)) + ") IS NOT TRUE"
 	}
+	w.excl = append(w.excl, ex)
 	if keep {
 		w.adds = append(w.adds, cte)
 	}
@@ -632,39 +730,99 @@ func stableKey(t *introspect.Table, patched map[string]bool) []string {
 	return nil
 }
 
-// visibility appends one __vis_n CTE per table the chain writes to and
-// returns the "schema.table" -> CTE overrides for the payload.
+// overrides maps every table the chain writes to its visibility CTE.
+func (g *cteGen) overrides() map[string]string {
+	out := make(map[string]string, len(g.writes))
+	for i := range g.writes {
+		w := &g.writes[i]
+		w.vis = g.name("vis")
+		out[w.table.Schema+"."+w.table.Name] = w.vis
+	}
+	return out
+}
+
+// finish appends the visibility CTEs the payload reads and resolves the
+// returned columns of the data-modifying CTEs, returning the CTE chain.
 //
 // Rows written by a data-modifying CTE are invisible to every other table
 // scan of the same statement (they all share its snapshot), so a payload
 // relation reading the table would miss the rows created or changed here
 // and still see the deleted ones. Each visibility CTE is the table itself
 // (still subject to the role's RLS policies) minus the pre-statement
-// versions of the rows the chain updated or deleted, UNION ALL the
-// RETURNING rows of its inserts and updates: the table as it stands once
-// the statement completes. RETURNING rows already passed the table's SELECT
+// versions of the rows the chain updated or deleted, UNION ALL the returned
+// rows of its inserts and updates: the table as it stands once the
+// statement completes. Returned rows already passed the table's SELECT
 // policies, since INSERT and UPDATE ... RETURNING raise an error for a new
-// row they reject.
+// row they reject. It projects only the columns the payload reads through
+// it; a table the payload does not read gets none, since every column a
+// statement names needs the SELECT privilege even in an unread CTE.
 //
 // NOT MATERIALIZED inlines the CTE at every reference, so the correlated
 // relation predicates reach the table's indexes instead of a materialized
 // copy of the whole table.
-func (g *cteGen) visibility() map[string]string {
-	overrides := make(map[string]string, len(g.writes))
+func (g *cteGen) finish(root *introspect.Table, payload *compile.MutationPayload) string {
+	g.need("__mut", compile.ReferencedColumns(root, payload.SQL, payload.Aliases["__mut"])...)
 	for _, w := range g.writes {
-		table := "SELECT * FROM " + compile.TableRefSQL(w.table.Schema, w.table.Name)
-		if len(w.excl) > 0 {
-			table += " WHERE " + strings.Join(w.excl, " AND ")
+		aliases := payload.Aliases[w.vis]
+		if len(aliases) == 0 {
+			continue
+		}
+		cols := compile.ReferencedColumns(w.table, payload.SQL, aliases)
+		proj := columnList(w.table, cols, "")
+		ref := compile.TableRefSQL(w.table.Schema, w.table.Name)
+		table := "SELECT " + proj + " FROM " + ref
+		var excl []string
+		for _, ex := range w.excl {
+			if ex.stable == nil {
+				excl = append(excl, ex.cond)
+				continue
+			}
+			g.need(ex.cte, ex.stable...)
+			conds := make([]string, len(ex.stable))
+			for i, cn := range ex.stable {
+				q := compile.QuoteIdent(cn)
+				conds[i] = fmt.Sprintf("__m.%s %s %s.%s", q, compile.EqualOperator(g.req.Built, w.table.Column(cn)), ref, q)
+			}
+			excl = append(excl, fmt.Sprintf("NOT EXISTS (SELECT 1 FROM %s AS __m WHERE %s)", ex.cte, strings.Join(conds, " AND ")))
+		}
+		if len(excl) > 0 {
+			table += " WHERE " + strings.Join(excl, " AND ")
 		}
 		parts := append(make([]string, 0, len(w.adds)+1), table)
 		for _, cte := range w.adds {
-			parts = append(parts, "SELECT * FROM "+cte)
+			g.need(cte, cols...)
+			parts = append(parts, "SELECT "+proj+" FROM "+cte)
 		}
-		vis := g.name("vis")
-		g.ctes = append(g.ctes, fmt.Sprintf("%s AS NOT MATERIALIZED (\n  %s\n)", vis, strings.Join(parts, "\n  UNION ALL ")))
-		overrides[w.table.Schema+"."+w.table.Name] = vis
+		g.ctes = append(g.ctes, fmt.Sprintf("%s AS NOT MATERIALIZED (\n  %s\n)", w.vis, strings.Join(parts, "\n  UNION ALL ")))
 	}
-	return overrides
+	pairs := make([]string, 0, 2*len(g.dml))
+	for cte, d := range g.dml {
+		cols := make([]string, 0, len(d.need))
+		for c := range d.need {
+			cols = append(cols, c)
+		}
+		pairs = append(pairs, retToken(cte), columnList(d.table, cols, d.qual))
+	}
+	return strings.NewReplacer(pairs...).Replace(strings.Join(g.ctes, ",\n"))
+}
+
+// columnList renders the columns of t named in cols, in table order and
+// qualified by qual when set, or the literal 1 when there are none.
+func columnList(t *introspect.Table, cols []string, qual string) string {
+	var out []string
+	for _, c := range t.Columns {
+		if slices.Contains(cols, c.Name) {
+			q := compile.QuoteIdent(c.Name)
+			if qual != "" {
+				q = qual + "." + q
+			}
+			out = append(out, q)
+		}
+	}
+	if len(out) == 0 {
+		return "1"
+	}
+	return strings.Join(out, ", ")
 }
 
 func (g *cteGen) name(prefix string) string {
@@ -680,6 +838,15 @@ func (g *cteGen) guard(cte, path string) {
 	g.guards = append(g.guards, fmt.Sprintf(
 		"(SELECT CASE WHEN count(*) > 0 THEN true ELSE concat(%s, count(*), ' rows')::boolean END FROM %s)",
 		compile.QuoteLiteral("nested-mutations: "+path+" matched "), cte))
+}
+
+// countOp charges one nested operation against max_operations.
+func (g *cteGen) countOp() error {
+	g.ops++
+	if g.ops > g.p.maxOperations {
+		return compile.UserErrorf("nested-mutations: more than %d nested operations", g.p.maxOperations)
+	}
+	return nil
 }
 
 // addParam renders v for the named column (enum labels, jsonb encoding,
@@ -816,13 +983,14 @@ type childWork struct {
 
 // rowFields applies the plain columns and forward nested fields of a row
 // input to a, emitting the CTEs of the forward operations (which come
-// before the row's own DML), and returns the backward nested fields.
-func (g *cteGen) rowFields(t *introspect.Table, inputType string, input map[string]any, a *assignments, depth int, update bool, path string) ([]childWork, error) {
+// before the row's own DML), and returns the backward nested fields. owner
+// identifies the row for an update and is nil for an insert.
+func (g *cteGen) rowFields(t *introspect.Table, inputType string, input map[string]any, a *assignments, depth int, owner *rowKey, path string) ([]childWork, error) {
 	specs := g.p.specs[inputType]
 	binding := g.req.Built.InputColumns[inputType]
 	for _, fname := range sortedKeys(input) {
 		col, ok := binding[fname]
-		if !ok || (input[fname] == nil && !update) {
+		if !ok || (input[fname] == nil && owner == nil) {
 			continue
 		}
 		val, err := g.addParam(t, col, input[fname])
@@ -844,7 +1012,7 @@ func (g *cteGen) rowFields(t *introspect.Table, inputType string, input map[stri
 			children = append(children, childWork{field: fname, spec: spec, input: nested})
 			continue
 		}
-		if err := g.forward(t, spec, nested, a, depth, update, path+fname); err != nil {
+		if err := g.forward(t, spec, nested, a, depth, owner, path+fname); err != nil {
 			return nil, err
 		}
 	}
@@ -860,7 +1028,7 @@ func (g *cteGen) insertRow(t *introspect.Table, inputType string, input map[stri
 		return compile.UserErrorf("nested-mutations: nesting depth exceeds limit %d", g.p.maxDepth)
 	}
 	var a assignments
-	children, err := g.rowFields(t, inputType, input, &a, depth, false, path)
+	children, err := g.rowFields(t, inputType, input, &a, depth, nil, path)
 	if err != nil {
 		return err
 	}
@@ -869,94 +1037,138 @@ func (g *cteGen) insertRow(t *introspect.Table, inputType string, input map[stri
 			if err := a.set(pair.Column, fill.cte+"."+compile.QuoteIdent(pair.RefColumn), "", path); err != nil {
 				return err
 			}
+			g.need(fill.cte, pair.RefColumn)
 		}
 		a.source(fill.cte)
 	}
 	tableSQL := compile.TableRefSQL(t.Schema, t.Name)
+	ret := g.returning(cteName, t, "")
 	var insert string
 	switch {
 	case len(a.cols) == 0:
-		insert = fmt.Sprintf("INSERT INTO %s DEFAULT VALUES RETURNING *", tableSQL)
+		insert = fmt.Sprintf("INSERT INTO %s DEFAULT VALUES RETURNING %s", tableSQL, ret)
 	case len(a.from) == 0:
-		insert = fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s) RETURNING *",
-			tableSQL, strings.Join(a.cols, ", "), strings.Join(a.vals, ", "))
+		insert = fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s) RETURNING %s",
+			tableSQL, strings.Join(a.cols, ", "), strings.Join(a.vals, ", "), ret)
 	default:
-		insert = fmt.Sprintf("INSERT INTO %s (%s) SELECT %s FROM %s RETURNING *",
-			tableSQL, strings.Join(a.cols, ", "), strings.Join(a.vals, ", "), strings.Join(a.from, ", "))
+		insert = fmt.Sprintf("INSERT INTO %s (%s) SELECT %s FROM %s RETURNING %s",
+			tableSQL, strings.Join(a.cols, ", "), strings.Join(a.vals, ", "), strings.Join(a.from, ", "), ret)
 	}
 	g.ctes = append(g.ctes, fmt.Sprintf("%s AS (\n  %s\n)", cteName, insert))
 	g.recordInsert(t, cteName)
 	return g.children(children, cteName, depth, path)
 }
 
-// scope restricts an UPDATE or DELETE to the children of the row in cte.
+// scope narrows an UPDATE or DELETE of a related row: cond renders the
+// restriction over a reference to the row's table, and from names a CTE
+// the condition reads ("" for none).
 type scope struct {
-	cte string
-	fk  *introspect.ForeignKey
+	from string
+	cond func(ref string) string
+}
+
+// childScope limits a statement to the rows of child referencing the row
+// in parentCTE through fk.
+func (g *cteGen) childScope(fk *introspect.ForeignKey, child *introspect.Table, parentCTE string) *scope {
+	for _, pair := range fk.JoinPairs() {
+		g.need(parentCTE, pair.RefColumn)
+	}
+	return &scope{from: parentCTE, cond: func(ref string) string { return g.matchCond(fk, child, ref, parentCTE) }}
+}
+
+// parentScope limits a statement to the row of fk's referenced table that
+// the owner row identified by key currently references.
+func (g *cteGen) parentScope(fk *introspect.ForeignKey, owner *introspect.Table, key rowKey) *scope {
+	return &scope{cond: func(ref string) string {
+		return fmt.Sprintf("EXISTS (SELECT 1 FROM %s AS __o WHERE %s AND %s)",
+			compile.TableRefSQL(owner.Schema, owner.Name), key.cond(g, owner, "__o"), g.matchCond(fk, owner, "__o", ref))
+	}}
 }
 
 // updateRow emits the CTEs updating the row of t that key identifies from
 // patch: forward operations first, then the UPDATE named cteName, then the
-// backward operations referencing it. A patch setting no column selects
-// the row instead. A non-nil sc limits the update to a child of sc's row.
+// backward operations referencing it. A patch setting no column locks the
+// row with SELECT ... FOR UPDATE instead, which still needs the UPDATE
+// privilege and passes the UPDATE policies. A non-nil sc narrows the row.
 func (g *cteGen) updateRow(t *introspect.Table, patchType string, patch map[string]any, cteName string, depth int, key rowKey, sc *scope, path string) error {
 	if depth > g.p.maxDepth {
 		return compile.UserErrorf("nested-mutations: nesting depth exceeds limit %d", g.p.maxDepth)
 	}
 	var a assignments
-	children, err := g.rowFields(t, patchType, patch, &a, depth, true, path)
+	children, err := g.rowFields(t, patchType, patch, &a, depth, &key, path)
 	if err != nil {
 		return err
 	}
+	for _, cw := range children {
+		for _, pair := range cw.spec.FK.JoinPairs() {
+			if a.patched[pair.RefColumn] {
+				return compile.UserErrorf("nested-mutations: %s%s: the patch changes a column the relation references", path, cw.field)
+			}
+		}
+	}
 	ref := compile.TableRefSQL(t.Schema, t.Name)
+	if len(a.cols) == 0 {
+		alias := "__s"
+		conds := []string{key.cond(g, t, alias)}
+		from := []string{ref + " AS " + alias}
+		if sc != nil {
+			conds = append(conds, sc.cond(alias))
+			if sc.from != "" {
+				from = append(from, sc.from)
+			}
+		}
+		g.ctes = append(g.ctes, fmt.Sprintf("%s AS (\n  SELECT %s FROM %s WHERE %s FOR UPDATE OF %s\n)",
+			cteName, g.returning(cteName, t, alias), strings.Join(from, ", "), strings.Join(conds, " AND "), alias))
+		return g.children(children, cteName, depth, path)
+	}
 	conds := []string{key.cond(g, t, ref)}
 	if sc != nil {
-		a.source(sc.cte)
-		conds = append(conds, g.matchCond(sc.fk, t, ref, sc.cte))
+		conds = append(conds, sc.cond(ref))
+		if sc.from != "" {
+			a.source(sc.from)
+		}
 	}
 	from := ""
 	if len(a.from) > 0 {
 		from = " FROM " + strings.Join(a.from, ", ")
 	}
-	where := strings.Join(conds, " AND ")
-	if len(a.cols) == 0 {
-		g.ctes = append(g.ctes, fmt.Sprintf("%s AS (\n  SELECT %s.* FROM %s%s WHERE %s\n)", cteName, ref, ref, strings.ReplaceAll(from, " FROM ", ", "), where))
-	} else {
-		sets := make([]string, len(a.cols))
-		for i := range a.cols {
-			sets[i] = a.cols[i] + " = " + a.vals[i]
-		}
-		g.ctes = append(g.ctes, fmt.Sprintf("%s AS (\n  UPDATE %s SET %s%s WHERE %s RETURNING %s.*\n)",
-			cteName, ref, strings.Join(sets, ", "), from, where, ref))
-		g.recordChange(t, cteName, key, a.patched, true)
+	sets := make([]string, len(a.cols))
+	for i := range a.cols {
+		sets[i] = a.cols[i] + " = " + a.vals[i]
 	}
+	g.ctes = append(g.ctes, fmt.Sprintf("%s AS (\n  UPDATE %s SET %s%s WHERE %s RETURNING %s\n)",
+		cteName, ref, strings.Join(sets, ", "), from, strings.Join(conds, " AND "), g.returning(cteName, t, ref)))
+	g.recordChange(t, cteName, key, a.patched, true)
 	return g.children(children, cteName, depth, path)
 }
 
 // matchCond renders the join of fk between the rows of t at ref (the
-// referencing side) and the referenced row in cte.
-func (g *cteGen) matchCond(fk *introspect.ForeignKey, t *introspect.Table, ref, cte string) string {
+// referencing side) and the referenced row at parent (a CTE or table
+// reference).
+func (g *cteGen) matchCond(fk *introspect.ForeignKey, t *introspect.Table, ref, parent string) string {
 	var conds []string
 	for _, pair := range fk.JoinPairs() {
 		op := "&&"
 		if pair.Op == introspect.JoinEqual {
 			op = compile.EqualOperator(g.req.Built, t.Column(pair.Column))
 		}
-		conds = append(conds, fmt.Sprintf("%s.%s %s %s.%s", ref, compile.QuoteIdent(pair.Column), op, cte, compile.QuoteIdent(pair.RefColumn)))
+		conds = append(conds, fmt.Sprintf("%s.%s %s %s.%s", ref, compile.QuoteIdent(pair.Column), op, parent, compile.QuoteIdent(pair.RefColumn)))
 	}
 	return strings.Join(conds, " AND ")
 }
 
 // forward emits the operations of a forward nested field and wires the
-// owner row's FK columns in a: create, connect and update link the row to
-// the parent they produce, disconnect clears the FK when it references the
-// given parent, delete removes a parent row.
-func (g *cteGen) forward(owner *introspect.Table, spec *nestedSpec, nested map[string]any, a *assignments, depth int, update bool, path string) error {
+// owner row's FK columns in a: create and connect point the row at the
+// parent they produce, disconnect clears the FK when it references the
+// given parent, update and delete act on the parent the row references.
+// owner identifies the owner row of an update and is nil for an insert.
+func (g *cteGen) forward(t *introspect.Table, spec *nestedSpec, nested map[string]any, a *assignments, depth int, owner *rowKey, path string) error {
 	ops := g.p.ops[spec.Input]
 	parent := spec.Target
 	pkey := parent.Schema + "." + parent.Name
+	pref := compile.TableRefSQL(parent.Schema, parent.Name)
 	var link, clear string
-	links, clears, total := 0, 0, 0
+	setters, total := 0, 0
 	for _, fname := range sortedKeys(nested) {
 		op := ops[fname]
 		obj, _ := nested[fname].(map[string]any)
@@ -964,22 +1176,27 @@ func (g *cteGen) forward(owner *introspect.Table, spec *nestedSpec, nested map[s
 			continue
 		}
 		total++
+		if err := g.countOp(); err != nil {
+			return err
+		}
 		opPath := path + "." + fname
+		if owner == nil && (op.kind == opUpdate || op.kind == opDelete || op.kind == opDisconnect) {
+			return compile.UserErrorf("nested-mutations: %s applies to update mutations only", opPath)
+		}
 		switch op.kind {
 		case opCreate:
-			links++
+			setters++
 			link = g.name("p")
 			if err := g.insertRow(parent, g.p.inputForTable[pkey], obj, link, depth+1, nil, opPath+"."); err != nil {
 				return err
 			}
 		case opConnect:
-			links++
+			setters++
 			key, err := g.opKey(parent, op, obj, opPath)
 			if err != nil {
 				return err
 			}
 			link = g.name("p")
-			ref := compile.TableRefSQL(parent.Schema, parent.Name)
 			var proj []string
 			for _, pair := range equalityPairs(spec.FK) {
 				proj = append(proj, compile.QuoteIdent(pair.RefColumn))
@@ -989,49 +1206,45 @@ func (g *cteGen) forward(owner *introspect.Table, spec *nestedSpec, nested map[s
 				distinct = "DISTINCT "
 			}
 			g.ctes = append(g.ctes, fmt.Sprintf("%s AS (\n  SELECT %s%s FROM %s WHERE %s\n)",
-				link, distinct, strings.Join(proj, ", "), ref, key.cond(g, parent, ref)))
+				link, distinct, strings.Join(proj, ", "), pref, key.cond(g, parent, pref)))
 			g.guard(link, opPath)
 		case opUpdate:
-			links++
 			key, err := g.opKey(parent, op, obj, opPath)
 			if err != nil {
 				return err
 			}
-			link = g.name("p")
+			cte := g.name("p")
 			patch, _ := obj[patchField(g.req.Built.TypeForTable[pkey])].(map[string]any)
-			if err := g.updateRow(parent, g.p.patchForTable[pkey], patch, link, depth+1, key, nil, opPath+"."); err != nil {
+			if err := g.updateRow(parent, g.p.patchForTable[pkey], patch, cte, depth+1, key, g.parentScope(spec.FK, t, *owner), opPath+"."); err != nil {
 				return err
 			}
-			g.guard(link, opPath)
+			g.guard(cte, opPath)
 		case opDelete:
 			key, err := g.opKey(parent, op, obj, opPath)
 			if err != nil {
 				return err
 			}
 			cte := g.name("d")
-			ref := compile.TableRefSQL(parent.Schema, parent.Name)
-			g.ctes = append(g.ctes, fmt.Sprintf("%s AS (\n  DELETE FROM %s WHERE %s RETURNING %s.*\n)", cte, ref, key.cond(g, parent, ref), ref))
+			g.ctes = append(g.ctes, fmt.Sprintf("%s AS (\n  DELETE FROM %s WHERE %s AND %s RETURNING %s\n)",
+				cte, pref, key.cond(g, parent, pref), g.parentScope(spec.FK, t, *owner).cond(pref), g.returning(cte, parent, pref)))
 			g.recordChange(parent, cte, key, nil, false)
 			g.guard(cte, opPath)
 		case opDisconnect:
-			if !update {
-				return compile.UserErrorf("nested-mutations: %s: disconnect applies to update mutations only", opPath)
-			}
-			clears++
+			setters++
 			key, err := g.opKey(parent, op, obj, opPath)
 			if err != nil {
 				return err
 			}
-			clear = g.references(owner, spec.FK, parent, key)
+			clear = g.references(t, spec.FK, parent, key)
 		}
 	}
 	if total == 0 {
 		return compile.UserErrorf("nested-mutations: %s: specify an operation", path)
 	}
-	if links+clears > 1 {
-		return compile.UserErrorf("nested-mutations: %s: specify at most one of create, connect, update or disconnect", path)
+	if setters > 1 {
+		return compile.UserErrorf("nested-mutations: %s: specify at most one of create, connect or disconnect", path)
 	}
-	ownerRef := compile.TableRefSQL(owner.Schema, owner.Name)
+	ownerRef := compile.TableRefSQL(t.Schema, t.Name)
 	for _, pair := range equalityPairs(spec.FK) {
 		col := compile.QuoteIdent(pair.Column)
 		switch {
@@ -1039,6 +1252,7 @@ func (g *cteGen) forward(owner *introspect.Table, spec *nestedSpec, nested map[s
 			if err := a.set(pair.Column, link+"."+compile.QuoteIdent(pair.RefColumn), "", path); err != nil {
 				return err
 			}
+			g.need(link, pair.RefColumn)
 		case clear != "":
 			if err := a.set(pair.Column, fmt.Sprintf("CASE WHEN %s THEN NULL ELSE %s.%s END", clear, ownerRef, col), "", path); err != nil {
 				return err
@@ -1119,6 +1333,9 @@ func (g *cteGen) backward(spec *nestedSpec, nested map[string]any, parentCTE str
 			if obj == nil {
 				continue
 			}
+			if err := g.countOp(); err != nil {
+				return err
+			}
 			opPath := fmt.Sprintf("%s.%s[%d]", path, fname, i)
 			if op.kind == opCreate {
 				if err := g.insertRow(child, g.p.inputForTable[ckey], obj, g.name("c"), depth+1, &parentFill{fk: spec.FK, cte: parentCTE}, opPath+"."); err != nil {
@@ -1130,17 +1347,15 @@ func (g *cteGen) backward(spec *nestedSpec, nested map[string]any, parentCTE str
 			if err != nil {
 				return err
 			}
+			cte := g.name("c")
 			if op.kind == opUpdate {
-				cte := g.name("c")
 				patch, _ := obj[patchField(g.req.Built.TypeForTable[ckey])].(map[string]any)
-				if err := g.updateRow(child, g.p.patchForTable[ckey], patch, cte, depth+1, key, &scope{cte: parentCTE, fk: spec.FK}, opPath+"."); err != nil {
+				if err := g.updateRow(child, g.p.patchForTable[ckey], patch, cte, depth+1, key, g.childScope(spec.FK, child, parentCTE), opPath+"."); err != nil {
 					return err
 				}
 				g.guard(cte, opPath)
 				continue
 			}
-			cte := g.name("c")
-			match := g.matchCond(spec.FK, child, ref, parentCTE)
 			patched := map[string]bool{}
 			var sets []string
 			for _, pair := range equalityPairs(spec.FK) {
@@ -1148,23 +1363,26 @@ func (g *cteGen) backward(spec *nestedSpec, nested map[string]any, parentCTE str
 				val := "NULL"
 				if op.kind == opConnect {
 					val = parentCTE + "." + compile.QuoteIdent(pair.RefColumn)
+					g.need(parentCTE, pair.RefColumn)
 				}
 				sets = append(sets, compile.QuoteIdent(pair.Column)+" = "+val)
 			}
 			switch op.kind {
 			case opConnect:
-				g.ctes = append(g.ctes, fmt.Sprintf("%s AS (\n  UPDATE %s SET %s FROM %s WHERE %s RETURNING %s.*\n)",
-					cte, ref, strings.Join(sets, ", "), parentCTE, key.cond(g, child, ref), ref))
+				g.ctes = append(g.ctes, fmt.Sprintf("%s AS (\n  UPDATE %s SET %s FROM %s WHERE %s RETURNING %s\n)",
+					cte, ref, strings.Join(sets, ", "), parentCTE, key.cond(g, child, ref), g.returning(cte, child, ref)))
 				g.recordChange(child, cte, key, patched, true)
 				g.guard(cte, opPath)
 			case opDelete:
-				g.ctes = append(g.ctes, fmt.Sprintf("%s AS (\n  DELETE FROM %s USING %s WHERE %s AND %s RETURNING %s.*\n)",
-					cte, ref, parentCTE, key.cond(g, child, ref), match, ref))
+				sc := g.childScope(spec.FK, child, parentCTE)
+				g.ctes = append(g.ctes, fmt.Sprintf("%s AS (\n  DELETE FROM %s USING %s WHERE %s AND %s RETURNING %s\n)",
+					cte, ref, parentCTE, key.cond(g, child, ref), sc.cond(ref), g.returning(cte, child, ref)))
 				g.recordChange(child, cte, key, nil, false)
 				g.guard(cte, opPath)
 			case opDisconnect:
-				g.ctes = append(g.ctes, fmt.Sprintf("%s AS (\n  UPDATE %s SET %s FROM %s WHERE %s AND %s RETURNING %s.*\n)",
-					cte, ref, strings.Join(sets, ", "), parentCTE, key.cond(g, child, ref), match, ref))
+				sc := g.childScope(spec.FK, child, parentCTE)
+				g.ctes = append(g.ctes, fmt.Sprintf("%s AS (\n  UPDATE %s SET %s FROM %s WHERE %s AND %s RETURNING %s\n)",
+					cte, ref, strings.Join(sets, ", "), parentCTE, key.cond(g, child, ref), sc.cond(ref), g.returning(cte, child, ref)))
 				g.recordChange(child, cte, key, patched, true)
 			}
 		}
@@ -1197,14 +1415,18 @@ func sortedKeys(m map[string]any) []string {
 // ---- RequestHook ----
 
 // BeforeOperation forces a transaction when the operation uses nested
-// mutation fields (unless force_transactions is disabled).
+// mutation fields (unless force_transactions is disabled). Root fields are
+// collected as the executor runs them, through fragments and @skip/@include.
 func (p *Plugin) BeforeOperation(ctx context.Context, op *exec.Operation) (context.Context, error) {
 	if !p.forceTx || op.Type != ast.Mutation {
 		return ctx, nil
 	}
-	for _, sel := range op.Definition.SelectionSet {
-		f, ok := sel.(*ast.Field)
-		if !ok || f.Definition == nil {
+	var frags ast.FragmentDefinitionList
+	if op.Document != nil {
+		frags = op.Document.Fragments
+	}
+	for _, f := range exec.CollectRootFields(op.Definition.SelectionSet, frags, op.Vars) {
+		if f.Definition == nil {
 			continue
 		}
 		for _, name := range [...]string{"input", "patch"} {

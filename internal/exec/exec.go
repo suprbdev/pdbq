@@ -940,6 +940,14 @@ func pageArg(f *ast.Field, vars map[string]any) (int, bool) {
 	return 0, false
 }
 
+// CollectRootFields returns the fields of a selection set with fragment
+// spreads and inline fragments expanded and @skip/@include applied, as the
+// executor resolves an operation's root fields; RequestHook plugins use it
+// to inspect what an operation will run.
+func CollectRootFields(sel ast.SelectionSet, frags ast.FragmentDefinitionList, vars map[string]any) []*ast.Field {
+	return collectRootFields(sel, frags, vars)
+}
+
 // collectRootFields flattens the operation's selection set to executable root
 // fields, dropping selections excluded by @skip/@include (an excluded root
 // field is simply absent from the response).

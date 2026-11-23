@@ -99,13 +99,20 @@ func TestNestedMutationOperations(t *testing.T) {
 			noMember { team { slug noMembersByTeamId { nodes { name } } } } } }`, m), nil)
 		expect(t, res, "updateNoMemberById", `{"noMember": {"team": {"slug": "green", "noMembersByTeamId": {"nodes": [{"name": "fwd-upd"}]}}}}`)
 
-		res = post(t, hs.URL, fmt.Sprintf(`mutation { updateNoMemberById(id: %d, patch: {name: "fwd-upd2", team: {updateById: {id: %d, noTeamPatch: {name: "Blue!"}}}}) {
-			noMember { name team { name } } } }`, m, blue), nil)
-		expect(t, res, "updateNoMemberById", `{"noMember": {"name": "fwd-upd2", "team": {"name": "Blue!"}}}`)
+		res = post(t, hs.URL, fmt.Sprintf(`mutation { updateNoMemberById(id: %d, patch: {name: "fwd-upd2", team: {connectById: {id: %d}}}) {
+			noMember { name team { slug } } } }`, m, blue), nil)
+		expect(t, res, "updateNoMemberById", `{"noMember": {"name": "fwd-upd2", "team": {"slug": "blue"}}}`)
 
-		res = post(t, hs.URL, fmt.Sprintf(`mutation($id: ID!) { updateNoMemberById(id: %d, patch: {team: {updateByNodeId: {nodeId: $id, noTeamPatch: {name: "Red!"}}}}) {
-			noMember { team { slug name } } } }`, m), map[string]any{"id": nodeID("NoTeam", red)})
-		expect(t, res, "updateNoMemberById", `{"noMember": {"team": {"slug": "red", "name": "Red!"}}}`)
+		res = post(t, hs.URL, fmt.Sprintf(`mutation($id: ID!) { updateNoMemberById(id: %d, patch: {team: {updateByNodeId: {nodeId: $id, noTeamPatch: {name: "Blue!"}}}}) {
+			noMember { team { slug name } } } }`, m), map[string]any{"id": nodeID("NoTeam", blue)})
+		expect(t, res, "updateNoMemberById", `{"noMember": {"team": {"slug": "blue", "name": "Blue!"}}}`)
+
+		res = post(t, hs.URL, fmt.Sprintf(`mutation { updateNoMemberById(id: %d, patch: {team: {updateById: {id: %d, noTeamPatch: {name: "Red!"}}}}) {
+			noMember { id } } }`, m, red), nil)
+		expectError(t, res, "team.updateById matched 0 rows")
+		if name := scalar(t, `SELECT name FROM no_teams WHERE id = $1`, red); name != "Red" {
+			t.Errorf("forward update reached a team the member does not reference: %v", name)
+		}
 	})
 
 	t.Run("forward disconnect by key and nodeId", func(t *testing.T) {
@@ -119,7 +126,7 @@ func TestNestedMutationOperations(t *testing.T) {
 		expect(t, res, "updateNoMemberById", `{"noMember": {"teamId": null, "team": null}}`)
 
 		res = post(t, hs.URL, `mutation { createNoMember(input: {name: "fwd-disc-create", team: {disconnectById: {id: 1}}}) { noMember { id } } }`, nil)
-		expectError(t, res, "disconnect applies to update mutations only")
+		expectError(t, res, `Field "disconnectById" is not defined`)
 	})
 
 	t.Run("forward delete with disconnect", func(t *testing.T) {
@@ -134,7 +141,7 @@ func TestNestedMutationOperations(t *testing.T) {
 
 		res = post(t, hs.URL, fmt.Sprintf(`mutation { updateNoMemberById(id: %d, patch: {team: {connectById: {id: %d}, create: {slug: "x", name: "X"}}}) {
 			noMember { teamId } } }`, m, red), nil)
-		expectError(t, res, "specify at most one of create, connect, update or disconnect")
+		expectError(t, res, "specify at most one of create, connect or disconnect")
 	})
 
 	t.Run("backward operations on update", func(t *testing.T) {
@@ -231,6 +238,12 @@ func TestNestedMutationOperations(t *testing.T) {
 		if name := scalar(t, `SELECT name FROM no_teams WHERE id = $1`, red); name == "no-tx" {
 			t.Error("statement was not atomic: team renamed")
 		}
+
+		res = post(t, plain.URL, `mutation { updateNoMemberById(id: 999999, patch: {team: {create: {slug: "ghost", name: "Ghost"}}}) { noMember { id } } }`, nil)
+		expectError(t, res, "updateNoMemberById matched 0 rows")
+		if n := scalar(t, `SELECT count(*) FROM no_teams WHERE slug = 'ghost'`); n != int64(0) {
+			t.Errorf("forward create persisted without its main row: %v", n)
+		}
 	})
 }
 
@@ -242,10 +255,17 @@ func TestNestedMutationOperationsRLS(t *testing.T) {
 	conn := testConn(t)
 	execAll(t, conn,
 		`CREATE TABLE nr_lists (id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY, owner_id integer NOT NULL, name text NOT NULL)`,
-		`CREATE TABLE nr_items (id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY, list_id integer REFERENCES nr_lists (id), owner_id integer NOT NULL, body text NOT NULL)`,
+		`CREATE TABLE nr_items (id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY, list_id integer REFERENCES nr_lists (id), owner_id integer NOT NULL, body text NOT NULL, secret text)`,
+		`CREATE TABLE nr_locked (id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY, name text NOT NULL)`,
+		`CREATE TABLE nr_locked_items (id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY, locked_id integer REFERENCES nr_locked (id), body text NOT NULL)`,
+		`GRANT SELECT ON nr_locked TO app_user`,
+		`GRANT SELECT, UPDATE ON nr_locked_items TO app_user`,
+		`INSERT INTO nr_locked (name) VALUES ('locked')`,
+		`INSERT INTO nr_locked_items (body) VALUES ('loose')`,
 		`CREATE INDEX nr_items_list_id_idx ON nr_items (list_id)`,
 		`CREATE INDEX nr_items_body_idx ON nr_items (body)`,
-		`GRANT SELECT, INSERT, UPDATE, DELETE ON nr_lists, nr_items TO app_user`,
+		`GRANT SELECT, INSERT, UPDATE, DELETE ON nr_lists TO app_user`,
+		`GRANT SELECT (id, list_id, owner_id, body), INSERT, UPDATE, DELETE ON nr_items TO app_user`,
 		`ALTER TABLE nr_lists ENABLE ROW LEVEL SECURITY`,
 		`ALTER TABLE nr_items ENABLE ROW LEVEL SECURITY`,
 		`CREATE POLICY nr_lists_all ON nr_lists USING (true) WITH CHECK (true)`,
@@ -254,11 +274,11 @@ func TestNestedMutationOperationsRLS(t *testing.T) {
 		`CREATE POLICY nr_items_upd ON nr_items FOR UPDATE USING (owner_id = NULLIF(current_setting('pdbq.claims.user_id', true), '')::integer)`,
 		`CREATE POLICY nr_items_del ON nr_items FOR DELETE USING (owner_id = NULLIF(current_setting('pdbq.claims.user_id', true), '')::integer)`,
 		`INSERT INTO nr_lists (owner_id, name) VALUES (2, 'shared')`,
-		`INSERT INTO nr_items (list_id, owner_id, body) SELECT id, 1, 'ada' FROM nr_lists`,
+		`INSERT INTO nr_items (list_id, owner_id, body, secret) SELECT id, 1, 'ada', 's' FROM nr_lists`,
 		`INSERT INTO nr_items (list_id, owner_id, body) SELECT id, 2, 'grace' FROM nr_lists`,
 	)
 	t.Cleanup(func() {
-		_, _ = conn.Exec(context.Background(), `DROP TABLE nr_items; DROP TABLE nr_lists`)
+		_, _ = conn.Exec(context.Background(), `DROP TABLE nr_items, nr_lists, nr_locked_items, nr_locked`)
 	})
 	ctx := context.Background()
 	var listID, adaItem, graceItem int
@@ -294,12 +314,40 @@ func TestNestedMutationOperationsRLS(t *testing.T) {
 	}
 
 	t.Run("own rows", func(t *testing.T) {
-		res := asGrace(t, fmt.Sprintf(`mutation { updateNrListById(id: %d, patch: {nrItemsByListId: {updateById: [{id: %d, nrItemPatch: {body: "grace2"}}]}}) {
+		res := asGrace(t, fmt.Sprintf(`mutation { updateNrListById(id: %d, patch: {nrItemsByListId: {updateById: [{id: %d, nrItemPatch: {body: "grace2"}}], create: [{body: "grace3", ownerId: 2}]}}) {
 			nrList { nrItemsByListId(orderBy: BODY_ASC) { nodes { body } } } } }`, listID, graceItem))
 		requireNoErrors(t, res)
-		want := normalizeStr(t, `{"nrList": {"nrItemsByListId": {"nodes": [{"body": "ada"}, {"body": "grace2"}]}}}`)
+		want := normalizeStr(t, `{"nrList": {"nrItemsByListId": {"nodes": [{"body": "ada"}, {"body": "grace2"}, {"body": "grace3"}]}}}`)
 		if got := normalize(t, res.Data["updateNrListById"]); got != want {
 			t.Errorf("got %s\nwant %s", got, want)
+		}
+	})
+
+	t.Run("column grants: forward operations", func(t *testing.T) {
+		res := asGrace(t, fmt.Sprintf(`mutation { createNrItem(input: {body: "grace4", ownerId: 2, list: {connectById: {id: %d}}}) {
+			nrItem { body list { nrItemsByListId(filter: {body: {startsWith: "grace4"}}) { totalCount } } } } }`, listID))
+		requireNoErrors(t, res)
+		want := normalizeStr(t, `{"nrItem": {"body": "grace4", "list": {"nrItemsByListId": {"totalCount": 1}}}}`)
+		if got := normalize(t, res.Data["createNrItem"]); got != want {
+			t.Errorf("got %s\nwant %s", got, want)
+		}
+	})
+
+	t.Run("a patch without columns needs the UPDATE privilege", func(t *testing.T) {
+		var locked, loose int
+		if err := conn.QueryRow(ctx, `SELECT l.id, i.id FROM nr_locked l, nr_locked_items i`).Scan(&locked, &loose); err != nil {
+			t.Fatal(err)
+		}
+		res := asGrace(t, fmt.Sprintf(`mutation { updateNrLockedById(id: %d, patch: {nrLockedItemsByLockedId: {connectById: [{id: %d}]}}) { nrLocked { id } } }`, locked, loose))
+		if len(res.Errors) == 0 || !strings.Contains(res.Errors[0].Message, "permission denied") {
+			t.Fatalf("want permission denied, got %+v", res.Errors)
+		}
+		var linked any
+		if err := conn.QueryRow(ctx, `SELECT locked_id FROM nr_locked_items WHERE id = $1`, loose).Scan(&linked); err != nil {
+			t.Fatal(err)
+		}
+		if linked != nil {
+			t.Errorf("child connected without UPDATE on the parent: %v", linked)
 		}
 	})
 
@@ -321,7 +369,7 @@ func TestNestedMutationOperationsRLS(t *testing.T) {
 			}
 			if tc.path == "" {
 				requireNoErrors(t, res)
-				want := normalizeStr(t, `{"nrList": {"name": "renamed", "nrItemsByListId": {"totalCount": 2}}}`)
+				want := normalizeStr(t, `{"nrList": {"name": "renamed", "nrItemsByListId": {"totalCount": 4}}}`)
 				if got := normalize(t, res.Data["updateNrListById"]); got != want {
 					t.Errorf("got %s\nwant %s", got, want)
 				}

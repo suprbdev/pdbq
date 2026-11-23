@@ -357,3 +357,29 @@ func compileRoot(t *testing.T, built *schema.Built, query string) *compile.State
 	}
 	return stmt
 }
+
+func TestNestedMutationsHonorOmittedForeignKeyColumns(t *testing.T) {
+	omit := func(action string) *schema.Built {
+		return build(t, func(c *introspect.Catalog) {
+			c.Table("public", "posts").Column("author_id").Comment = "@omit " + action
+		}, nestedmutations.New(nil))
+	}
+	sdl := omit("create").SDL
+	if strings.Contains(sdlBlock(t, sdl, "input PostCreateInput {"), "author:") {
+		t.Error("PostCreateInput must not set an omitted FK column through author")
+	}
+	if strings.Contains(sdlBlock(t, sdl, "input UserPostsByAuthorIdNestedInput {"), "create:") {
+		t.Error("backward create must not fill an FK column omitted from the child create input")
+	}
+	wantSDL(t, sdlBlock(t, sdl, "input UserPostsByAuthorIdNestedInput {"), "connectById: [PostConnectByIdInput!]")
+	wantSDL(t, sdlBlock(t, sdl, "input PostAuthorNestedPatchInput {"), "connectById:", "updateById:")
+
+	sdl = omit("update").SDL
+	patch := sdlBlock(t, sdl, "input PostAuthorNestedPatchInput {")
+	rejectSDL(t, patch, "connectById:", "create:")
+	wantSDL(t, patch, "updateById:", "deleteById:")
+	bwd := sdlBlock(t, sdl, "input UserPostsByAuthorIdNestedPatchInput {")
+	rejectSDL(t, bwd, "connectById:")
+	wantSDL(t, bwd, "create:", "updateById:")
+	wantSDL(t, sdlBlock(t, sdl, "input PostCreateInput {"), "author: PostAuthorNestedInput")
+}

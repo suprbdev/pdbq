@@ -9,7 +9,7 @@ mutation($c: ID!) {
   updateUserById(id: 1, patch: {placesByOwnerId: {create: [{name: "Home"}]}}) {
     user { placesByOwnerId { totalCount } }
   }
-  createPost(input: {title: "x", author: {updateById: {id: 2, userPatch: {fullName: "G"}}}}) {
-    post { author { fullName } }
+  updatePlaceById(id: 1, patch: {owner: {updateById: {id: 2, userPatch: {fullName: "G"}}, deleteByEmail: {email: "x@example.com"}}}) {
+    place { owner { fullName } }
   }
 }

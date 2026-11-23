@@ -84,7 +84,7 @@ func TestNestedConnectAndChildren(t *testing.T) {
 	if got := strings.Count(sql, `INSERT INTO "public"."posts"`); got != 2 {
 		t.Errorf("want 2 child inserts, got %d:\n%s", got, sql)
 	}
-	if !strings.Contains(sql, `FROM __mut RETURNING *`) {
+	if !strings.Contains(sql, `SELECT $2, __mut."id" FROM __mut RETURNING 1`) {
 		t.Errorf("children must reference __mut:\n%s", sql)
 	}
 
@@ -268,11 +268,11 @@ func TestPayloadReadsVisibilityCTEs(t *testing.T) {
 	}`
 	sql := compileRoot(t, reg, built, query).SQL
 	for _, want := range []string{
-		`INSERT INTO "public"."comments" ("body", "post_id") SELECT $4, __c_2."id" FROM __c_2 RETURNING *`,
-		"__vis_4 AS NOT MATERIALIZED (\n  SELECT * FROM \"public\".\"users\"\n  UNION ALL SELECT * FROM __mut\n)",
-		"__vis_5 AS NOT MATERIALIZED (\n  SELECT * FROM \"public\".\"places\"\n  UNION ALL SELECT * FROM __c_1\n)",
-		"__vis_6 AS NOT MATERIALIZED (\n  SELECT * FROM \"public\".\"posts\"\n  UNION ALL SELECT * FROM __c_2\n)",
-		"__vis_7 AS NOT MATERIALIZED (\n  SELECT * FROM \"public\".\"comments\"\n  UNION ALL SELECT * FROM __c_3\n)",
+		`INSERT INTO "public"."comments" ("body", "post_id") SELECT $4, __c_2."id" FROM __c_2 RETURNING "id", "post_id", "body"`,
+		"__vis_4 AS NOT MATERIALIZED (\n  SELECT \"id\" FROM \"public\".\"users\"\n  UNION ALL SELECT \"id\" FROM __mut\n)",
+		"__vis_5 AS NOT MATERIALIZED (\n  SELECT \"id\", \"owner_id\", \"name\" FROM \"public\".\"places\"\n  UNION ALL SELECT \"id\", \"owner_id\", \"name\" FROM __c_1\n)",
+		"__vis_6 AS NOT MATERIALIZED (\n  SELECT \"id\", \"author_id\" FROM \"public\".\"posts\"\n  UNION ALL SELECT \"id\", \"author_id\" FROM __c_2\n)",
+		"__vis_7 AS NOT MATERIALIZED (\n  SELECT \"id\", \"post_id\", \"body\" FROM \"public\".\"comments\"\n  UNION ALL SELECT \"id\", \"post_id\", \"body\" FROM __c_3\n)",
 	} {
 		if !strings.Contains(sql, want) {
 			t.Errorf("SQL missing %q:\n%s", want, sql)
