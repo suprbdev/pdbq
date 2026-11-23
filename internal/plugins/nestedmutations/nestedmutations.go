@@ -81,10 +81,7 @@ func (p *Plugin) TransformSchema(_ context.Context, b *schema.Builder) error {
 			if parent == nil {
 				continue
 			}
-			relName := b.Inflect(inflect.KindRelationForward, inflect.Input{
-				Schema: t.Schema, Table: fk.RefTable, Column: fk.Columns[0], Columns: fk.Columns,
-				Constraint: fk.Name,
-			})
+			relName := b.ForwardRelationName(t, fk)
 			nestedType := p.ensureNestedInput(b, t, parent, fk, relName)
 			if nestedType == "" || in.Field(relName) != nil {
 				continue
@@ -98,8 +95,8 @@ func (p *Plugin) TransformSchema(_ context.Context, b *schema.Builder) error {
 			p.addSpec(inputName, relName, &nestedSpec{Forward: true, FK: fk, Owner: t, Target: parent})
 			// The FK columns can now come from the nested input, so they are
 			// no longer required in the GraphQL input (DB still enforces).
-			for _, col := range fk.Columns {
-				fieldName := b.Inflect(inflect.KindFieldName, inflect.Input{Table: t.Name, Column: col})
+			for _, pair := range equalityPairs(fk) {
+				fieldName := b.Inflect(inflect.KindFieldName, inflect.Input{Table: t.Name, Column: pair.Column})
 				if f := in.Field(fieldName); f != nil {
 					f.Type = strings.TrimSuffix(f.Type, "!")
 				}
@@ -136,8 +133,8 @@ func (p *Plugin) TransformSchema(_ context.Context, b *schema.Builder) error {
 				p.addSpec(inputName, relName, &nestedSpec{Forward: false, FK: fk, Owner: child, Target: child})
 				// Child FK columns become optional (supplied by the parent).
 				childIn := b.Inputs[childInput]
-				for _, col := range fk.Columns {
-					fieldName := b.Inflect(inflect.KindFieldName, inflect.Input{Table: child.Name, Column: col})
+				for _, pair := range equalityPairs(fk) {
+					fieldName := b.Inflect(inflect.KindFieldName, inflect.Input{Table: child.Name, Column: pair.Column})
 					if f := childIn.Field(fieldName); f != nil {
 						f.Type = strings.TrimSuffix(f.Type, "!")
 					}
@@ -177,7 +174,8 @@ func (p *Plugin) ensureNestedInput(b *schema.Builder, owner, parent *introspect.
 }
 
 // ensureConnectInput creates `<Parent>ConnectInput` keyed by the columns the
-// FK references.
+// FK references by equality: all of them, or all but the period of a PERIOD
+// FK, which connects to every version of the referenced entity.
 func (p *Plugin) ensureConnectInput(b *schema.Builder, parent *introspect.Table, fk *introspect.ForeignKey) string {
 	parentType := b.TypeForTable[parent.Schema+"."+parent.Name]
 	name := parentType + "ConnectInput"
@@ -185,7 +183,8 @@ func (p *Plugin) ensureConnectInput(b *schema.Builder, parent *introspect.Table,
 		return name
 	}
 	in := &schema.Input{Name: name}
-	for _, col := range fk.RefColumns {
+	for _, pair := range equalityPairs(fk) {
+		col := pair.RefColumn
 		c := parent.Column(col)
 		if c == nil {
 			return ""
@@ -371,9 +370,9 @@ func (g *cteGen) insertChain(t *introspect.Table, inputType string, input map[st
 			if err != nil {
 				return "", err
 			}
-			for i, col := range spec.FK.Columns {
-				cols = append(cols, compile.QuoteIdent(col))
-				vals = append(vals, parentCTE+"."+compile.QuoteIdent(spec.FK.RefColumns[i]))
+			for _, pair := range equalityPairs(spec.FK) {
+				cols = append(cols, compile.QuoteIdent(pair.Column))
+				vals = append(vals, parentCTE+"."+compile.QuoteIdent(pair.RefColumn))
 			}
 			fromCTEs = append(fromCTEs, parentCTE)
 		} else {
@@ -436,8 +435,16 @@ func (g *cteGen) resolveParent(spec *nestedSpec, nested map[string]any, depth in
 		if len(conds) == 0 {
 			return "", fmt.Errorf("nested-mutations: empty connect for %s", spec.FK.RefTable)
 		}
-		g.ctes = append(g.ctes, fmt.Sprintf("%s AS (\n  SELECT * FROM %s WHERE %s\n)",
-			name, compile.TableRefSQL(spec.Target.Schema, spec.Target.Name), strings.Join(conds, " AND ")))
+		proj := "*"
+		if !spec.FK.ReferencesOne() {
+			refCols := make([]string, 0, len(spec.FK.RefColumns))
+			for _, pair := range equalityPairs(spec.FK) {
+				refCols = append(refCols, compile.QuoteIdent(pair.RefColumn))
+			}
+			proj = "DISTINCT " + strings.Join(refCols, ", ")
+		}
+		g.ctes = append(g.ctes, fmt.Sprintf("%s AS (\n  SELECT %s FROM %s WHERE %s\n)",
+			name, proj, compile.TableRefSQL(spec.Target.Schema, spec.Target.Name), strings.Join(conds, " AND ")))
 		return name, nil
 	}
 	parentInput := g.p.inputForTable[spec.Target.Schema+"."+spec.Target.Name]
@@ -472,9 +479,9 @@ func (g *cteGen) insertChildren(spec *nestedSpec, nested map[string]any, parentC
 				vals = append(vals, p)
 			}
 		}
-		for i, col := range spec.FK.Columns {
-			cols = append(cols, compile.QuoteIdent(col))
-			vals = append(vals, parentCTE+"."+compile.QuoteIdent(spec.FK.RefColumns[i]))
+		for _, pair := range equalityPairs(spec.FK) {
+			cols = append(cols, compile.QuoteIdent(pair.Column))
+			vals = append(vals, parentCTE+"."+compile.QuoteIdent(pair.RefColumn))
 		}
 		cteName := g.name("c")
 		g.ctes = append(g.ctes, fmt.Sprintf("%s AS (\n  INSERT INTO %s (%s) SELECT %s FROM %s RETURNING *\n)",
@@ -483,6 +490,19 @@ func (g *cteGen) insertChildren(spec *nestedSpec, nested map[string]any, parentC
 		g.childCTEs[spec.Owner.Schema+"."+spec.Owner.Name] = append(g.childCTEs[spec.Owner.Schema+"."+spec.Owner.Name], cteName)
 	}
 	return nil
+}
+
+// equalityPairs returns the FK column pairs a nested mutation copies from
+// the parent row: every pair except the period of a PERIOD FK, which the
+// child supplies itself (its period need only be covered by the parent's).
+func equalityPairs(fk *introspect.ForeignKey) []introspect.JoinPair {
+	var out []introspect.JoinPair
+	for _, pair := range fk.JoinPairs() {
+		if pair.Op == introspect.JoinEqual {
+			out = append(out, pair)
+		}
+	}
+	return out
 }
 
 func sortedKeys(m map[string]any) []string {

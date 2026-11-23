@@ -50,6 +50,7 @@ const (
 	KindPayloadTypeName        Kind = "payload_type_name"         // CreateUserPayload
 	KindRelationForward        Kind = "relation_forward"          // FK column -> parent object field (author)
 	KindRelationBackward       Kind = "relation_backward"         // reverse FK -> child list field (postsByAuthorId)
+	KindRelationForwardMany    Kind = "relation_forward_many"     // PERIOD FK -> parent connection field (roomBookingsByRoomIdAndValidAt)
 	KindFunctionField          Kind = "function_field"            // pg function -> query/mutation field
 	KindFunctionInput          Kind = "function_input"            // volatile function -> input object type (LoginInput)
 	KindFunctionPayload        Kind = "function_payload"          // volatile function -> payload object type (LoginPayload)
@@ -104,7 +105,7 @@ func Default(kind Kind, in Input) string {
 		return inflect.UpperCamel(in.Column) + inflect.UpperCamel(inflect.Singularize(in.Table)) + "Payload" // Column carries the verb here
 	case KindRelationForward:
 		return inflect.LowerCamel(strings.TrimSuffix(strings.TrimSuffix(in.Column, "_id"), "Id"))
-	case KindRelationBackward:
+	case KindRelationBackward, KindRelationForwardMany:
 		return inflect.LowerCamel(inflect.Pluralize(inflect.Singularize(in.Table))) + "By" + inflect.ByColumns(in.Columns)
 	case KindFunctionField:
 		return inflect.LowerCamel(in.Function)

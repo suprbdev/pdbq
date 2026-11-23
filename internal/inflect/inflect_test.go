@@ -20,6 +20,7 @@ func TestDefaultNames(t *testing.T) {
 		{KindOrderByTypeName, Input{Table: "users"}, "UsersOrderBy"},
 		{KindRelationForward, Input{Table: "users", Column: "author_id"}, "author"},
 		{KindRelationBackward, Input{Table: "posts", Columns: []string{"author_id"}}, "postsByAuthorId"},
+		{KindRelationForwardMany, Input{Table: "room_bookings", Column: "room_id", Columns: []string{"room_id", "valid_at"}}, "roomBookingsByRoomIdAndValidAt"},
 		{KindEnumValueName, Input{Value: "very happy"}, "VERY_HAPPY"},
 		{KindEnumValueName, Input{Value: "1st"}, "_1ST"},
 		{KindFunctionRecord, Input{Function: "order_status_counts"}, "OrderStatusCountsRecord"},

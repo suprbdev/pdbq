@@ -129,10 +129,13 @@ func functionFixtures() []*introspect.Function {
 // TestGolden compiles each testdata/*.graphql document and compares the SQL
 // (plus parameters) against the .sql golden next to it. Run with -update to
 // regenerate. Documents named spatial_typed_* compile against the schema
-// built with plugins.settings.postgis.typed_geometry on.
+// built with plugins.settings.postgis.typed_geometry on, temporal_* ones
+// against the catalog extended with temporalTables, through the
+// advanced-filters and nested-mutations plugins.
 func TestGolden(t *testing.T) {
 	plain := build(t)
 	typed := buildWith(t, map[string]any{"typed_geometry": true})
+	temporal, temporalReg := buildTemporal(t)
 
 	files, err := filepath.Glob(filepath.Join("testdata", "*.graphql"))
 	if err != nil || len(files) == 0 {
@@ -144,7 +147,11 @@ func TestGolden(t *testing.T) {
 		if strings.HasPrefix(name, "spatial_typed_") {
 			built = typed
 		}
-		compiler := compile.New(built)
+		compileFn := compile.New(built).Compile
+		if strings.HasPrefix(name, "temporal") {
+			built = temporal
+			compileFn = temporalReg.CompileChain(nil, compile.New(built).Compile)
+		}
 		t.Run(name, func(t *testing.T) {
 			src, err := os.ReadFile(file)
 			if err != nil {
@@ -171,7 +178,7 @@ func TestGolden(t *testing.T) {
 				if !ok {
 					continue
 				}
-				stmt, err := compiler.Compile(context.Background(), &compile.Request{
+				stmt, err := compileFn(context.Background(), &compile.Request{
 					Field:     f,
 					Fragments: doc.Fragments,
 					Vars:      coerced,

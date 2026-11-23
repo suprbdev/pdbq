@@ -294,6 +294,13 @@ func (s *stmt) rowByKey(meta *schema.FieldMeta, f *ast.Field) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	if meta.PeriodColumn != "" {
+		cond, err := s.periodCond(t, meta.PeriodColumn, f, alias)
+		if err != nil {
+			return "", err
+		}
+		conds = append(conds, cond)
+	}
 	return fmt.Sprintf("SELECT %s AS data\nFROM %s AS %s%s\nWHERE %s\nLIMIT 1",
 		jsonExpr, s.sourceRef(t), alias, joinLaterals(laterals), strings.Join(conds, " AND ")), nil
 }
@@ -316,6 +323,19 @@ func (s *stmt) keyConds(t *introspect.Table, keyCols []string, f *ast.Field, ali
 		conds = append(conds, fmt.Sprintf("%s.%s = %s", alias, quoteIdent(col), s.valueExpr(c, v)))
 	}
 	return conds, nil
+}
+
+// periodCond builds `alias."period" @> $n::elem` from the at argument of a
+// point-in-time lookup. The cast picks the range-contains-element operator;
+// an untyped parameter would resolve to range @> range.
+func (s *stmt) periodCond(t *introspect.Table, period string, f *ast.Field, alias string) (string, error) {
+	v, ok := s.argValue(f, "at")
+	if !ok {
+		return "", fmt.Errorf("compile: field %s: missing key argument \"at\"", f.Name)
+	}
+	elem := schema.RangeElementType(t.Column(period).PGType)
+	c := &introspect.Column{Name: period, PGType: elem, TypeSchema: "pg_catalog"}
+	return fmt.Sprintf("%s.%s @> %s::%s", alias, quoteIdent(period), s.param(s.coerce(c, v)), elem), nil
 }
 
 func (s *stmt) listQuery(meta *schema.FieldMeta, f *ast.Field) (string, error) {
@@ -505,26 +525,22 @@ func (s *stmt) orderExprSQL(t *introspect.Table, term orderTerm, alias string) s
 
 // relationOrderSQL renders the correlated scalar subquery for a relational
 // order term. Forward relations select the sort column off the single
-// referenced row; reverse relations aggregate it over the referencing rows
-// (MIN for ASC terms, MAX for DESC), yielding NULL when no related row
-// exists so those rows sort last (renderOrder emits NULLS LAST for
-// descending terms). The inner alias is
+// referenced row; reverse relations, and forward ones over a PERIOD foreign
+// key, aggregate it over the related rows (MIN for ASC terms, MAX for DESC),
+// yielding NULL when no related row exists so those rows sort last
+// (renderOrder emits NULLS LAST for descending terms). The inner alias is
 // fixed: relational subqueries never nest, so it cannot collide.
 func (s *stmt) relationOrderSQL(term orderTerm, alias string) string {
 	rel := term.rel
 	const sub = "__ro"
-	joins := make([]string, len(rel.FK.Columns))
-	for i, col := range rel.FK.Columns {
-		if rel.Forward {
-			joins[i] = fmt.Sprintf("%s.%s = %s.%s",
-				sub, quoteIdent(rel.FK.RefColumns[i]), alias, quoteIdent(col))
-		} else {
-			joins[i] = fmt.Sprintf("%s.%s = %s.%s",
-				sub, quoteIdent(col), alias, quoteIdent(rel.FK.RefColumns[i]))
-		}
+	var join string
+	if rel.Forward {
+		join = fkJoinSQL(rel.FK, alias, sub, true)
+	} else {
+		join = fkJoinSQL(rel.FK, sub, alias, false)
 	}
 	expr := sub + "." + quoteIdent(rel.Column)
-	if !rel.Forward {
+	if !rel.Forward || !rel.FK.ReferencesOne() {
 		agg := "MIN"
 		if term.desc {
 			agg = "MAX"
@@ -532,7 +548,7 @@ func (s *stmt) relationOrderSQL(term orderTerm, alias string) string {
 		expr = agg + "(" + expr + ")"
 	}
 	return fmt.Sprintf("(SELECT %s FROM %s AS %s WHERE %s)",
-		expr, s.sourceRef(rel.Table), sub, strings.Join(joins, " AND "))
+		expr, s.sourceRef(rel.Table), sub, join)
 }
 
 func (s *stmt) orderClause(t *introspect.Table, f *ast.Field, alias string) string {

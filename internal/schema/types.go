@@ -17,7 +17,7 @@ type FieldKind string
 const (
 	KindColumn           FieldKind = "column"
 	KindCompositeField   FieldKind = "composite_field"   // attribute of a composite-type column
-	KindRelationForward  FieldKind = "relation_forward"  // many-to-one: FK on this table
+	KindRelationForward  FieldKind = "relation_forward"  // many-to-one: FK on this table (a connection for a PERIOD FK)
 	KindRelationBackward FieldKind = "relation_backward" // one-to-many: FK on the other table
 	KindListQuery        FieldKind = "list_query"
 	KindConnectionQuery  FieldKind = "connection_query"
@@ -64,6 +64,11 @@ type FieldMeta struct {
 	CostMultiplier int
 	// Nested carries plugin-defined payload (e.g. nested-mutations input shape).
 	Nested map[string]any
+	// PeriodColumn is set on a KindRowByKey point-in-time lookup over a
+	// temporal (WITHOUT OVERLAPS) key: KeyColumns holds the key's equality
+	// columns and the trailing "at" argument must be contained (@>) in this
+	// range column.
+	PeriodColumn string
 }
 
 // Field is one field on an object type.
@@ -149,7 +154,8 @@ type InputField struct {
 type OrderRelation struct {
 	// Forward: the FK lives on the ordered table and points at Table
 	// (many-to-one); the subquery selects Column from the single referenced
-	// row. Otherwise the FK lives on Table and points back at the ordered
+	// row, or aggregates it like a reverse relation for a PERIOD FK.
+	// Otherwise the FK lives on Table and points back at the ordered
 	// table (one-to-many); the subquery aggregates Column over the
 	// referencing rows (MIN for ASC values, MAX for DESC).
 	Forward bool
@@ -163,7 +169,8 @@ type OrderRelation struct {
 // FilterRelation binds a relation filter field to the catalog.
 type FilterRelation struct {
 	// Forward: the FK lives on the filtered table and points at Table
-	// (many-to-one); the field takes Table's filter directly. Otherwise the
+	// (many-to-one); the field takes Table's filter directly, or a
+	// {some|none|every} wrapper for a PERIOD FK. Otherwise the
 	// FK lives on Table and points back at the filtered table (one-to-many);
 	// the field takes a {some|none|every} wrapper over Table's filter.
 	Forward bool

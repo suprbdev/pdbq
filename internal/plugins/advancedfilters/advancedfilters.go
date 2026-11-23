@@ -10,14 +10,17 @@
 //     also gets a Boolean existence variant — <rel>Exists for forward FKs
 //     (posts: {authorExists: true}), <rel>Exist for reverse
 //     (users: {postsByAuthorIdExist: false}) — compiling to a bare
-//     (NOT) EXISTS over the join.
+//     (NOT) EXISTS over the join. A forward PERIOD FK (PostgreSQL 18
+//     temporal key) may reference several rows, so it gets the reverse
+//     shape: a {some|none|every} wrapper and a <rel>Exist variant.
 //   - relational ordering: one-level orderBy over related rows, named
 //     REL__COLUMN_{ASC,DESC} with a double underscore separating relation and
 //     column (posts: orderBy: [AUTHOR__NAME_ASC]). Forward FKs sort by the
 //     referenced parent row's column via a correlated scalar subquery;
-//     reverse FKs aggregate the referencing rows' column (MIN for ASC, MAX
-//     for DESC). The related columns respect the filters.indexed_only policy
-//     exactly like the table's own orderBy values. Toggled via
+//     reverse FKs, and forward PERIOD FKs, aggregate the related rows'
+//     column (MIN for ASC, MAX for DESC). The related columns respect the
+//     filters.indexed_only policy exactly like the table's own orderBy
+//     values. Toggled via
 //     plugins.settings.advanced-filters.relation_order (also off when
 //     relations is off).
 //   - computed-column filtering and ordering: stable/immutable row-type
@@ -145,10 +148,12 @@ func (p *Plugin) addRelationFilters(b *schema.Builder) {
 			if parentFilter == nil {
 				continue
 			}
-			relName := b.Inflect(inflect.KindRelationForward, inflect.Input{
-				Schema: t.Schema, Table: fk.RefTable, Column: fk.Columns[0], Columns: fk.Columns,
-				Constraint: fk.Name,
-			})
+			relName := b.ForwardRelationName(t, fk)
+			if !fk.ReferencesOne() {
+				parentType := b.TypeForTable[parent.Schema+"."+parent.Name]
+				addToManyFilter(b, in, relName, parent, fk, parentFilter.Name, ensureToMany(b, parentType, parentFilter.Name), true)
+				continue
+			}
 			if in.Field(relName) == nil {
 				in.AddField(&schema.InputField{
 					Name:        relName,
@@ -184,24 +189,35 @@ func (p *Plugin) addRelationFilters(b *schema.Builder) {
 					Constraint: fk.Name,
 				})
 				childType := b.TypeForTable[child.Schema+"."+child.Name]
-				if in.Field(relName) == nil {
-					in.AddField(&schema.InputField{
-						Name:        relName,
-						Type:        ensureToMany(b, childType, childFilter.Name),
-						Description: "Quantified filter over referencing " + child.Name + " rows.",
-						Relation:    &schema.FilterRelation{Forward: false, FK: fk, Table: child, FilterType: childFilter.Name},
-					})
-				}
-				if existsName := relName + "Exist"; in.Field(existsName) == nil {
-					in.AddField(&schema.InputField{
-						Name:        existsName,
-						Type:        "Boolean",
-						Description: "True: at least one referencing " + child.Name + " row exists; false: none do.",
-						Relation:    &schema.FilterRelation{Forward: false, FK: fk, Table: child, FilterType: childFilter.Name, Exists: true},
-					})
-				}
+				addToManyFilter(b, in, relName, child, fk, childFilter.Name, ensureToMany(b, childType, childFilter.Name), false)
 			}
 		}
+	}
+}
+
+// addToManyFilter adds the quantified filter field and its <rel>Exist
+// variant for a to-many relation: a reverse FK, or a forward PERIOD FK
+// (forward set) whose child row may reference several rows.
+func addToManyFilter(b *schema.Builder, in *schema.Input, relName string, related *introspect.Table, fk *introspect.ForeignKey, filterType, wrapper string, forward bool) {
+	side := "referencing"
+	if forward {
+		side = "referenced"
+	}
+	if in.Field(relName) == nil {
+		in.AddField(&schema.InputField{
+			Name:        relName,
+			Type:        wrapper,
+			Description: "Quantified filter over " + side + " " + related.Name + " rows.",
+			Relation:    &schema.FilterRelation{Forward: forward, FK: fk, Table: related, FilterType: filterType},
+		})
+	}
+	if existsName := relName + "Exist"; in.Field(existsName) == nil {
+		in.AddField(&schema.InputField{
+			Name:        existsName,
+			Type:        "Boolean",
+			Description: "True: at least one " + side + " " + related.Name + " row exists; false: none do.",
+			Relation:    &schema.FilterRelation{Forward: forward, FK: fk, Table: related, FilterType: filterType, Exists: true},
+		})
 	}
 }
 
@@ -227,11 +243,7 @@ func (p *Plugin) addRelationOrder(b *schema.Builder) {
 			if parent == nil {
 				continue
 			}
-			relName := b.Inflect(inflect.KindRelationForward, inflect.Input{
-				Schema: t.Schema, Table: fk.RefTable, Column: fk.Columns[0], Columns: fk.Columns,
-				Constraint: fk.Name,
-			})
-			addRelationOrderValues(b, en, relName, parent, fk, true)
+			addRelationOrderValues(b, en, b.ForwardRelationName(t, fk), parent, fk, true)
 		}
 		// Reverse: FKs on other tables pointing at t -> aggregated child columns.
 		for _, child := range b.Catalog.Tables {
