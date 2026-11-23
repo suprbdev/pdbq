@@ -56,7 +56,7 @@ func intervalServer(t *testing.T) string {
 	return testServer(t, func(c *config.Config) {
 		c.Schema.Schemas = []string{intervalSchema}
 		c.Filters.IndexedOnly = false
-		c.Plugins.Settings = map[string]map[string]any{"aggregates": {"enabled": true}}
+		c.Plugins.Settings.Aggregates.Enabled = true
 	}).URL
 }
 

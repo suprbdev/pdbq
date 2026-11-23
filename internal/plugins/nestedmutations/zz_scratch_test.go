@@ -11,7 +11,7 @@ import (
 )
 
 func TestScratch(t *testing.T) {
-	reg, built := setupWith(t, plugin.NewRegistry(nestedmutations.New(nil)))
+	reg, built := setupWith(t, plugin.NewRegistry(nestedmutations.New(nestedmutations.DefaultSettings())))
 	for _, h := range strings.Split(os.Getenv("H"), ",") {
 		if h != "" {
 			fmt.Println(sdlBlock(built.SDL, h))

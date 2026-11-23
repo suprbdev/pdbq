@@ -153,25 +153,29 @@ type Plugin struct {
 	ordering bool
 }
 
-// New builds the plugin from its `plugins.settings.contrib` map: the
-// booleans filters and ordering, both on by default.
-func New(settings map[string]any) *Plugin {
-	p := &Plugin{filters: true, ordering: true}
-	for key, target := range map[string]*bool{
-		"filters":  &p.filters,
-		"ordering": &p.ordering,
-	} {
-		if v, ok := settings[key].(bool); ok {
-			*target = v
-		}
-	}
-	return p
+// Name is the plugin's name in plugins.disabled and plugins.settings.
+const Name = "contrib"
+
+// Settings is the plugins.settings.contrib section.
+type Settings struct {
+	Filters  bool `koanf:"filters" doc:"Vocabulary operators, StringTrgmFilterOps, the unaccent, fuzzystrmatch and intarray inputs, the distance-threshold inputs, the value filters (<field>Nlevel, <field>Value, <field>Icount) and the <field>Rank fields (and so rank ordering)."`
+	Ordering bool `koanf:"ordering" doc:"Rank, similarity, Levenshtein, nlevel, icount, value, vector, cube and earth distance orderBy values, the similarity and distance fields and the similarTo:, nearVector:, nearPoint: and hstoreKey: arguments."`
+}
+
+// DefaultSettings returns the documented defaults: both halves on.
+func DefaultSettings() Settings {
+	return Settings{Filters: true, Ordering: true}
+}
+
+// New builds the plugin from its settings.
+func New(s Settings) *Plugin {
+	return &Plugin{filters: s.Filters, ordering: s.Ordering}
 }
 
 // Name implements plugin.Plugin.
-func (p *Plugin) Name() string { return "contrib" }
+func (p *Plugin) Name() string { return Name }
 
-// Priority 170 places the plugin after advanced-filters (150) and postgis
+// Priority 170 places the plugin after advanced_filters (150) and postgis
 // (160), so the filter inputs and orderBy enums it extends exist.
 func (p *Plugin) Priority() int { return 170 }
 

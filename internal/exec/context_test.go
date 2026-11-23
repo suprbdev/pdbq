@@ -29,6 +29,7 @@ func TestCompileSeesOperationContext(t *testing.T) {
 		return nil, stop
 	}
 	ex := New(nil, built, compileFn, nil, Options{})
+	ex.queryTx = (&fakeBatch{attempts: []attempt{{}}}).queryTx
 	res := ex.Execute(context.Background(), Request{
 		Query:  `{ allUsers { nodes { id } } }`,
 		Claims: map[string]any{"user_id": "42"},

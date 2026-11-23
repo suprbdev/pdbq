@@ -7,8 +7,14 @@ distroless (`nonroot`), entrypoint `pdbq`, default command `serve`:
 
 ```console
 $ make docker-build
-$ docker run -e PDBQ_DATABASE_URL=postgres://... -p 8080:8080 pdbq:dev
+$ docker run -e PDBQ_DATABASE_URL=postgres://... \
+    -e PDBQ_AUTH_JWT_SECRET_FILE=/run/secrets/jwt_secret \
+    -v ./jwt_secret:/run/secrets/jwt_secret:ro -p 8080:8080 pdbq:dev
 ```
+
+The default `auth.mode: jwt` needs `auth.jwt.secret`, `auth.jwt.secret_file`
+or `auth.jwt.jwks_url`; pdbq refuses to start without one (see
+[Row-level security](rls.md)).
 
 Distroless has no shell, so run health checks from the orchestrator against
 `GET /healthz` (liveness) and `GET /readyz` (readiness). `/readyz` pings the
@@ -39,12 +45,20 @@ truncating the query string in intermediary log formats.
   JWTs, claims and all query data cross the wire in cleartext until a
   TLS-terminating reverse proxy, load balancer or ingress controller sits in
   front. Never expose the pdbq port directly to untrusted networks.
-- `rls.enabled: true` with a **non-superuser** connection role that has been
-  granted the request roles (`GRANT anonymous, app_user TO pdbq_conn`).
-- `rls.auth.mode: jwt` with a strong `jwt_secret` (or `headers` strictly
-  behind a gateway that strips every client-supplied header starting with the
-  `rls.auth.header_prefix` (`X-Pdbq-Claim-` by default) in any letter case,
-  and sets `rls.auth.header_claims` to the claims it injects).
+- `roles.switch: true` (the default) with a **non-superuser** connection
+  role that has been granted the request roles (`GRANT anonymous, app_user
+  TO pdbq_conn`), and `roles.allowed` listing the roles tokens may select.
+  The starter from `pdbq config init` turns role switching and
+  authentication off: configure both before production.
+- `auth.mode: jwt` with a strong secret, preferably from a file
+  (`auth.jwt.secret_file: /run/secrets/jwt_secret`), or a JWKS URL (or
+  `headers` strictly behind a gateway that strips every client-supplied
+  header starting with `auth.headers.prefix` (`X-Pdbq-Claim-` by default) in
+  any letter case, with `auth.headers.trusted_proxies` set to the gateway's
+  addresses and `auth.headers.claims` to the claims it injects).
+- Decide on anonymous access: `roles.anonymous` is empty by default, so
+  requests without credentials get `401`. Set it to the role public
+  requests should use.
 - `errors.detail: prod` (default) — constraint violations pass through,
   internals do not; a violation naming a table, column or foreign key the
   schema does not expose (omitted, hidden by the contract, or outside
@@ -64,7 +78,8 @@ truncating the query string in intermediary log formats.
 - Boot from a schema cache (see [caching.md](caching.md)) so the runtime
   role needs no catalog privileges; leave `watch.enabled` off.
 - Set `server.max_depth` / `server.max_cost` to fit your workload;
-  `database.statement_timeout` (default 30s) backstops runaway queries.
+  `database.statement_timeout` (default 25s, below the 30s
+  `server.request_timeout`) backstops runaway queries.
 - Resource limits: `database.max_conns` bounds the pool; each request uses
   at most one connection.
 - If you enable `metrics.enabled`, set `metrics.addr` (e.g. `:9090`) to a
@@ -90,7 +105,7 @@ spec:
 A browser preflights a cross-origin `application/json` POST, and pdbq
 answers preflights only for `server.cors_origins`, so a page on another
 origin cannot make a victim's browser run a mutation with its cookies. This
-matters when identity comes from ambient credentials: `rls.auth.mode:
+matters when identity comes from ambient credentials: `auth.mode:
 headers` behind a gateway that authenticates with a session cookie, client
 certificates, or IP allowlists. Bearer JWTs are not sent automatically by
 the browser and were never exposed. GraphiQL and the usual GraphQL clients

@@ -40,8 +40,8 @@ func TestCloseStopsWatcher(t *testing.T) {
 
 	cfg := config.DefaultConfig()
 	cfg.Database.URL = url
-	cfg.RLS.Enabled = false
-	cfg.Plugins.Disabled = []string{"simple-names"}
+	noIdentity(&cfg)
+	cfg.Plugins.Disabled = []string{"simple_names"}
 	cfg.Schema.Schemas = []string{closeWatchSchema}
 	cfg.Watch.Enabled = true
 	cfg.Watch.PollInterval = 200 * time.Millisecond

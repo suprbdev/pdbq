@@ -292,18 +292,18 @@ func TestSimpleNamesPlugin(t *testing.T) {
 		"users(", "user(", "updateUser(", "deleteUser(", "posts(",
 	} {
 		if !strings.Contains(built.SDL, "  "+want) {
-			t.Errorf("simple-names SDL missing %q", want)
+			t.Errorf("simple_names SDL missing %q", want)
 		}
 	}
 	for _, reject := range []string{"allUsers(", "userById(", "postsByAuthorId("} {
 		if strings.Contains(built.SDL, reject) {
-			t.Errorf("simple-names SDL still contains verbose %q", reject)
+			t.Errorf("simple_names SDL still contains verbose %q", reject)
 		}
 	}
 }
 
 func TestNestedMutationsSchema(t *testing.T) {
-	reg := plugin.NewRegistry(nestedmutations.New(nil))
+	reg := plugin.NewRegistry(nestedmutations.New(nestedmutations.DefaultSettings()))
 	b := schema.New(testutil.FixtureCatalog(), inflect.Default, schema.Options{FilterIndexedOnly: true})
 	if err := reg.TransformSchema(context.Background(), nil, b); err != nil {
 		t.Fatal(err)
@@ -433,7 +433,7 @@ func TestForwardRelationNameCollidesWithColumn(t *testing.T) {
 	t.Run("default", func(t *testing.T) {
 		check(t, schema.New(relnameCatalog(), inflect.Default, schema.Options{FilterIndexedOnly: true}))
 	})
-	t.Run("simple-names", func(t *testing.T) {
+	t.Run("simple_names", func(t *testing.T) {
 		reg := plugin.NewRegistry(simplenames.New())
 		cat := relnameCatalog()
 		if err := reg.TransformCatalog(context.Background(), nil, cat); err != nil {

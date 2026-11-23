@@ -151,7 +151,7 @@ type FieldMeta struct {
 	// self-referential trees (comment threads) where most rows have few
 	// children. See exec.measureSel.
 	CostMultiplier int
-	// Nested carries plugin-defined payload (e.g. nested-mutations input shape).
+	// Nested carries plugin-defined payload (e.g. nested_mutations input shape).
 	Nested map[string]any
 	// PeriodColumn is set on a KindRowByKey point-in-time lookup over a
 	// temporal (WITHOUT OVERLAPS) key: KeyColumns holds the key's equality
@@ -370,10 +370,10 @@ type InputField struct {
 	Default     string
 	// Column links the input field to a table column for mutation compilation.
 	Column string
-	// Relation marks a relation filter field (advanced-filters); the compiler
+	// Relation marks a relation filter field (advanced_filters); the compiler
 	// turns it into an EXISTS subquery over the related table.
 	Relation *FilterRelation
-	// Computed marks a computed-column filter field (advanced-filters): the
+	// Computed marks a computed-column filter field (advanced_filters): the
 	// bound row-type function is called on the current row.
 	Computed *introspect.Function
 	// Nested marks plugin-added nested-input fields (e.g. nested mutations).
@@ -389,7 +389,7 @@ type InputField struct {
 }
 
 // OrderRelation binds a relational orderBy enum value to the catalog
-// (advanced-filters plugin). The compiler renders it as a correlated scalar
+// (advanced_filters plugin). The compiler renders it as a correlated scalar
 // subquery over the related table.
 type OrderRelation struct {
 	// Forward: the FK lives on the ordered table and points at Table
@@ -483,10 +483,10 @@ type EnumValue struct {
 	Column string
 	Desc   bool
 	// Computed backs orderBy enum values sorting by a computed column
-	// (advanced-filters): a row-type function instead of a plain column.
+	// (advanced_filters): a row-type function instead of a plain column.
 	Computed *introspect.Function
 	// Relation backs orderBy enum values sorting by a related table's column
-	// (advanced-filters); Column stays empty for these.
+	// (advanced_filters); Column stays empty for these.
 	Relation *OrderRelation
 	// Distance marks orderBy enum values sorting by spatial distance from
 	// the reference geometry in the field's near: argument (postgis plugin).

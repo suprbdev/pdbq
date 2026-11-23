@@ -59,15 +59,15 @@ func temporalTables() []*introspect.Table {
 	return []*introspect.Table{bookings, notes}
 }
 
-// buildTemporal is build plus the relation plugins (advanced-filters,
-// nested-mutations) whose surface follows temporal foreign keys; it returns
+// buildTemporal is build plus the relation plugins (advanced_filters,
+// nested_mutations) whose surface follows temporal foreign keys; it returns
 // the compile chain to run documents through.
 func buildTemporal(t testing.TB) (*schema.Built, *plugin.Registry) {
 	t.Helper()
 	cat := testutil.FixtureCatalog()
 	cat.Tables = append(cat.Tables, temporalTables()...)
 	b := schema.New(cat, inflect.Default, schema.Options{FilterIndexedOnly: true, Functions: true})
-	reg := plugin.NewRegistry(advancedfilters.New(nil), nestedmutations.New(nil))
+	reg := plugin.NewRegistry(advancedfilters.New(advancedfilters.DefaultSettings()), nestedmutations.New(nestedmutations.DefaultSettings()))
 	if err := reg.TransformSchema(context.Background(), nil, b); err != nil {
 		t.Fatal(err)
 	}

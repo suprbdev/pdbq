@@ -30,7 +30,8 @@ services:
     environment:
       PDBQ_DATABASE_URL: postgres://pdbq:pdbq@db:5432/pdbq
       PDBQ_WATCH_ENABLED: "true"
-      PDBQ_RLS_ENABLED: "false" # dev stack; see docs/rls.md for production
+      PDBQ_AUTH_MODE: none # dev stack; see docs/rls.md for production
+      PDBQ_ROLES_SWITCH: "false" # dev stack: runs as the connection role
       PDBQ_SERVER_GRAPHIQL: "true" # dev stack; off by default
       PDBQ_SERVER_EXPOSE__SCHEMA: "true" # dev stack; off by default
       PDBQ_ERRORS_DETAIL: dev

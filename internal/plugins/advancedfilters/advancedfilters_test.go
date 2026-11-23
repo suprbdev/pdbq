@@ -21,17 +21,21 @@ import (
 )
 
 // setup builds the fixture schema with the plugin applied.
-func setup(t *testing.T, settings map[string]any) *schema.Built {
+func setup(t *testing.T, settings func(*advancedfilters.Settings)) *schema.Built {
 	return setupCatalog(t, settings, testutil.FixtureCatalog())
 }
 
-func setupCatalog(t *testing.T, settings map[string]any, cat *introspect.Catalog) *schema.Built {
+func setupCatalog(t *testing.T, settings func(*advancedfilters.Settings), cat *introspect.Catalog) *schema.Built {
 	t.Helper()
+	s := advancedfilters.DefaultSettings()
+	if settings != nil {
+		settings(&s)
+	}
 	b := schema.New(cat, inflect.Default, schema.Options{
 		FilterIndexedOnly: true,
 		Functions:         true,
 	})
-	reg := plugin.NewRegistry(advancedfilters.New(settings))
+	reg := plugin.NewRegistry(advancedfilters.New(s))
 	if err := reg.TransformSchema(context.Background(), nil, b); err != nil {
 		t.Fatal(err)
 	}
@@ -102,7 +106,7 @@ func TestSchemaSurface(t *testing.T) {
 }
 
 func TestSettingsToggles(t *testing.T) {
-	built := setup(t, map[string]any{"relations": false})
+	built := setup(t, func(s *advancedfilters.Settings) { s.Relations = false })
 	if strings.Contains(built.SDL, "PostToManyFilter") {
 		t.Error("relations: false must drop relation filter fields")
 	}
@@ -110,7 +114,7 @@ func TestSettingsToggles(t *testing.T) {
 		t.Error("relations: false must keep computed filters")
 	}
 
-	built = setup(t, map[string]any{"computed": false})
+	built = setup(t, func(s *advancedfilters.Settings) { s.Computed = false })
 	if strings.Contains(built.SDL, "POST_COUNT_ASC") {
 		t.Error("computed: false must drop computed orderBy values")
 	}
@@ -118,7 +122,7 @@ func TestSettingsToggles(t *testing.T) {
 		t.Error("computed: false must keep relation filters")
 	}
 
-	built = setup(t, map[string]any{"relation_order": false})
+	built = setup(t, func(s *advancedfilters.Settings) { s.RelationOrder = false })
 	if strings.Contains(built.SDL, "AUTHOR__EMAIL_ASC") {
 		t.Error("relation_order: false must drop relational orderBy values")
 	}
@@ -126,14 +130,14 @@ func TestSettingsToggles(t *testing.T) {
 		t.Error("relation_order: false must keep relation filters")
 	}
 
-	built = setup(t, map[string]any{"relations": false})
+	built = setup(t, func(s *advancedfilters.Settings) { s.Relations = false })
 	if strings.Contains(built.SDL, "AUTHOR__EMAIL_ASC") {
 		t.Error("relations: false must drop relational orderBy values too")
 	}
 }
 
 // Smart comments are honored straight off the catalog, independent of the
-// smart-comments plugin.
+// smart_comments plugin.
 func TestSmartCommentTags(t *testing.T) {
 	cat := testutil.FixtureCatalog()
 	cat.Table("public", "posts").ForeignKeys[0].Comment = "@omit filter"
@@ -143,7 +147,7 @@ func TestSmartCommentTags(t *testing.T) {
 	}
 
 	cat = testutil.FixtureCatalog()
-	built = setupCatalog(t, map[string]any{"relations_opt_in": true, "computed_opt_in": true}, cat)
+	built = setupCatalog(t, func(s *advancedfilters.Settings) { s.RelationsOptIn, s.ComputedOptIn = true, true }, cat)
 	for _, reject := range []string{"author: UserFilter", "postCount: BigIntFilterOps", "POST_COUNT_ASC"} {
 		if strings.Contains(built.SDL, reject) {
 			t.Errorf("opt-in mode must suppress untagged surface %q", reject)
@@ -152,7 +156,7 @@ func TestSmartCommentTags(t *testing.T) {
 
 	cat = testutil.FixtureCatalog()
 	cat.Table("public", "posts").ForeignKeys[0].Comment = "@filterable"
-	built = setupCatalog(t, map[string]any{"relations_opt_in": true}, cat)
+	built = setupCatalog(t, func(s *advancedfilters.Settings) { s.RelationsOptIn = true }, cat)
 	if !strings.Contains(built.SDL, "author: UserFilter") {
 		t.Error("@filterable must opt a FK into relations_opt_in mode")
 	}

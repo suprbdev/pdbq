@@ -68,7 +68,7 @@ func intervalCatalog() *introspect.Catalog {
 func buildInterval(t testing.TB) *schema.Built {
 	t.Helper()
 	b := schema.New(intervalCatalog(), inflect.Default, schema.Options{FilterIndexedOnly: true, Functions: true})
-	reg := plugin.NewRegistry(advancedfilters.New(nil), aggregates.New(map[string]any{"enabled": true}, nil))
+	reg := plugin.NewRegistry(advancedfilters.New(advancedfilters.DefaultSettings()), aggregates.New(aggregates.Settings{Enabled: true, Grouped: true, Order: true, Filters: true, Spatial: true, ScanCost: 10}, false))
 	if err := reg.TransformSchema(context.Background(), nil, b); err != nil {
 		t.Fatal(err)
 	}

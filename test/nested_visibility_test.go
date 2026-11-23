@@ -124,9 +124,9 @@ func TestNestedMutationVisibilityRLS(t *testing.T) {
 		`GRANT SELECT, INSERT ON nv_lists, nv_items TO app_user`,
 		`ALTER TABLE nv_lists ENABLE ROW LEVEL SECURITY`,
 		`ALTER TABLE nv_items ENABLE ROW LEVEL SECURITY`,
-		`CREATE POLICY nv_lists_read ON nv_lists FOR SELECT USING (owner_id = NULLIF(current_setting('pdbq.claims.user_id', true), '')::integer)`,
+		`CREATE POLICY nv_lists_read ON nv_lists FOR SELECT USING (owner_id = NULLIF(current_setting('jwt.claims.user_id', true), '')::integer)`,
 		`CREATE POLICY nv_lists_write ON nv_lists FOR INSERT WITH CHECK (true)`,
-		`CREATE POLICY nv_items_read ON nv_items FOR SELECT USING (owner_id = NULLIF(current_setting('pdbq.claims.user_id', true), '')::integer)`,
+		`CREATE POLICY nv_items_read ON nv_items FOR SELECT USING (owner_id = NULLIF(current_setting('jwt.claims.user_id', true), '')::integer)`,
 		`CREATE POLICY nv_items_write ON nv_items FOR INSERT WITH CHECK (true)`,
 		`INSERT INTO nv_lists (owner_id, name) VALUES (2, 'shared')`,
 		`INSERT INTO nv_items (list_id, owner_id, body) SELECT id, 1, 'ada-secret' FROM nv_lists WHERE name = 'shared'`,
@@ -140,9 +140,7 @@ func TestNestedMutationVisibilityRLS(t *testing.T) {
 		t.Fatal(err)
 	}
 	hs := testServer(t, func(cfg *config.Config) {
-		cfg.RLS.Enabled = true
-		cfg.RLS.Auth.Mode = "headers"
-		cfg.RLS.RoleClaim = "role"
+		headersIdentity(cfg)
 	})
 	asGrace := func(t *testing.T, query string) gqlResp {
 		t.Helper()

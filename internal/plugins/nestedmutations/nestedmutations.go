@@ -7,7 +7,7 @@
 // using them compile into a single multi-CTE SQL statement respecting FK
 // direction (CompileHook), and the plugin forces a transaction for them even
 // when transactions are globally disabled (RequestHook), unless
-// plugins.nested-mutations.force_transactions is false.
+// plugins.settings.nested_mutations.force_transactions is false.
 package nestedmutations
 
 import (
@@ -32,7 +32,7 @@ const (
 	defaultMaxOperations = 50
 )
 
-// Plugin is the nested-mutations plugin. One instance must serve both the
+// Plugin is the nested_mutations plugin. One instance must serve both the
 // schema build and compilation, since compilation reads the bindings the
 // SchemaHook records.
 type Plugin struct {
@@ -60,7 +60,7 @@ type state struct {
 // plugin did not run on it).
 func stateOf(built *schema.Built) *state {
 	if built != nil {
-		if st, ok := built.Ext[pluginName].(*state); ok {
+		if st, ok := built.Ext[Name].(*state); ok {
 			return st
 		}
 	}
@@ -100,31 +100,41 @@ type opSpec struct {
 	input string
 }
 
-// New builds the plugin from its `plugins.settings.nested-mutations` map.
-func New(settings map[string]any) *Plugin {
-	p := &Plugin{forceTx: true, maxDepth: defaultMaxDepth, maxOperations: defaultMaxOperations}
-	if v, ok := settings["force_transactions"].(bool); ok {
-		p.forceTx = v
-	}
-	if v := intSetting(settings["max_depth"]); v > 0 {
-		p.maxDepth = v
-	}
-	if v := intSetting(settings["max_operations"]); v > 0 {
-		p.maxOperations = v
-	}
-	return p
+// Settings is the plugins.settings.nested_mutations section.
+type Settings struct {
+	ForceTransactions bool `koanf:"force_transactions" doc:"Run an operation using nested fields in a transaction even when transactions.mutations is off, so the nested writes are atomic."`
+	MaxDepth          int  `koanf:"max_depth" doc:"Maximum nesting depth of nested mutation inputs per root field."`
+	MaxOperations     int  `koanf:"max_operations" doc:"Maximum nested operations (each list item counting once) per root field."`
 }
 
-func intSetting(v any) int {
-	switch v := v.(type) {
-	case int:
-		return v
-	case int64:
-		return int(v)
-	case float64:
-		return int(v)
+// DefaultSettings returns the documented defaults.
+func DefaultSettings() Settings {
+	return Settings{ForceTransactions: true, MaxDepth: defaultMaxDepth, MaxOperations: defaultMaxOperations}
+}
+
+// Validate returns the problems of s, keyed by their config path.
+func (s Settings) Validate() []string {
+	var errs []string
+	if s.MaxDepth < 1 {
+		errs = append(errs, "plugins.settings."+Name+".max_depth must be >= 1")
 	}
-	return 0
+	if s.MaxOperations < 1 {
+		errs = append(errs, "plugins.settings."+Name+".max_operations must be >= 1")
+	}
+	return errs
+}
+
+// New builds the plugin from its settings; a MaxDepth or MaxOperations
+// below 1 takes the default.
+func New(s Settings) *Plugin {
+	p := &Plugin{forceTx: s.ForceTransactions, maxDepth: s.MaxDepth, maxOperations: s.MaxOperations}
+	if p.maxDepth < 1 {
+		p.maxDepth = defaultMaxDepth
+	}
+	if p.maxOperations < 1 {
+		p.maxOperations = defaultMaxOperations
+	}
+	return p
 }
 
 func (p *Plugin) reset(b *schema.Builder) {
@@ -134,12 +144,13 @@ func (p *Plugin) reset(b *schema.Builder) {
 		inputForTable: map[string]string{},
 		patchForTable: map[string]string{},
 	}
-	b.Ext[pluginName] = p.state
+	b.Ext[Name] = p.state
 }
 
-const pluginName = "nested-mutations"
+// Name is the plugin's name in plugins.disabled and plugins.settings.
+const Name = "nested_mutations"
 
-func (p *Plugin) Name() string  { return pluginName }
+func (p *Plugin) Name() string  { return Name }
 func (p *Plugin) Priority() int { return 200 }
 
 // ---- SchemaHook ----
@@ -566,7 +577,7 @@ func (p *Plugin) WrapCompile(next compile.Func) compile.Func {
 			return next(ctx, req)
 		}
 		if meta.Kind != schema.KindCreate && meta.Kind != schema.KindUpdate {
-			return nil, compile.UserErrorf("nested-mutations: %s does not take nested mutation fields", req.Field.Name)
+			return nil, compile.UserErrorf("nested_mutations: %s does not take nested mutation fields", req.Field.Name)
 		}
 		input, _ := val.(map[string]any)
 
@@ -865,14 +876,14 @@ func (g *cteGen) name(prefix string) string {
 func (g *cteGen) guard(cte, path string) {
 	g.guards = append(g.guards, fmt.Sprintf(
 		"(SELECT CASE WHEN count(*) > 0 THEN true ELSE concat(%s, count(*), ' rows')::boolean END FROM %s)",
-		compile.QuoteLiteral("nested-mutations: "+path+" matched "), cte))
+		compile.QuoteLiteral("nested_mutations: "+path+" matched "), cte))
 }
 
 // countOp charges one nested operation against max_operations.
 func (g *cteGen) countOp() error {
 	g.ops++
 	if g.ops > g.p.maxOperations {
-		return compile.UserErrorf("nested-mutations: more than %d nested operations", g.p.maxOperations)
+		return compile.UserErrorf("nested_mutations: more than %d nested operations", g.p.maxOperations)
 	}
 	return nil
 }
@@ -903,13 +914,13 @@ func (k rowKey) cond(g *cteGen, t *introspect.Table, ref string) string {
 func (g *cteGen) argKey(meta *schema.FieldMeta) (rowKey, error) {
 	f := g.req.Field
 	if f.Definition == nil || len(f.Definition.Arguments) < len(meta.KeyColumns) {
-		return rowKey{}, fmt.Errorf("nested-mutations: %s: missing key arguments", f.Name)
+		return rowKey{}, fmt.Errorf("nested_mutations: %s: missing key arguments", f.Name)
 	}
 	var k rowKey
 	for i, cn := range meta.KeyColumns {
 		arg := f.Arguments.ForName(f.Definition.Arguments[i].Name)
 		if arg == nil {
-			return rowKey{}, compile.UserErrorf("nested-mutations: %s: missing argument %s", f.Name, f.Definition.Arguments[i].Name)
+			return rowKey{}, compile.UserErrorf("nested_mutations: %s: missing argument %s", f.Name, f.Definition.Arguments[i].Name)
 		}
 		v, err := arg.Value.Value(g.req.Vars)
 		if err != nil {
@@ -936,10 +947,10 @@ func (g *cteGen) opKey(t *introspect.Table, op *opSpec, in map[string]any, path 
 			return k, err
 		}
 		if g.req.Built.TableForType[typeName] != t || t.PrimaryKey == nil {
-			return k, compile.UserErrorf("nested-mutations: %s: nodeId does not identify a %s", path, g.req.Built.TypeForTable[t.Schema+"."+t.Name])
+			return k, compile.UserErrorf("nested_mutations: %s: nodeId does not identify a %s", path, g.req.Built.TypeForTable[t.Schema+"."+t.Name])
 		}
 		if len(vals) != len(t.PrimaryKey.Columns) {
-			return k, compile.UserErrorf("nested-mutations: %s: nodeId has %d key values, want %d", path, len(vals), len(t.PrimaryKey.Columns))
+			return k, compile.UserErrorf("nested_mutations: %s: nodeId has %d key values, want %d", path, len(vals), len(t.PrimaryKey.Columns))
 		}
 		for i, cn := range t.PrimaryKey.Columns {
 			k.cols = append(k.cols, cn)
@@ -956,7 +967,7 @@ func (g *cteGen) opKey(t *introspect.Table, op *opSpec, in map[string]any, path 
 	for _, cn := range op.key {
 		v, ok := byCol[cn]
 		if !ok || v == nil {
-			return k, compile.UserErrorf("nested-mutations: %s: missing key value", path)
+			return k, compile.UserErrorf("nested_mutations: %s: missing key value", path)
 		}
 		param, err := g.addParam(t, cn, v)
 		if err != nil {
@@ -978,7 +989,7 @@ type assignments struct {
 
 func (a *assignments) set(col, val, field, path string) error {
 	if a.patched[col] {
-		return compile.UserErrorf("nested-mutations: %s sets a column already set by the input", strings.TrimSuffix(path+field, "."))
+		return compile.UserErrorf("nested_mutations: %s sets a column already set by the input", strings.TrimSuffix(path+field, "."))
 	}
 	if a.patched == nil {
 		a.patched = map[string]bool{}
@@ -1053,7 +1064,7 @@ func (g *cteGen) rowFields(t *introspect.Table, inputType string, input map[stri
 // child row from its parent's CTE.
 func (g *cteGen) insertRow(t *introspect.Table, inputType string, input map[string]any, cteName string, depth int, fill *parentFill, path string) error {
 	if depth > g.p.maxDepth {
-		return compile.UserErrorf("nested-mutations: nesting depth exceeds limit %d", g.p.maxDepth)
+		return compile.UserErrorf("nested_mutations: nesting depth exceeds limit %d", g.p.maxDepth)
 	}
 	var a assignments
 	children, err := g.rowFields(t, inputType, input, &a, depth, nil, path)
@@ -1120,7 +1131,7 @@ func (g *cteGen) parentScope(fk *introspect.ForeignKey, owner *introspect.Table,
 // privilege and passes the UPDATE policies. A non-nil sc narrows the row.
 func (g *cteGen) updateRow(t *introspect.Table, patchType string, patch map[string]any, cteName string, depth int, key rowKey, sc *scope, path string) error {
 	if depth > g.p.maxDepth {
-		return compile.UserErrorf("nested-mutations: nesting depth exceeds limit %d", g.p.maxDepth)
+		return compile.UserErrorf("nested_mutations: nesting depth exceeds limit %d", g.p.maxDepth)
 	}
 	var a assignments
 	children, err := g.rowFields(t, patchType, patch, &a, depth, &key, path)
@@ -1130,7 +1141,7 @@ func (g *cteGen) updateRow(t *introspect.Table, patchType string, patch map[stri
 	for _, cw := range children {
 		for _, pair := range cw.spec.FK.JoinPairs() {
 			if a.patched[pair.RefColumn] {
-				return compile.UserErrorf("nested-mutations: %s%s: the patch changes a column the relation references", path, cw.field)
+				return compile.UserErrorf("nested_mutations: %s%s: the patch changes a column the relation references", path, cw.field)
 			}
 		}
 	}
@@ -1209,7 +1220,7 @@ func (g *cteGen) forward(t *introspect.Table, spec *nestedSpec, nested map[strin
 		}
 		opPath := path + "." + fname
 		if owner == nil && (op.kind == opUpdate || op.kind == opDelete || op.kind == opDisconnect) {
-			return compile.UserErrorf("nested-mutations: %s applies to update mutations only", opPath)
+			return compile.UserErrorf("nested_mutations: %s applies to update mutations only", opPath)
 		}
 		switch op.kind {
 		case opCreate:
@@ -1267,10 +1278,10 @@ func (g *cteGen) forward(t *introspect.Table, spec *nestedSpec, nested map[strin
 		}
 	}
 	if total == 0 {
-		return compile.UserErrorf("nested-mutations: %s: specify an operation", path)
+		return compile.UserErrorf("nested_mutations: %s: specify an operation", path)
 	}
 	if setters > 1 {
-		return compile.UserErrorf("nested-mutations: %s: specify at most one of create, connect or disconnect", path)
+		return compile.UserErrorf("nested_mutations: %s: specify at most one of create, connect or disconnect", path)
 	}
 	ownerRef := compile.TableRefSQL(t.Schema, t.Name)
 	for _, pair := range equalityPairs(spec.FK) {
@@ -1341,7 +1352,7 @@ func (g *cteGen) children(work []childWork, parentCTE string, depth int, path st
 // already referencing it.
 func (g *cteGen) backward(spec *nestedSpec, nested map[string]any, parentCTE string, depth int, path string) error {
 	if depth+1 > g.p.maxDepth {
-		return compile.UserErrorf("nested-mutations: nesting depth exceeds limit %d", g.p.maxDepth)
+		return compile.UserErrorf("nested_mutations: nesting depth exceeds limit %d", g.p.maxDepth)
 	}
 	ops := g.st.ops[spec.Input]
 	child := spec.Owner

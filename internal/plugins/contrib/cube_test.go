@@ -116,7 +116,7 @@ func TestCubeEarthFilterPolicy(t *testing.T) {
 		}
 	}
 
-	noFilters := buildWith(t, contribfixture.Catalog(), map[string]any{"filters": false}, true, true)
+	noFilters := buildWith(t, contribfixture.Catalog(), func(s *Settings) { s.Filters = false }, true, true)
 	if got := fieldType(t, noFilters, "LocationFilter", "pos"); got != "CubeFilterOps" {
 		t.Errorf("filters: false: pos = %s", got)
 	}
@@ -194,7 +194,7 @@ func TestCubeEarthOrdering(t *testing.T) {
 		t.Error("allowlisted point column lacks its score")
 	}
 
-	noOrder := buildWith(t, contribfixture.Catalog(), map[string]any{"ordering": false}, true, true)
+	noOrder := buildWith(t, contribfixture.Catalog(), func(s *Settings) { s.Ordering = false }, true, true)
 	if len(enumValues(noOrder, "LocationsOrderBy", "POS_")) != 0 || hasArg(noOrder.Query.Field("allLocations"), "nearPoint") {
 		t.Error("ordering: false kept the distance ordering")
 	}
@@ -272,7 +272,7 @@ func TestCubeEarthNamesTaken(t *testing.T) {
 			Logger: slog.New(slog.NewTextHandler(&logs, nil)), FilterIndexedOnly: true,
 		})
 		b.Inputs[tc.typ] = &schema.Input{Name: tc.typ}
-		if err := New(nil).TransformSchema(context.Background(), b); err != nil {
+		if err := New(DefaultSettings()).TransformSchema(context.Background(), b); err != nil {
 			t.Fatal(err)
 		}
 		if !tc.check(b) {

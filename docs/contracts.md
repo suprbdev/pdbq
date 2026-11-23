@@ -44,7 +44,7 @@ the environment.
 paths (`/` or `/segment[/segment...]` of letters, digits, `_ . ~ -`, no
 trailing slash), two contracts on one path, nested paths (`/a` and `/a/b`)
 a `metrics.path` under a contract's path on the main listener, and
-contracts with the `smart-comments` plugin disabled: hidden columns
+contracts with the `smart_comments` plugin disabled: hidden columns
 are removed by the plugin's `@omit` handling (see [Security](#security)).
 
 ## Endpoints
@@ -109,8 +109,8 @@ A contract only ever removes surface. pdbq copies the introspected catalog
 for each contract, drops the hidden tables, functions and foreign keys from
 the copy, and marks every hidden column with a bare `@omit` before the
 normal schema build runs on the copy, so every plugin's `@omit` handling
-(`smart-comments`, `advanced-filters`, `aggregates`, `postgis`, `contrib`,
-`nested-mutations`) removes the column from its surface too. Nothing a
+(`smart_comments`, `advanced_filters`, `aggregates`, `postgis`, `contrib`,
+`nested_mutations`) removes the column from its surface too. Nothing a
 contract does can add a field, a type, a privilege or a row:
 
 - A contract's schema is always a subset of the full schema; `+contract:`

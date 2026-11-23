@@ -62,6 +62,11 @@ type App struct {
 	contractInstruments map[string]*exec.Metrics
 	metricsReg          prometheus.Registerer
 
+	// mint signs auth.mint_type results; mintErr is the error reading its
+	// secret file, returned by Serve, Handler and Query.
+	mint    exec.MintOptions
+	mintErr error
+
 	// readOnly lives on the App (not in exec.Options as a value) so a single
 	// flag is shared by every executor the App builds — flipping it at
 	// runtime survives watch-mode schema swaps.
@@ -106,6 +111,7 @@ func New(cfg config.Config, opts ...Option) *App {
 	for _, o := range opts {
 		o(a)
 	}
+	a.mint, a.mintErr = mintOptions(cfg.Auth)
 	if a.metrics == nil && cfg.Metrics.Enabled {
 		if len(cfg.Contracts) > 0 {
 			a.metricsErr = a.newContractMetrics()
@@ -115,6 +121,26 @@ func New(cfg config.Config, opts ...Option) *App {
 	}
 	a.readOnly.Store(cfg.Server.ReadOnly)
 	return a
+}
+
+// mintOptions resolves the JWT minting options of auth.mint_type, reading
+// the secret file.
+func mintOptions(a config.Auth) (exec.MintOptions, error) {
+	if a.MintType == "" {
+		return exec.MintOptions{}, nil
+	}
+	secret, err := a.JWT.ResolveSecret()
+	if err != nil {
+		return exec.MintOptions{}, fmt.Errorf("auth.jwt.secret_file: %w", err)
+	}
+	s, n, _ := strings.Cut(a.MintType, ".")
+	return exec.MintOptions{
+		Schema:   s,
+		Type:     n,
+		Secret:   secret,
+		Issuer:   a.JWT.Issuer,
+		Audience: a.JWT.Audience,
+	}, nil
 }
 
 // newContractMetrics creates one Metrics per contract on a shared registry,
@@ -206,14 +232,15 @@ func (a *App) SetReadOnly(v bool) { a.readOnly.Store(v) }
 func (a *App) ReadOnly() bool { return a.readOnly.Load() }
 
 func builtinPlugins(cfg config.Config) []plugin.Plugin {
+	s := cfg.Plugins.Settings
 	return []plugin.Plugin{
 		smartcomments.New(),
 		simplenames.New(),
-		advancedfilters.New(cfg.Plugins.Settings["advanced-filters"]),
-		postgisplugin.New(cfg.Plugins.Settings["postgis"]),
-		contribplugin.New(cfg.Plugins.Settings["contrib"]),
-		aggregates.New(cfg.Plugins.Settings["aggregates"], cfg.Plugins.Settings["advanced-filters"]),
-		nestedmutations.New(cfg.Plugins.Settings["nested-mutations"]),
+		advancedfilters.New(s.AdvancedFilters),
+		postgisplugin.New(s.Postgis),
+		contribplugin.New(s.Contrib),
+		aggregates.New(s.Aggregates, s.AdvancedFilters.RelationsOptIn),
+		nestedmutations.New(s.NestedMutations),
 	}
 }
 
@@ -331,7 +358,7 @@ func (a *App) BuildSchema(ctx context.Context, cat *introspect.Catalog) (*schema
 		Functions:           a.Config.Schema.Functions,
 		ExposePartitions:    a.Config.Schema.ExposePartitions,
 		DomainScalars:       a.Config.Schema.DomainScalars,
-		JWTType:             a.Config.RLS.Auth.JWTType,
+		JWTType:             a.Config.Auth.MintType,
 		Subscriptions:       a.Config.Server.Subscriptions,
 		Live:                a.Config.Server.Live,
 		IncrementalDelivery: a.Config.Server.IncrementalDelivery,
@@ -385,17 +412,6 @@ func (a *App) executor(built *schema.Built, instruments *exec.Metrics) *exec.Exe
 		hooks = append(hooks, h)
 	}
 	iso := pgexec.ParseIsolation(a.Config.TX.Isolation)
-	var mint exec.MintOptions
-	if jt := a.Config.RLS.Auth.JWTType; jt != "" {
-		s, n, _ := strings.Cut(jt, ".")
-		mint = exec.MintOptions{
-			Schema:   s,
-			Type:     n,
-			Secret:   a.Config.RLS.Auth.JWTSecret,
-			Issuer:   a.Config.RLS.Auth.JWTIssuer,
-			Audience: a.Config.RLS.Auth.JWTAudience,
-		}
-	}
 	return exec.New(a.pool, built, compileFn, hooks, exec.Options{
 		MaxDepth:                   a.Config.Server.MaxDepth,
 		MaxCost:                    a.Config.Server.MaxCost,
@@ -405,12 +421,12 @@ func (a *App) executor(built *schema.Built, instruments *exec.Metrics) *exec.Exe
 		PartialMutations:           a.Config.TX.PartialMutations,
 		TxRetries:                  a.Config.TX.MaxRetries,
 		Isolation:                  iso,
-		RLS:                        a.Config.RLS.Enabled,
-		ClaimsPrefix:               a.Config.RLS.ClaimsPrefix,
+		ClaimsPrefix:               a.Config.Claims.Prefix,
+		ClaimsJSONSetting:          a.Config.Claims.JSONSetting,
 		DevErrors:                  a.Config.Errors.Detail == "dev",
 		StrictErrors:               a.Config.Errors.Detail == "strict",
 		DisableIntrospection:       a.Config.Server.DisableIntrospection,
-		Mint:                       mint,
+		Mint:                       a.mint,
 		DocumentCacheSize:          a.Config.Server.DocumentCacheSize,
 		DocumentCacheBytes:         a.Config.Server.DocumentCacheBytes,
 		DocumentCacheMaxEntryBytes: a.Config.Server.DocumentCacheMaxEntryBytes,
@@ -480,6 +496,9 @@ func (a *App) CompileQuery(ctx context.Context, query string, vars map[string]an
 
 // Query executes a one-off GraphQL request (the `pdbq query` path).
 func (a *App) Query(ctx context.Context, query string, vars map[string]any, operation string) (*exec.Result, error) {
+	if a.mintErr != nil {
+		return nil, a.mintErr
+	}
 	cat, err := a.LoadCatalog(ctx)
 	if err != nil {
 		return nil, err

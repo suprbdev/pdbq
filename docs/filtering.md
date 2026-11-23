@@ -28,7 +28,7 @@ Note that these two operators execute a **caller-supplied jsonpath
 expression** against the column's data. The value is a bind parameter (no SQL
 injection), but an expensive path — e.g. `like_regex` with a pathological
 pattern over large jsonb values — can burn CPU until
-`database.statement_timeout` (default 30s) cuts it off. If you expose the API
+`database.statement_timeout` (default 25s) cuts it off. If you expose the API
 to untrusted callers and don't need jsonpath filtering, remove the operators
 with a smart comment (`@omit filter` on the column) or keep the statement
 timeout tight.
@@ -122,7 +122,7 @@ cursors (and have no `nodeId`). Notes:
 
 ## Relational ordering
 
-With the `advanced-filters` plugin (on by default), each `<Types>OrderBy`
+With the `advanced_filters` plugin (on by default), each `<Types>OrderBy`
 enum also carries one-level relational values named
 `<RELATION>__<COLUMN>_ASC|_DESC` — a double underscore separates the relation
 from the column:
@@ -146,7 +146,7 @@ The related table's columns pass through the same
 `@omit order` on the FK comment removes the values, and keyset cursor
 pagination works under relational orderings (the anchor row's value is
 re-evaluated by subquery). Disable with
-`plugins.settings.advanced-filters.relation_order: false`.
+`plugins.settings.advanced_filters.relation_order: false`.
 
 ## distinctOn
 

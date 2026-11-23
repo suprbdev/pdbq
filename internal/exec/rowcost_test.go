@@ -22,7 +22,7 @@ import (
 // arguments cost nothing extra.
 func TestCostSpatialBuffer(t *testing.T) {
 	cat := testutil.FixtureCatalog()
-	plain := costFor(t, cat, map[string]any{}, `{ allPlaces(first: 10) { nodes { location } } }`, nil)
+	plain := costFor(t, cat, defaultPostgis(), `{ allPlaces(first: 10) { nodes { location } } }`, nil)
 	for _, tc := range []struct {
 		query string
 		vars  map[string]any
@@ -33,13 +33,13 @@ func TestCostSpatialBuffer(t *testing.T) {
 		{`query ($d: Float) { allPlaces(first: 10) { nodes { location(buffer: $d) } } }`, map[string]any{"d": 5.0}, postgis.BufferCost},
 		{`query ($d: Float) { allPlaces(first: 10) { nodes { location(buffer: $d) } } }`, map[string]any{"d": nil}, 0},
 	} {
-		got := costFor(t, cat, map[string]any{}, tc.query, tc.vars)
+		got := costFor(t, cat, defaultPostgis(), tc.query, tc.vars)
 		if want := plain + 10*tc.extra; got != want {
 			t.Errorf("%s: cost %d, want %d", tc.query, got, want)
 		}
 	}
-	typed := costFor(t, cat, map[string]any{"typed_geometry": true}, `{ allPlaces(first: 10) { nodes { location { x } } } }`, nil)
-	buffered := costFor(t, cat, map[string]any{"typed_geometry": true}, `{ allPlaces(first: 10) { nodes { location(buffer: 1) { x } } } }`, nil)
+	typed := costFor(t, cat, typedPostgis(), `{ allPlaces(first: 10) { nodes { location { x } } } }`, nil)
+	buffered := costFor(t, cat, typedPostgis(), `{ allPlaces(first: 10) { nodes { location(buffer: 1) { x } } } }`, nil)
 	if buffered != typed+10*postgis.BufferCost {
 		t.Errorf("typed geometry buffer cost %d, want %d", buffered, typed+10*postgis.BufferCost)
 	}
@@ -65,7 +65,7 @@ func TestCostHeadline(t *testing.T) {
 func headlineCosts(t *testing.T, maxDoc int) (int, int) {
 	t.Helper()
 	b := schema.New(contribfixture.Catalog(), inflect.Default, schema.Options{FilterIndexedOnly: true, MaxHeadlineDocument: maxDoc})
-	if err := contribplugin.New(nil).TransformSchema(context.Background(), b); err != nil {
+	if err := contribplugin.New(contribplugin.DefaultSettings()).TransformSchema(context.Background(), b); err != nil {
 		t.Fatal(err)
 	}
 	built, err := b.Build()

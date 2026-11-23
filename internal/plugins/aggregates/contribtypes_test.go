@@ -24,8 +24,8 @@ func TestNoAggregatesOverCubeEarthRaster(t *testing.T) {
 	locations := cat.Table("public", "locations")
 	locations.Columns = append(locations.Columns, &introspect.Column{Name: "rast", Position: 8, PGType: "raster", TypeSchema: "public"})
 	b := schema.New(cat, inflect.Default, schema.Options{Functions: true})
-	reg := plugin.NewRegistry(advancedfilters.New(nil), postgisplugin.New(nil), contribplugin.New(nil),
-		aggregates.New(map[string]any{"enabled": true}, nil))
+	reg := plugin.NewRegistry(advancedfilters.New(advancedfilters.DefaultSettings()), postgisplugin.New(postgisplugin.DefaultSettings()), contribplugin.New(contribplugin.DefaultSettings()),
+		aggregates.New(aggregates.Settings{Enabled: true, Grouped: true, Order: true, Filters: true, Spatial: true, ScanCost: 10}, false))
 	if err := reg.TransformSchema(context.Background(), nil, b); err != nil {
 		t.Fatal(err)
 	}

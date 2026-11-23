@@ -31,7 +31,7 @@ func withTiles(cat *introspect.Catalog) {
 
 // buildTiles is buildWith over the fixture plus tiles under the given
 // indexed-only policy, built into a valid schema.
-func buildTiles(t *testing.T, settings map[string]any, indexedOnly bool, allow map[string][]string, mutate func(*introspect.Catalog)) *schema.Builder {
+func buildTiles(t *testing.T, settings func(*Settings), indexedOnly bool, allow map[string][]string, mutate func(*introspect.Catalog)) *schema.Builder {
 	t.Helper()
 	cat := testutil.FixtureCatalog()
 	withTiles(cat)
@@ -41,7 +41,11 @@ func buildTiles(t *testing.T, settings map[string]any, indexedOnly bool, allow m
 	b := schema.New(cat, inflect.Next(inflect.Default), schema.Options{
 		Logger: slog.Default(), Functions: true, FilterIndexedOnly: indexedOnly, AllowColumns: allow,
 	})
-	if err := New(settings).TransformSchema(context.Background(), b); err != nil {
+	s := DefaultSettings()
+	if settings != nil {
+		settings(&s)
+	}
+	if err := New(s).TransformSchema(context.Background(), b); err != nil {
 		t.Fatalf("TransformSchema: %v", err)
 	}
 	if _, err := b.Build(); err != nil {
@@ -131,14 +135,14 @@ func TestRasterFilterAndNoGenericSurface(t *testing.T) {
 }
 
 func TestRasterSettingsAndOmit(t *testing.T) {
-	noDerived := buildTiles(t, map[string]any{"derived": false}, false, nil, nil)
+	noDerived := buildTiles(t, func(s *Settings) { s.Derived = false }, false, nil, nil)
 	if noDerived.Objects["Tile"].Field("rastWidth") != nil || noDerived.Objects["RasterSummaryStats"] != nil {
 		t.Error("derived: false kept the raster fields")
 	}
 	if fieldType(noDerived, "TileFilter", "rast") == "" {
 		t.Error("derived: false removed the raster filter")
 	}
-	noFilters := buildTiles(t, map[string]any{"filters": false}, false, nil, nil)
+	noFilters := buildTiles(t, func(s *Settings) { s.Filters = false }, false, nil, nil)
 	if fieldType(noFilters, "TileFilter", "rast") != "" || noFilters.Inputs["RasterFilterOps"] != nil {
 		t.Error("filters: false kept the raster filter")
 	}
@@ -176,7 +180,7 @@ func TestRasterOnlyCatalog(t *testing.T) {
 		}
 	}
 
-	none := buildTiles(t, map[string]any{"filters": false, "derived": false}, false, nil, func(cat *introspect.Catalog) {
+	none := buildTiles(t, func(s *Settings) { s.Filters, s.Derived = false, false }, false, nil, func(cat *introspect.Catalog) {
 		cat.Tables = removeTable(cat.Tables, "places")
 	})
 	if strings.Contains(none.SDL(), "GeoJSON") {
@@ -191,7 +195,7 @@ func TestRasterNamesTaken(t *testing.T) {
 	b := schema.New(cat, inflect.Next(inflect.Default), schema.Options{Logger: slog.New(slog.NewTextHandler(&logs, nil)), Functions: true})
 	b.Objects["RasterSummaryStats"] = &schema.Object{Name: "RasterSummaryStats"}
 	b.Inputs["RasterFilterOps"] = &schema.Input{Name: "RasterFilterOps"}
-	if err := New(nil).TransformSchema(context.Background(), b); err != nil {
+	if err := New(DefaultSettings()).TransformSchema(context.Background(), b); err != nil {
 		t.Fatal(err)
 	}
 	if b.Objects["Tile"].Field("rastSummaryStats") != nil || b.Objects["Tile"].Field("rastValue") == nil {

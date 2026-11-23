@@ -168,9 +168,7 @@ func TestPartialMutations(t *testing.T) {
 	t.Run("RLS rejects one field, the rest commit under the same identity", func(t *testing.T) {
 		hs := testServer(t, func(c *config.Config) {
 			c.TX.PartialMutations = true
-			c.RLS.Enabled = true
-			c.RLS.Auth.Mode = "headers"
-			c.RLS.RoleClaim = "role"
+			headersIdentity(c)
 		})
 		title := fmt.Sprintf("partial-rls-%d", run)
 		t.Cleanup(func() {

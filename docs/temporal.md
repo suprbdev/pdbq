@@ -42,7 +42,7 @@ exclusion constraint, so:
   { roomBookingByRoomId(roomId: 1, at: "2026-03-06") { guest validAt } }
   ```
 
-  (`roomBooking(roomId:, at:)` with `simple-names`.) User-defined range types
+  (`roomBooking(roomId:, at:)` with `simple_names`.) User-defined range types
   get no point-in-time lookup.
 - **No upsert.** `ON CONFLICT (cols)` cannot infer an exclusion constraint,
   so temporal keys are not `upsert<Type>By…` targets. Plain primary keys and
@@ -79,13 +79,13 @@ and the period pair by overlap (`&&`):
   A note whose period spans two bookings returns both. `@fieldName` on the
   constraint renames the field.
 - **Backward (parent → children)** is the usual connection
-  (`bookingNotesByRoomIdAndValidAt`, `bookingNotes` with `simple-names`),
+  (`bookingNotesByRoomIdAndValidAt`, `bookingNotes` with `simple_names`),
   holding every child whose period overlaps the parent's.
-- **advanced-filters**: the forward relation takes the `{some|none|every}`
+- **advanced_filters**: the forward relation takes the `{some|none|every}`
   wrapper (`roomBookingsByRoomIdAndValidAt: {some: {guest: {equalTo:
   "Grace"}}}`) and a `<rel>Exist` Boolean, and its relational `orderBy`
   values aggregate (`MIN`/`MAX`) like reverse relations.
-- **nested-mutations**: the forward relation gets an extra
+- **nested_mutations**: the forward relation gets an extra
   `connectBy<EqualityColumns>` taking the equality columns only
   (`{connectByRoomId: {roomId: 1}}`), which links the child to that entity;
   `connectByRoomIdAndValidAt` (the full key, exact period) and

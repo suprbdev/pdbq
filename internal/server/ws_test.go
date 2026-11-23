@@ -329,10 +329,25 @@ func TestWSOffByDefault(t *testing.T) {
 	}
 }
 
+func TestInitAuthorization(t *testing.T) {
+	for payload, want := range map[string]string{
+		``:                             "",
+		`{"authorization":"Bearer a"}`: "Bearer a",
+		`{"Authorization":"Bearer b"}`: "Bearer b",
+		`{"headers":{"authorization":"Bearer c"}}`: "Bearer c",
+		`{"headers":{"X-Other":"x"}}`:              "",
+		`not json`:                                 "",
+	} {
+		if got := initAuthorization(json.RawMessage(payload)); got != want {
+			t.Errorf("initAuthorization(%s) = %q, want %q", payload, got, want)
+		}
+	}
+}
+
 func TestWSListen(t *testing.T) {
 	f := wsServer(t, func(c *config.Server) { c.SubscriptionsTopics = []string{"chat:*"} })
 	c := dialWS(t, f.url, subprotocolTransportWS)
-	c.init(`{"authorization":"Bearer ` + token(t, jwt.MapClaims{"role": "app_user", "exp": time.Now().Add(time.Hour).Unix()}) + `"}`)
+	c.init("")
 
 	c.send(`{"id":"s1","type":"subscribe","payload":{"query":"subscription($t: String!) { ev: listen(topic: $t, initialEvent: true) { relatedNodeId ... on ListenPayload { __typename q: query { __typename } } } }","variables":{"t":"chat:1"}}}`)
 	initial := c.expect("next")

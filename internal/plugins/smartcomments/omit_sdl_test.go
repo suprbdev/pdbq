@@ -135,11 +135,11 @@ func buildAll(t *testing.T, prep func(*introspect.Catalog)) *schema.Built {
 	}
 	reg := plugin.NewRegistry(
 		smartcomments.New(),
-		advancedfilters.New(nil),
-		postgisplugin.New(nil),
-		contribplugin.New(nil),
-		aggregates.New(map[string]any{"enabled": true}, nil),
-		nestedmutations.New(nil),
+		advancedfilters.New(advancedfilters.DefaultSettings()),
+		postgisplugin.New(postgisplugin.DefaultSettings()),
+		contribplugin.New(contribplugin.DefaultSettings()),
+		aggregates.New(aggregates.Settings{Enabled: true, Grouped: true, Order: true, Filters: true, Spatial: true, ScanCost: 10}, false),
+		nestedmutations.New(nestedmutations.DefaultSettings()),
 	)
 	if err := reg.TransformCatalog(context.Background(), nil, cat); err != nil {
 		t.Fatal(err)

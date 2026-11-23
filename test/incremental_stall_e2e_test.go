@@ -77,8 +77,8 @@ func TestIncrementalStalledClientReleasesConnection(t *testing.T) {
 			cfg := config.DefaultConfig()
 			cfg.Database.URL = url
 			cfg.Database.MaxConns = 4
-			cfg.RLS.Enabled = false
-			cfg.Plugins.Disabled = []string{"simple-names"}
+			noIdentity(&cfg)
+			cfg.Plugins.Disabled = []string{"simple_names"}
 			cfg.Server.IncrementalDelivery = true
 			cfg.Server.IncrementalWriteTimeout = tc.writeTimeout
 			cfg.Server.RequestTimeout = tc.requestTimeout

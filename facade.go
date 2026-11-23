@@ -10,6 +10,7 @@ import (
 
 	flag "github.com/spf13/pflag"
 
+	"github.com/suprbdev/pdbcore/confx"
 	"github.com/suprbdev/pdbcore/introspect"
 	"github.com/suprbdev/pdbcore/watch"
 	"github.com/suprbdev/pdbq/internal/compile"
@@ -31,12 +32,16 @@ type (
 	ServerConfig   = config.Server
 	SchemaConfig   = config.Schema
 	FiltersConfig  = config.Filters
-	RLSConfig      = config.RLS
 	AuthConfig     = config.Auth
+	JWTConfig      = config.JWT
+	HeadersConfig  = config.Headers
+	RolesConfig    = config.Roles
+	ClaimsConfig   = config.Claims
 	TXConfig       = config.TX
 	WatchConfig    = config.Watch
 	ErrorsConfig   = config.Errors
 	PluginsConfig  = config.Plugins
+	PluginSettings = config.PluginSettings
 	LogConfig      = config.Log
 	MetricsConfig  = config.Metrics
 	ContractConfig = config.Contract
@@ -108,15 +113,15 @@ type httpServer interface {
 
 // buildServer is the shared boot pipeline behind Serve and Handler.
 func (a *App) buildServer(ctx context.Context) (httpServer, error) {
-	if !a.Config.RLS.Enabled {
-		a.Log.Warn("RLS IS DISABLED — all requests run with the privileged connection role; do not use in production")
+	if a.mintErr != nil {
+		return nil, a.mintErr
 	}
-	if a.Config.RLS.Enabled && a.Config.RLS.Auth.Mode == "headers" && len(a.Config.RLS.Auth.TrustedProxies) == 0 {
-		a.Log.Warn("headers auth mode without rls.auth.trusted_proxies — ANY client reaching this port can forge claims and roles; set trusted_proxies or ensure only the gateway can connect")
+	authn, err := server.NewAuthenticator(a.Config.Auth, a.Config.Roles, a.Log)
+	if err != nil {
+		return nil, err
 	}
-	if a.Config.RLS.Enabled && len(a.Config.RLS.AllowedRoles) == 0 &&
-		(a.Config.RLS.Auth.Mode == "jwt" || a.Config.RLS.Auth.Mode == "headers") {
-		a.Log.Warn("rls.allowed_roles is empty — any role named in a verified claim will be assumed, including privileged database roles; list the roles clients may request")
+	for _, w := range confx.IdentityWarnings(a.Config.Auth, a.Config.Roles) {
+		a.Log.Warn(w)
 	}
 	cat, err := a.LoadCatalog(ctx)
 	if err != nil {
@@ -135,14 +140,14 @@ func (a *App) buildServer(ctx context.Context) (httpServer, error) {
 		}
 	}
 	if len(a.Config.Contracts) > 0 {
-		return a.buildContractServer(ctx, cat, catHash)
+		return a.buildContractServer(ctx, cat, catHash, authn)
 	}
 	built, err := a.BuildSchema(ctx, cat)
 	if err != nil {
 		return nil, err
 	}
 	ex := a.Executor(built)
-	srv, err := server.New(a.serverConfig(), server.NewAuthenticator(a.Config.RLS, a.Log), ex, built.SDL, a.Log)
+	srv, err := server.New(a.serverConfig(), authn, ex, built.SDL, a.Log)
 	if err != nil {
 		return nil, err
 	}
@@ -200,8 +205,7 @@ func (a *App) serverConfig() config.Server {
 // buildContractServer builds one schema, executor and Server per contract
 // from cat and mounts them on a server.Group; watch mode rebuilds every
 // contract.
-func (a *App) buildContractServer(ctx context.Context, cat *introspect.Catalog, catHash string) (*server.Group, error) {
-	authn := server.NewAuthenticator(a.Config.RLS, a.Log)
+func (a *App) buildContractServer(ctx context.Context, cat *introspect.Catalog, catHash string, authn *server.Authenticator) (*server.Group, error) {
 	group := server.NewGroup(a.serverConfig(), a.Log)
 	group.SetReadiness(a.pool.Ping)
 	if a.Config.Metrics.Addr == "" {

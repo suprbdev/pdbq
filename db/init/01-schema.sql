@@ -271,7 +271,7 @@ BEGIN
 END $$;
 
 -- Roles for the RLS demo. The anonymous role only sees published posts;
--- app_user additionally sees their own rows (claim pdbq.claims.user_id).
+-- app_user additionally sees their own rows (claim jwt.claims.user_id).
 DO $$ BEGIN
     IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'anonymous') THEN
         CREATE ROLE anonymous NOLOGIN;
@@ -293,10 +293,10 @@ GRANT USAGE ON SEQUENCE retry_probe_seq TO anonymous, app_user;
 
 ALTER TABLE posts ENABLE ROW LEVEL SECURITY;
 CREATE POLICY posts_public ON posts FOR SELECT
-    USING (published OR author_id = NULLIF(current_setting('pdbq.claims.user_id', true), '')::integer);
+    USING (published OR author_id = NULLIF(current_setting('jwt.claims.user_id', true), '')::integer);
 CREATE POLICY posts_own_writes ON posts FOR ALL TO app_user
-    USING (author_id = NULLIF(current_setting('pdbq.claims.user_id', true), '')::integer)
-    WITH CHECK (author_id = NULLIF(current_setting('pdbq.claims.user_id', true), '')::integer);
+    USING (author_id = NULLIF(current_setting('jwt.claims.user_id', true), '')::integer)
+    WITH CHECK (author_id = NULLIF(current_setting('jwt.claims.user_id', true), '')::integer);
 
 -- Seed data.
 INSERT INTO users (email, full_name, mood, settings, tags, address, prev_addresses, moods) VALUES

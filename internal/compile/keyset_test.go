@@ -30,7 +30,7 @@ func TestKeysetExtensionLeadingBound(t *testing.T) {
 			}
 		}
 	}
-	built := buildCatalog(t, cat, nil, contribplugin.New(nil))
+	built := buildCatalog(t, cat, nil, contribplugin.New(contribplugin.DefaultSettings()))
 	const cursor = `"WyJEb2N1bWVudCIsIDNd"`
 	for name, tc := range map[string]struct {
 		args string

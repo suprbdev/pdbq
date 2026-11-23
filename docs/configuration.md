@@ -4,12 +4,23 @@ pdbq layers configuration from three sources, listed here from highest
 precedence to lowest:
 
 1. **Command-line flags** — named after config paths: `--database.url`,
-   `--rls.enabled=false`.
+   `--roles.switch=false`.
 2. **Environment variables** — `PDBQ_` prefix, `_` separates levels, `__`
    preserves an underscore inside a key: `PDBQ_DATABASE_URL`,
-   `PDBQ_SERVER_MAX__DEPTH=20`, `PDBQ_RLS_AUTH_JWT__SECRET=...`.
+   `PDBQ_SERVER_MAX__DEPTH=20`, `PDBQ_AUTH_JWT_SECRET=...`,
+   `PDBQ_PLUGINS_SETTINGS_ADVANCED__FILTERS_RELATIONS=false`. Values are
+   typed like the file's: `true`/`false`, numbers, durations (`25s`) and
+   comma-separated lists (`PDBQ_ROLES_ALLOWED=app_user,admin`).
 3. **YAML file** — `--config path.yaml`, defaulting to `./pdbq.yaml` when
    present.
+
+Loading is **strict**: a key in the YAML file that pdbq does not know is an
+error, and so is a `PDBQ_*` variable whose first segment names (or nearly
+names) a config section, such as `PDBQ_AUTH_JWT_SECRT` or the removed
+`PDBQ_RLS_ENABLED`. The error names the key a removed key moved to
+(`rls.enabled` → `roles.switch`) or the closest valid key ("did you mean").
+Other variables with the prefix, such as `PDBQ_TEST_DATABASE_URL`, are
+ignored. Upgrading from 0.x: see [Upgrading](upgrading.md).
 
 The **complete annotated reference** lives at
 [`examples/pdbq.example.yaml`](../examples/pdbq.example.yaml). It is
@@ -19,7 +30,7 @@ drift from the implementation — regenerate with `make example-config`.
 ## Commands
 
 ```console
-$ pdbq config init      # write a minimal starter pdbq.yaml
+$ pdbq config init      # write a minimal starter pdbq.yaml (no auth: configure before production)
 $ pdbq config validate  # check the effective config, exit non-zero on error
 $ pdbq config example   # print the full annotated reference
 ```
@@ -31,7 +42,7 @@ $ pdbq config example   # print the full annotated reference
 | `database.url` | — | required |
 | `database.max_conns` | 10 | maximum pooled connections |
 | `database.connect_timeout` | `10s` | timeout for establishing a connection |
-| `database.statement_timeout` | `30s` | per-statement timeout on every request (`0` disables) |
+| `database.statement_timeout` | `25s` | per-statement timeout on every request (`0` disables); kept below `server.request_timeout` so a slow statement fails with SQLSTATE `57014` before the request is cut off |
 | `server.addr` | `:8080` | |
 | `server.graphiql` | `false` | GraphiQL playground at `/` (enable for dev) |
 | `server.expose_schema` | `false` | SDL at `/schema.graphql` (reveals full schema) |
@@ -84,7 +95,26 @@ $ pdbq config example   # print the full annotated reference
 | `schema.domain_scalars` | `true` | each domain over a built-in scalar type becomes a custom scalar named after it (PostGraphile's behaviour); `false` types domains as their base type. See [Domains](domains.md) |
 | `filters.indexed_only` | `true` | see [filtering.md](filtering.md) |
 | `filters.allow_columns` | `{}` | per-table extra filterable columns, overriding `indexed_only` |
-| `rls.enabled` | `true` | see [rls.md](rls.md) for the `rls.*` and `rls.auth.*` keys |
+| `auth.mode` | `jwt` | credential source: `jwt` (bearer JWT), `headers` (claims from a trusted gateway) or `none` (no credentials); see [Row-level security](rls.md) |
+| `auth.jwt.secret` | — | HMAC secret verifying HS256/384/512 tokens and signing minted tokens; jwt mode needs it, `secret_file` or `jwks_url` |
+| `auth.jwt.secret_file` | — | file holding the HMAC secret (trailing newlines stripped), instead of `secret`; read at startup |
+| `auth.jwt.jwks_url` | — | JWKS endpoint for RS*/ES* tokens; takes precedence over the secret for verification |
+| `auth.jwt.jwks_cache_ttl` | `1h` | JWKS key cache lifetime; an unknown `kid` refreshes early (at most once a minute) |
+| `auth.jwt.issuer` | — | expected `iss`; empty skips the check (also embedded in minted tokens) |
+| `auth.jwt.audience` | — | expected `aud`; empty skips the check (also embedded in minted tokens) |
+| `auth.jwt.leeway` | `0s` | clock skew tolerated on `exp`, `nbf` and `iat` |
+| `auth.jwt.role_claim_path` | `role` | path of the role claim: `app_metadata.role`, `realm_access.roles[0]`, `"https://example.com/role"` |
+| `auth.headers.prefix` | `X-Pdbq-Claim-` | claim header prefix in headers mode (`X-Pdbq-Claim-User-Id` is claim `user_id`) |
+| `auth.headers.claims` | `[]` | claims accepted from headers (the role claim always is); empty accepts any |
+| `auth.headers.role_claim` | `role` | claim carrying the role in headers mode |
+| `auth.headers.trusted_proxies` | `[]` | IPs or CIDR blocks allowed to send claim headers; **required** in headers mode |
+| `auth.mint_type` | — | composite type (e.g. `public.jwt`) whose function results are minted into HS256 JWTs; needs `auth.jwt.secret` or `secret_file` |
+| `roles.switch` | `true` | run each request as its resolved role (`SET LOCAL ROLE`); `false` runs as the connection role, still verifying credentials and setting claims (logs a warning) |
+| `roles.anonymous` | — | role of requests without credentials; empty refuses them with 401 (and is required in auth mode `none` while `roles.switch` is on) |
+| `roles.default` | — | role of authenticated requests without a role claim; empty falls back to `roles.anonymous` |
+| `roles.allowed` | `[]` | roles a role claim may select; empty allows any (logs a warning); `default` and `anonymous` are always allowed |
+| `claims.prefix` | `jwt.claims` | per-claim settings: claim `user_id` is `current_setting('jwt.claims.user_id', true)`; empty sets none |
+| `claims.json_setting` | — | setting receiving every claim as one JSON object (`{}` without credentials), e.g. `request.jwt.claims` |
 | `transactions.mutations` | `true` | wrap each mutation in a tx (a custom mutation whose payload is read by a second statement runs in one regardless; see [Mutations](mutations.md#what-the-payload-sees)) |
 | `transactions.per_request` | `false` | one tx for the whole request instead of one per operation |
 | `transactions.isolation` | `read_committed` | or `repeatable_read`, `serializable`; `read_committed` uses the server's `default_transaction_isolation` (read committed unless changed): queries run in the pipeline's implicit transaction, mutations in a plain `BEGIN` |
@@ -94,23 +124,31 @@ $ pdbq config example   # print the full annotated reference
 | `watch.poll_interval` | `5s` | fallback polling when event triggers can't be installed |
 | `watch.channel` | `pdbq_ddl` | NOTIFY channel used by the DDL event trigger |
 | `errors.detail` | `prod` | `dev` exposes full PG error detail; `strict` hides even constraint-violation messages |
-| `plugins.disabled` | `[]` | e.g. `[simple-names]` |
-| `plugins.settings.<name>` | `{}` | per-plugin config |
+| `plugins.disabled` | `[]` | built-in plugin names to disable: `smart_comments`, `simple_names`, `advanced_filters`, `postgis`, `contrib`, `aggregates`, `nested_mutations`; any other name is an error (with a "did you mean" hint) |
+| `plugins.settings.advanced_filters.relations` | `true` | relation filters (forward, reverse `some`/`none`/`every`, `<rel>Exists`); see [Filtering](filtering.md) |
+| `plugins.settings.advanced_filters.computed` | `true` | filtering and ordering by computed columns (not index-backed: bypasses `filters.indexed_only`) |
+| `plugins.settings.advanced_filters.relation_order` | `true` | one-level relational orderBy values (`REL__COLUMN_ASC`); off too when `relations` is off |
+| `plugins.settings.advanced_filters.relations_opt_in` | `false` | only foreign keys tagged `@filterable` get relation filters and orderings |
+| `plugins.settings.advanced_filters.computed_opt_in` | `false` | only computed-column functions tagged `@filterable` get filter and orderBy surface |
 | `plugins.settings.aggregates.enabled` | `false` | aggregates on every table's connections; when false only `@aggregates`-tagged tables get them; see [Aggregates](aggregates.md) |
 | `plugins.settings.aggregates.grouped` | `true` | `groupedAggregates(groupBy:, having:)` with its `<Type>GroupBy` enum and `<Type>HavingInput` |
 | `plugins.settings.aggregates.order` | `true` | `<REL>_COUNT_*` and `<REL>_<AGGREGATE>_<COLUMN>_*` orderBy values over reverse relations |
-| `plugins.settings.aggregates.filters` | `true` | `aggregates` field in `advanced-filters` to-many relation filters |
+| `plugins.settings.aggregates.filters` | `true` | `aggregates` field in `advanced_filters` to-many relation filters |
 | `plugins.settings.aggregates.spatial` | `true` | `stExtent`/`stCentroid` over geometry and geography columns (false also drops the next row) |
 | `plugins.settings.aggregates.spatial_union_collect` | `false` | `stUnion`/`stCollect`, whose results grow with the row set (10 × `scan_cost` each) |
-| `plugins.settings.aggregates.scan_cost` | `10` | cost-estimate surcharge per aggregate field, aggregate orderBy value and relation-aggregate comparison |
+| `plugins.settings.aggregates.scan_cost` | `10` | cost-estimate surcharge per aggregate field, aggregate orderBy value and relation-aggregate comparison; must be `>= 0` |
 | `plugins.settings.contrib.filters` | `true` | full-text, trigram, unaccent, hstore, ltree, range, inet and cube filter operators, the vector, cube and earthdistance distance thresholds, plus `<field>Rank` fields; see [Contrib types](contrib.md) |
 | `plugins.settings.contrib.ordering` | `true` | `_RANK_`/`_SIMILARITY_`/pgvector, cube and earthdistance distance orderBy values, the distance fields and the `similarTo:`/`nearVector:`/`nearPoint:` arguments; see [Contrib types](contrib.md) |
-| `plugins.settings.nested-mutations.force_transactions` | `true` | run operations using nested mutation fields in a transaction even when `transactions.mutations` is false; see [Plugins](plugins.md#worked-example-4-nested-mutations) |
-| `plugins.settings.nested-mutations.max_depth` | `3` | nesting levels of nested mutation fields per root field |
-| `plugins.settings.nested-mutations.max_operations` | `50` | nested operations per root field (each list item counts once); more is a client error |
+| `plugins.settings.nested_mutations.force_transactions` | `true` | run operations using nested mutation fields in a transaction even when `transactions.mutations` is false; see [Plugins](plugins.md#worked-example-4-nested_mutations) |
+| `plugins.settings.nested_mutations.max_depth` | `3` | nesting levels of nested mutation fields per root field; must be `>= 1` |
+| `plugins.settings.nested_mutations.max_operations` | `50` | nested operations per root field (each list item counts once); more is a client error; must be `>= 1` |
+| `plugins.settings.postgis.filters` | `true` | `GeometryFilterOps` on spatial columns and `RasterFilterOps` on raster columns; see [PostGIS](postgis.md) |
+| `plugins.settings.postgis.derived` | `true` | derived accessors (`<field>Area`, `<field>Centroid`, …) and the raster accessors |
+| `plugins.settings.postgis.ordering` | `true` | distance ordering, `<field>Distance` fields and the `near:` argument |
+| `plugins.settings.postgis.projection` | `true` | the `buffer:`, `simplify:`, `transform:` and `precision:` projection arguments |
 | `plugins.settings.postgis.typed_geometry` | `false` | spatial columns, computed columns, function results and composite attributes read as typed geometry objects (`GeometryPoint { x y }`, …) instead of the `GeoJSON` scalar; see [PostGIS](postgis.md#typed-geometry) |
 | `log.level` | `info` | `debug`, `info`, `warn`, `error` |
-| `log.format` | `text` | `text` or `json` |
+| `log.format` | `text` | `text` or `json`; other values are rejected |
 | `metrics.enabled` | `false` | serve Prometheus metrics; see [Metrics](metrics.md) |
 | `metrics.path` | `/metrics` | URL path of the metrics endpoint; must not be `/graphql`, `/healthz`, `/readyz` or `/schema.graphql` when served on the main listener |
 | `metrics.addr` | — | separate listen address (e.g. `:9090`) to keep metrics off the public listener; empty serves them on `server.addr` |

@@ -21,7 +21,10 @@ type Plugin struct {
 
 func New() *Plugin { return &Plugin{} }
 
-func (p *Plugin) Name() string  { return "simple-names" }
+// Name is the plugin's name in plugins.disabled.
+const Name = "simple_names"
+
+func (p *Plugin) Name() string  { return Name }
 func (p *Plugin) Priority() int { return 100 }
 
 // TransformCatalog only captures the catalog; it does not modify it.

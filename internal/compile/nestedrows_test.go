@@ -101,12 +101,12 @@ func nestedRowsCatalog() *introspect.Catalog {
 	return cat
 }
 
-// buildNestedRows builds nestedRowsCatalog through the smart-comments and
+// buildNestedRows builds nestedRowsCatalog through the smart_comments and
 // (enabled) aggregates plugins, for the nestedrow_* goldens.
 func buildNestedRows(t testing.TB) *schema.Built {
 	t.Helper()
 	cat := nestedRowsCatalog()
-	reg := plugin.NewRegistry(smartcomments.New(), aggregates.New(map[string]any{"enabled": true}, nil))
+	reg := plugin.NewRegistry(smartcomments.New(), aggregates.New(aggregates.Settings{Enabled: true, Grouped: true, Order: true, Filters: true, Spatial: true, ScanCost: 10}, false))
 	if err := reg.TransformCatalog(context.Background(), nil, cat); err != nil {
 		t.Fatalf("catalog hooks: %v", err)
 	}

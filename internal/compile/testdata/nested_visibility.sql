@@ -146,7 +146,7 @@ __vis_4 AS NOT MATERIALIZED (
   UNION ALL SELECT "id", "post_id", "body" FROM __c_2
 ),
 __guard AS MATERIALIZED (
-  SELECT (SELECT CASE WHEN count(*) > 0 THEN true ELSE concat('nested-mutations: author.connectById matched ', count(*), ' rows')::boolean END FROM __p_1) AS ok
+  SELECT (SELECT CASE WHEN count(*) > 0 THEN true ELSE concat('nested_mutations: author.connectById matched ', count(*), ' rows')::boolean END FROM __p_1) AS ok
 )
 SELECT __guarded.data
 FROM __guard
@@ -205,7 +205,7 @@ __vis_4 AS NOT MATERIALIZED (
   UNION ALL SELECT "id" FROM __mut
 ),
 __guard AS MATERIALIZED (
-  SELECT (SELECT CASE WHEN count(*) > 0 THEN true ELSE concat('nested-mutations: post.create.author.connectById matched ', count(*), ' rows')::boolean END FROM __p_2) AS ok
+  SELECT (SELECT CASE WHEN count(*) > 0 THEN true ELSE concat('nested_mutations: post.create.author.connectById matched ', count(*), ' rows')::boolean END FROM __p_2) AS ok
 )
 SELECT __guarded.data
 FROM __guard

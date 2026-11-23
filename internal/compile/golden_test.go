@@ -44,7 +44,7 @@ func build(t testing.TB) *schema.Built {
 // buildWith is build with the postgis plugin configured by settings. The
 // catalog gains public.tiles, a table of raster columns: rast, allowlisted
 // so its filter exists under filters.indexed_only, and mask.
-func buildWith(t testing.TB, settings map[string]any) *schema.Built {
+func buildWith(t testing.TB, settings func(*postgisplugin.Settings)) *schema.Built {
 	t.Helper()
 	cat := testutil.FixtureCatalog()
 	cat.Tables = append(cat.Tables, rasterTable())
@@ -97,29 +97,33 @@ func buildContrib(t testing.TB) *schema.Built {
 		"public.documents":  {"notes", "path", "attrs", "tag_ids"},
 		"public.embeddings": {"sparse", "embedding", "code"},
 		"public.locations":  {"here"},
-	}, nil, contribplugin.New(nil))
+	}, nil, contribplugin.New(contribplugin.DefaultSettings()))
 }
 
 // buildCatalog builds cat with default naming after the catalog half of
 // smart comments (which resolves tagged polymorphic functions), with the
 // postgis plugin configured by settings and the extra schema hooks.
-func buildCatalog(t testing.TB, cat *introspect.Catalog, settings map[string]any, hooks ...*contribplugin.Plugin) *schema.Built {
+func buildCatalog(t testing.TB, cat *introspect.Catalog, settings func(*postgisplugin.Settings), hooks ...*contribplugin.Plugin) *schema.Built {
 	t.Helper()
 	return buildCatalogAllowing(t, cat, nil, settings, hooks...)
 }
 
 // buildCatalogAllowing is buildCatalog with filters.allow_columns.
-func buildCatalogAllowing(t testing.TB, cat *introspect.Catalog, allow map[string][]string, settings map[string]any, hooks ...*contribplugin.Plugin) *schema.Built {
+func buildCatalogAllowing(t testing.TB, cat *introspect.Catalog, allow map[string][]string, settings func(*postgisplugin.Settings), hooks ...*contribplugin.Plugin) *schema.Built {
 	t.Helper()
 	if err := corecatalog.New().TransformCatalog(context.Background(), cat); err != nil {
-		t.Fatalf("smart-comments catalog hook: %v", err)
+		t.Fatalf("smart_comments catalog hook: %v", err)
 	}
 	b := schema.New(cat, inflect.Default, schema.Options{
 		FilterIndexedOnly: true,
 		AllowColumns:      allow,
 		Functions:         true,
 	})
-	if err := postgisplugin.New(settings).TransformSchema(context.Background(), b); err != nil {
+	ps := postgisplugin.DefaultSettings()
+	if settings != nil {
+		settings(&ps)
+	}
+	if err := postgisplugin.New(ps).TransformSchema(context.Background(), b); err != nil {
 		t.Fatalf("postgis plugin: %v", err)
 	}
 	for _, h := range hooks {
@@ -134,7 +138,7 @@ func buildCatalogAllowing(t testing.TB, cat *introspect.Catalog, allow map[strin
 	return built
 }
 
-// buildAggregates compiles the fixture catalog with the advanced-filters,
+// buildAggregates compiles the fixture catalog with the advanced_filters,
 // postgis and aggregates (enabled) plugins applied; users.created_at is
 // allowed as an orderable column so its timestamp group-by derivatives exist.
 func buildAggregates(t testing.TB) *schema.Built {
@@ -143,8 +147,8 @@ func buildAggregates(t testing.TB) *schema.Built {
 		FilterIndexedOnly: true,
 		AllowColumns:      map[string][]string{"public.users": {"created_at"}},
 	})
-	reg := plugin.NewRegistry(advancedfilters.New(nil), postgisplugin.New(nil),
-		aggregates.New(map[string]any{"enabled": true, "spatial_union_collect": true}, nil))
+	reg := plugin.NewRegistry(advancedfilters.New(advancedfilters.DefaultSettings()), postgisplugin.New(postgisplugin.DefaultSettings()),
+		aggregates.New(aggregates.Settings{Enabled: true, Grouped: true, Order: true, Filters: true, Spatial: true, SpatialUnionCollect: true, ScanCost: 10}, false))
 	if err := reg.TransformSchema(context.Background(), nil, b); err != nil {
 		t.Fatalf("plugins: %v", err)
 	}
@@ -155,7 +159,7 @@ func buildAggregates(t testing.TB) *schema.Built {
 	return built
 }
 
-// buildOmit compiles the fixture catalog through the smart-comments plugin
+// buildOmit compiles the fixture catalog through the smart_comments plugin
 // with users.full_name tagged @omit update, for the omit_* goldens.
 func buildOmit(t testing.TB) *schema.Built {
 	t.Helper()
@@ -294,14 +298,14 @@ func functionFixtures() []*introspect.Function {
 // regenerate. Documents named spatial_typed_* compile against the schema
 // built with plugins.settings.postgis.typed_geometry on, temporal_* ones
 // against the catalog extended with temporalTables, through the
-// advanced-filters and nested-mutations plugins (nested_* ones too), contrib_*
+// advanced_filters and nested_mutations plugins (nested_* ones too), contrib_*
 // against the contrib fixture catalog with the contrib plugin, aggregates_*
 // against buildAggregates, omit_* against buildOmit, nestedrow_* against
 // buildNestedRows.
 func TestGolden(t *testing.T) {
 	plain := build(t)
 	aggBuilt := buildAggregates(t)
-	typed := buildWith(t, map[string]any{"typed_geometry": true})
+	typed := buildWith(t, func(s *postgisplugin.Settings) { s.TypedGeometry = true })
 	temporal, temporalReg := buildTemporal(t)
 	contribBuilt := buildContrib(t)
 	intervalBuilt := buildInterval(t)

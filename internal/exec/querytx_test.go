@@ -130,7 +130,7 @@ func TestBatchTxSingleField(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			f := &fakeBatch{attempts: []attempt{{stmts: map[string]outcome{"a": {raw: `{"id":1}`}}}}}
 			opts := tc.iso
-			opts.RLS, opts.ClaimsPrefix, opts.TxRetries = true, "app.claims", 3
+			opts.ClaimsPrefix, opts.ClaimsJSONSetting, opts.TxRetries = "app.claims", "request.jwt.claims", 3
 			e := newBatchExecutor(t, opts, f)
 			res := e.Execute(context.Background(), Request{
 				Query:  `{ a: userById(id: 1) { id } }`,
@@ -147,7 +147,7 @@ func TestBatchTxSingleField(t *testing.T) {
 			if c.opts.Isolation != tc.want || !c.opts.RLS || c.opts.ScanBeforeCommit || c.opts.MaxRetries != 0 {
 				t.Errorf("opts = %+v, want isolation %q, RLS, no ScanBeforeCommit, retries done by the executor", c.opts, tc.want)
 			}
-			if c.id.Role != "app_user" || c.id.Claims["user_id"] != 7 || c.id.ClaimsPrefix != "app.claims" {
+			if c.id.Role != "app_user" || c.id.Claims["user_id"] != 7 || c.id.ClaimsPrefix != "app.claims" || c.id.ClaimsJSONSetting != "request.jwt.claims" {
 				t.Errorf("identity = %+v", c.id)
 			}
 			if strings.Join(c.sql, ",") != "a" {
@@ -159,7 +159,7 @@ func TestBatchTxSingleField(t *testing.T) {
 
 func TestBatchTxOnlyWhenTransactional(t *testing.T) {
 	f := &fakeBatch{attempts: []attempt{{}}}
-	e := newBatchExecutor(t, Options{RLS: true}, f)
+	e := newBatchExecutor(t, Options{ClaimsPrefix: "jwt.claims"}, f)
 	res := e.Execute(context.Background(), Request{Query: `{ __typename }`})
 	if got, want := resultJSON(t, res), `{"data":{"__typename":"Query"}}`; got != want {
 		t.Fatalf("response = %s, want %s", got, want)
@@ -174,6 +174,18 @@ func TestBatchTxOnlyWhenTransactional(t *testing.T) {
 	}
 	if len(f.calls) != 1 || len(f.calls[0].sql) != 0 {
 		t.Fatalf("calls = %+v, want one batch without statements (the identity alone)", f.calls)
+	}
+}
+
+func TestBatchTxAlwaysWithClaimsJSONSetting(t *testing.T) {
+	f := &fakeBatch{attempts: []attempt{{}}}
+	e := newBatchExecutor(t, Options{ClaimsJSONSetting: "request.jwt.claims"}, f)
+	res := e.Execute(context.Background(), Request{Query: `{ __typename }`})
+	if got, want := resultJSON(t, res), `{"data":{"__typename":"Query"}}`; got != want {
+		t.Fatalf("response = %s, want %s", got, want)
+	}
+	if len(f.calls) != 1 || !f.calls[0].opts.RLS || f.calls[0].id.ClaimsJSONSetting != "request.jwt.claims" {
+		t.Fatalf("calls = %+v, want one batch setting the JSON claims", f.calls)
 	}
 }
 
@@ -294,7 +306,7 @@ func TestBatchTxMutation(t *testing.T) {
 		if got, want := resultJSON(t, res), `{"data":{"a":{"user":{"id":1}},"t":"Mutation"}}`; got != want {
 			t.Fatalf("response = %s, want %s", got, want)
 		}
-		if len(f.calls) != 1 || !f.calls[0].opts.ScanBeforeCommit || f.calls[0].opts.Isolation != "" || f.calls[0].opts.RLS {
+		if len(f.calls) != 1 || !f.calls[0].opts.ScanBeforeCommit || f.calls[0].opts.Isolation != "" {
 			t.Fatalf("calls = %+v, want one ScanBeforeCommit batch at the default isolation", f.calls)
 		}
 	})

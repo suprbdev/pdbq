@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	flag "github.com/spf13/pflag"
 
 	"github.com/suprbdev/pdbcore/cache"
 	"github.com/suprbdev/pdbcore/confx"
@@ -38,6 +39,7 @@ func main() {
 func configFlags(cmd *cobra.Command) {
 	fs := cmd.Flags()
 	fs.String("database.url", "", "PostgreSQL connection URL")
+	fs.Duration("database.statement_timeout", 25*time.Second, "per-statement timeout (0 disables); keep it below server.request_timeout")
 	fs.String("server.addr", "", "HTTP listen address")
 	fs.Bool("server.graphiql", false, "serve GraphiQL playground")
 	fs.Bool("server.expose_schema", false, "serve generated SDL at /schema.graphql")
@@ -72,7 +74,9 @@ func configFlags(cmd *cobra.Command) {
 	fs.String("schema.cache_path", "", "boot from schema cache file")
 	fs.Bool("schema.expose_partitions", false, "expose partitions of partitioned tables as tables")
 	fs.Bool("schema.domain_scalars", true, "expose domains over built-in scalars as custom scalars")
-	fs.Bool("rls.enabled", true, "enable RLS role switching")
+	fs.String("auth.mode", "jwt", "credential source: jwt|headers|none")
+	fs.Bool("roles.switch", true, "run each request as its resolved role (SET LOCAL ROLE)")
+	fs.String("roles.anonymous", "", "role of requests without credentials (empty refuses them with 401)")
 	fs.Bool("watch.enabled", false, "watch for DDL changes (dev)")
 	fs.Bool("filters.indexed_only", true, "only indexed columns filterable")
 	fs.String("errors.detail", "", "error verbosity: dev|prod|strict")
@@ -80,6 +84,7 @@ func configFlags(cmd *cobra.Command) {
 	fs.Bool("metrics.enabled", false, "serve Prometheus metrics")
 	fs.String("metrics.path", "", "URL path of the metrics endpoint (default /metrics)")
 	fs.String("metrics.addr", "", "separate listen address for the metrics endpoint")
+	registerEnumCompletion(cmd, "auth.mode", "jwt", "headers", "none")
 	registerEnumCompletion(cmd, "errors.detail", "dev", "prod", "strict")
 	registerEnumCompletion(cmd, "log.level", "debug", "info", "warn", "error")
 }
@@ -93,7 +98,36 @@ func loadConfig(cmd *cobra.Command) (config.Config, error) {
 	if path == "" {
 		path = confx.Discover("pdbq.yaml", "pdbq.yml")
 	}
-	return config.Load(path, confx.ChangedFlags(cmd.Flags(), "config"))
+	return config.Load(path, changedConfigFlags(cmd))
+}
+
+// changedConfigFlags returns the config flags the user set on cmd. Config
+// flags are named after dotted koanf paths; command-local flags (--config,
+// --output, --var, ...) have no dot and stay out of the config.
+func changedConfigFlags(cmd *cobra.Command) *flag.FlagSet {
+	var local []string
+	cmd.Flags().VisitAll(func(f *flag.Flag) {
+		if !strings.Contains(f.Name, ".") {
+			local = append(local, f.Name)
+		}
+	})
+	return confx.ChangedFlags(cmd.Flags(), local...)
+}
+
+// loadCLIConfig loads the config of a command that runs without an HTTP
+// request: auth.mode none and roles.switch false, so it runs as the
+// connection role and needs no JWT secret.
+func loadCLIConfig(cmd *cobra.Command) (config.Config, error) {
+	path, _ := cmd.Flags().GetString("config")
+	if path == "" {
+		path = confx.Discover("pdbq.yaml", "pdbq.yml")
+	}
+	cfg, err := config.LoadUnvalidated(path, changedConfigFlags(cmd))
+	if err != nil {
+		return cfg, err
+	}
+	cfg.ConnectionIdentity()
+	return cfg, cfg.Validate()
 }
 
 func signalContext() context.Context {
@@ -149,13 +183,8 @@ func queryCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			cfg, err := loadConfig(cmd)
+			cfg, err := loadCLIConfig(cmd)
 			if err != nil {
-				return err
-			}
-			// One-off CLI queries run without HTTP auth: no role switch.
-			cfg.RLS.Auth.Mode = "none"
-			if err := cfg.Validate(); err != nil {
 				return err
 			}
 			app := pdbq.New(cfg)
@@ -259,7 +288,7 @@ func schemaCmd() *cobra.Command {
 		Use:   "dump",
 		Short: "Introspect the database and write a schema cache file",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			cfg, err := loadConfig(cmd)
+			cfg, err := loadCLIConfig(cmd)
 			if err != nil {
 				return err
 			}
@@ -286,7 +315,7 @@ func schemaCmd() *cobra.Command {
 		Use:   "check",
 		Short: "Compare live database schema against a cache file (exit 1 on drift)",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			cfg, err := loadConfig(cmd)
+			cfg, err := loadCLIConfig(cmd)
 			if err != nil {
 				return err
 			}
@@ -317,7 +346,7 @@ func schemaCmd() *cobra.Command {
 		Use:   "print",
 		Short: "Print the generated GraphQL schema (SDL, or introspection JSON with --json)",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			cfg, err := loadConfig(cmd)
+			cfg, err := loadCLIConfig(cmd)
 			if err != nil {
 				return err
 			}
@@ -366,18 +395,7 @@ func configCmd() *cobra.Command {
 			if _, err := os.Stat(path); err == nil {
 				return fmt.Errorf("%s already exists", path)
 			}
-			starter := `# pdbq configuration. Run "pdbq config example" for the full annotated reference.
-database:
-  # Fill in real credentials, or delete the url and set PDBQ_DATABASE_URL.
-  url: "postgres://USER:PASSWORD@HOST:5432/DB"
-server:
-  addr: ":8080"
-schema:
-  schemas: ["public"]
-rls:
-  enabled: false # enable + configure auth before production use
-`
-			if err := os.WriteFile(path, []byte(starter), 0o644); err != nil {
+			if err := os.WriteFile(path, []byte(config.StarterYAML), 0o644); err != nil {
 				return err
 			}
 			fmt.Println("wrote", path)
@@ -416,11 +434,9 @@ func pluginsCmd() *cobra.Command {
 		Use:   "list",
 		Short: "List registered plugins and the hooks they implement",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			cfg, err := loadConfig(cmd)
+			cfg, err := loadCLIConfig(cmd)
 			if err != nil {
-				// plugins list should work without a valid DB config
-				cfg = config.DefaultConfig()
-				cfg.RLS.Enabled = false
+				return err
 			}
 			app := pdbq.New(cfg)
 			disabled := cfg.DisabledPlugins()

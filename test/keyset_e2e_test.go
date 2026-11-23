@@ -159,7 +159,7 @@ func TestKeysetIndexBound(t *testing.T) {
 
 	cfg := config.DefaultConfig()
 	cfg.Database.URL = os.Getenv("PDBQ_TEST_DATABASE_URL")
-	cfg.Plugins.Disabled = []string{"simple-names"}
+	cfg.Plugins.Disabled = []string{"simple_names"}
 	app := pdbq.New(cfg)
 	t.Cleanup(app.Close)
 

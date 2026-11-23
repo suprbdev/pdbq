@@ -167,10 +167,10 @@ func TestMutationVisibilityRLS(t *testing.T) {
 		`GRANT SELECT ON mvr_authors TO app_user`,
 		`GRANT SELECT (id, author_id, owner_id, visible, title), INSERT, UPDATE, DELETE ON mvr_posts TO app_user`,
 		`ALTER TABLE mvr_posts ENABLE ROW LEVEL SECURITY`,
-		`CREATE POLICY mvr_read ON mvr_posts FOR SELECT USING (visible OR owner_id = NULLIF(current_setting('pdbq.claims.user_id', true), '')::integer)`,
-		`CREATE POLICY mvr_insert ON mvr_posts FOR INSERT WITH CHECK (owner_id = NULLIF(current_setting('pdbq.claims.user_id', true), '')::integer)`,
-		`CREATE POLICY mvr_update ON mvr_posts FOR UPDATE USING (owner_id = NULLIF(current_setting('pdbq.claims.user_id', true), '')::integer)`,
-		`CREATE POLICY mvr_delete ON mvr_posts FOR DELETE USING (owner_id = NULLIF(current_setting('pdbq.claims.user_id', true), '')::integer)`,
+		`CREATE POLICY mvr_read ON mvr_posts FOR SELECT USING (visible OR owner_id = NULLIF(current_setting('jwt.claims.user_id', true), '')::integer)`,
+		`CREATE POLICY mvr_insert ON mvr_posts FOR INSERT WITH CHECK (owner_id = NULLIF(current_setting('jwt.claims.user_id', true), '')::integer)`,
+		`CREATE POLICY mvr_update ON mvr_posts FOR UPDATE USING (owner_id = NULLIF(current_setting('jwt.claims.user_id', true), '')::integer)`,
+		`CREATE POLICY mvr_delete ON mvr_posts FOR DELETE USING (owner_id = NULLIF(current_setting('jwt.claims.user_id', true), '')::integer)`,
 		`INSERT INTO mvr_authors VALUES (1, 'shared')`,
 		`INSERT INTO mvr_posts (author_id, owner_id, visible, title, secret) VALUES (1, 2, true, 'grace-1', 's'), (1, 1, true, 'ada-public', 's'), (1, 1, false, 'ada-hidden', 's')`,
 	)
@@ -178,9 +178,7 @@ func TestMutationVisibilityRLS(t *testing.T) {
 		_, _ = conn.Exec(context.Background(), `DROP TABLE mvr_posts; DROP TABLE mvr_authors`)
 	})
 	hs := testServer(t, func(cfg *config.Config) {
-		cfg.RLS.Enabled = true
-		cfg.RLS.Auth.Mode = "headers"
-		cfg.RLS.RoleClaim = "role"
+		headersIdentity(cfg)
 	})
 	asGrace := func(t *testing.T, query string) gqlResp {
 		t.Helper()

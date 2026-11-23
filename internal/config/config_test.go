@@ -9,7 +9,7 @@ import (
 
 func TestDefaultsValid(t *testing.T) {
 	cfg := DefaultConfig()
-	cfg.RLS.Auth.JWTSecret = "test-secret"
+	cfg.Auth.JWT.Secret = "test-secret"
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("defaults invalid: %v", err)
 	}
@@ -17,7 +17,7 @@ func TestDefaultsValid(t *testing.T) {
 
 func TestSubscriptionSettingsIgnoredWhileOff(t *testing.T) {
 	cfg := DefaultConfig()
-	cfg.RLS.Auth.JWTSecret = "s"
+	cfg.Auth.JWT.Secret = "s"
 	cfg.Server.SubscriptionsTopics = []string{"bad topic"}
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("subscription settings checked while off: %v", err)
@@ -31,7 +31,7 @@ func TestSubscriptionSettingsIgnoredWhileOff(t *testing.T) {
 
 func TestValidateAcceptsStrictErrors(t *testing.T) {
 	cfg := DefaultConfig()
-	cfg.RLS.Auth.JWTSecret = "s"
+	cfg.Auth.JWT.Secret = "s"
 	cfg.Errors.Detail = "strict"
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("strict rejected: %v", err)
@@ -41,14 +41,14 @@ func TestValidateAcceptsStrictErrors(t *testing.T) {
 func TestValidateRejects(t *testing.T) {
 	bad := func(mutate func(*Config)) error {
 		cfg := DefaultConfig()
-		cfg.RLS.Auth.JWTSecret = "s"
+		cfg.Auth.JWT.Secret = "s"
 		mutate(&cfg)
 		return cfg.Validate()
 	}
 	cases := map[string]func(*Config){
 		"errors.detail": func(c *Config) { c.Errors.Detail = "verbose" },
-		"auth.mode":     func(c *Config) { c.RLS.Auth.Mode = "oauth" },
-		"jwt secret":    func(c *Config) { c.RLS.Auth.JWTSecret = "" },
+		"auth.mode":     func(c *Config) { c.Auth.Mode = "oauth" },
+		"jwt secret":    func(c *Config) { c.Auth.JWT.Secret = "" },
 		"isolation":     func(c *Config) { c.TX.Isolation = "chaos" },
 		"watch+cache":   func(c *Config) { c.Watch.Enabled = true; c.Schema.CachePath = "x" },
 		"no schemas":    func(c *Config) { c.Schema.Schemas = nil },
@@ -63,9 +63,15 @@ func TestValidateRejects(t *testing.T) {
 		"comparisons":   func(c *Config) { c.Server.MaxFieldComparisons = 0 },
 		"cache bytes":   func(c *Config) { c.Server.DocumentCacheBytes = 0 },
 		"cache entry":   func(c *Config) { c.Server.DocumentCacheMaxEntryBytes = 0 },
-		"anon role":     func(c *Config) { c.RLS.AnonymousRole = "" },
+		"anon role":     func(c *Config) { c.Auth.Mode = "none" },
+		"log format":    func(c *Config) { c.Log.Format = "xml" },
+		"headers mode":  func(c *Config) { c.Auth.Mode = "headers" },
+		"plugin name":   func(c *Config) { c.Plugins.Disabled = []string{"simple-names"} },
+		"nested depth":  func(c *Config) { c.Plugins.Settings.NestedMutations.MaxDepth = 0 },
+		"nested ops":    func(c *Config) { c.Plugins.Settings.NestedMutations.MaxOperations = 0 },
+		"scan cost":     func(c *Config) { c.Plugins.Settings.Aggregates.ScanCost = -1 },
 		"watch channel": func(c *Config) { c.Watch.Enabled = true; c.Watch.Channel = "bad$$chan" },
-		"trusted proxy": func(c *Config) { c.RLS.Auth.TrustedProxies = []string{"10.0.0.0/8", "not-an-ip"} },
+		"trusted proxy": func(c *Config) { c.Auth.Headers.TrustedProxies = []string{"10.0.0.0/8", "not-an-ip"} },
 		"metrics path":  func(c *Config) { c.Metrics.Enabled = true; c.Metrics.Path = "metrics" },
 		"metrics route": func(c *Config) { c.Metrics.Enabled = true; c.Metrics.Path = "/graphql" },
 		"metrics addr":  func(c *Config) { c.Metrics.Enabled = true; c.Metrics.Addr = c.Server.Addr },
@@ -87,9 +93,9 @@ func TestValidateRejects(t *testing.T) {
 			c.Metrics.Path = "/public/metrics"
 		},
 		"contract path": func(c *Config) { c.Contracts = []Contract{{Name: "a"}, {Name: "b", Path: "/a"}} },
-		"contract smart-comments": func(c *Config) {
+		"contract smart_comments": func(c *Config) {
 			c.Contracts = []Contract{{Name: "a"}}
-			c.Plugins.Disabled = []string{"smart-comments"}
+			c.Plugins.Disabled = []string{"smart_comments"}
 		},
 		"inc deferred":      func(c *Config) { c.Server.IncrementalDelivery = true; c.Server.IncrementalMaxDeferred = 0 },
 		"inc batch":         func(c *Config) { c.Server.IncrementalDelivery = true; c.Server.IncrementalStreamBatchSize = 0 },
@@ -112,23 +118,28 @@ func TestValidateRejects(t *testing.T) {
 	}
 }
 
-func TestLoadRejectsUnsafeRLSSettings(t *testing.T) {
+func TestLoadRejectsUnsafeIdentitySettings(t *testing.T) {
 	cases := []struct {
 		name, yaml string
 		want       []string
 	}{
-		{"allowed role none", "rls:\n  allowed_roles: [app_user, none]\n", []string{"rls.allowed_roles", `"none"`}},
-		{"allowed role NONE", "rls:\n  allowed_roles: [NONE]\n", []string{"rls.allowed_roles", `"NONE"`}},
-		{"allowed role public", "rls:\n  allowed_roles: [public]\n", []string{"rls.allowed_roles", `"public"`}},
-		{"allowed role pg_", "rls:\n  allowed_roles: [pg_read_all_data]\n", []string{"rls.allowed_roles", `"pg_read_all_data"`}},
-		{"anonymous role none", "rls:\n  anonymous_role: none\n", []string{"rls.anonymous_role", `"none"`}},
-		{"default role pg_", "rls:\n  default_role: pg_write_all_data\n", []string{"rls.default_role", `"pg_write_all_data"`}},
-		{"claims prefix", "rls:\n  claims_prefix: plpgsql.claims\n", []string{"rls.claims_prefix", `"plpgsql"`}},
+		{"allowed role none", "roles:\n  allowed: [app_user, none]\n", []string{"roles.allowed", `"none"`}},
+		{"allowed role NONE", "roles:\n  allowed: [NONE]\n", []string{"roles.allowed", `"NONE"`}},
+		{"allowed role public", "roles:\n  allowed: [public]\n", []string{"roles.allowed", `"public"`}},
+		{"allowed role pg_", "roles:\n  allowed: [pg_read_all_data]\n", []string{"roles.allowed", `"pg_read_all_data"`}},
+		{"anonymous role none", "roles:\n  anonymous: none\n", []string{"roles.anonymous", `"none"`}},
+		{"default role pg_", "roles:\n  default: pg_write_all_data\n", []string{"roles.default", `"pg_write_all_data"`}},
+		{"claims prefix", "claims:\n  prefix: plpgsql.claims\n", []string{"claims.prefix", `"plpgsql"`}},
+		{"json setting under prefix", "claims:\n  json_setting: jwt.claims.all\n", []string{"claims.json_setting", "claims.prefix"}},
+		{"headers without proxies", "auth:\n  mode: headers\n", []string{"auth.headers.trusted_proxies is required"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "pdbq.yaml")
-			yaml := "database:\n  url: \"postgres://file/db\"\n" + tc.yaml + "  auth:\n    jwt_secret: s\n"
+			yaml := "database:\n  url: \"postgres://file/db\"\n" + tc.yaml
+			if !strings.HasPrefix(tc.yaml, "auth:") {
+				yaml += "auth:\n  jwt:\n    secret: s\n"
+			}
 			if err := os.WriteFile(path, []byte(yaml), 0o644); err != nil {
 				t.Fatal(err)
 			}
@@ -146,11 +157,11 @@ func TestLoadRejectsUnsafeRLSSettings(t *testing.T) {
 }
 
 func TestLoadRejectsAllowedRoleNoneFromEnv(t *testing.T) {
-	t.Setenv("PDBQ_RLS_AUTH_JWT__SECRET", "s")
-	t.Setenv("PDBQ_RLS_ALLOWED__ROLES", "app_user,none")
+	t.Setenv("PDBQ_AUTH_JWT_SECRET", "s")
+	t.Setenv("PDBQ_ROLES_ALLOWED", "app_user,none")
 	_, err := Load("", nil)
-	if err == nil || !strings.Contains(err.Error(), `rls.allowed_roles: "none"`) {
-		t.Fatalf("Load error = %v, want rls.allowed_roles: \"none\" rejected", err)
+	if err == nil || !strings.Contains(err.Error(), `roles.allowed: "none"`) {
+		t.Fatalf("Load error = %v, want roles.allowed: \"none\" rejected", err)
 	}
 }
 
@@ -162,8 +173,10 @@ database:
   url: "postgres://file/db"
 server:
   addr: ":9999"
-rls:
-  enabled: false
+auth:
+  mode: none
+roles:
+  switch: false
 `
 	if err := os.WriteFile(path, []byte(yaml), 0o644); err != nil {
 		t.Fatal(err)
@@ -189,7 +202,8 @@ func TestExposePartitionsFromEnv(t *testing.T) {
 		t.Fatal("schema.expose_partitions defaults to true, want false")
 	}
 	t.Setenv("PDBQ_SCHEMA_EXPOSE__PARTITIONS", "true")
-	t.Setenv("PDBQ_RLS_ENABLED", "false")
+	t.Setenv("PDBQ_AUTH_MODE", "none")
+	t.Setenv("PDBQ_ROLES_SWITCH", "false")
 	cfg, err := Load("", nil)
 	if err != nil {
 		t.Fatal(err)
@@ -203,7 +217,10 @@ func TestExampleYAMLCoversEverything(t *testing.T) {
 	out := ExampleYAML()
 	for _, key := range []string{
 		"database:", "url:", "server:", "max_depth:", "filters:", "indexed_only:",
-		"rls:", "anonymous_role:", "transactions:", "watch:", "errors:", "plugins:", "log:",
+		"auth:", "jwt:", "secret_file:", "headers:", "trusted_proxies:", "mint_type:",
+		"roles:", "switch:", "anonymous:", "claims:", "json_setting:", "transactions:", "watch:", "errors:",
+		"plugins:", "advanced_filters:", "relations_opt_in:", "postgis:", "typed_geometry:", "contrib:",
+		"aggregates:", "scan_cost:", "nested_mutations:", "max_operations:", "log:",
 	} {
 		if !strings.Contains(out, key) {
 			t.Errorf("example yaml missing %q", key)
@@ -217,7 +234,7 @@ func TestExampleYAMLCoversEverything(t *testing.T) {
 
 func TestValidateMetrics(t *testing.T) {
 	cfg := DefaultConfig()
-	cfg.RLS.Auth.JWTSecret = "s"
+	cfg.Auth.JWT.Secret = "s"
 	cfg.Metrics.Path = "/graphql"
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("disabled metrics must not be validated: %v", err)
@@ -241,7 +258,7 @@ func TestValidateMetrics(t *testing.T) {
 func TestMetricsFromEnv(t *testing.T) {
 	t.Setenv("PDBQ_METRICS_ENABLED", "true")
 	t.Setenv("PDBQ_METRICS_ADDR", ":9090")
-	t.Setenv("PDBQ_RLS_AUTH_JWT__SECRET", "s")
+	t.Setenv("PDBQ_AUTH_JWT_SECRET", "s")
 	cfg, err := Load("", nil)
 	if err != nil {
 		t.Fatal(err)
@@ -253,7 +270,7 @@ func TestMetricsFromEnv(t *testing.T) {
 
 func TestContracts(t *testing.T) {
 	cfg := DefaultConfig()
-	cfg.RLS.Auth.JWTSecret = "s"
+	cfg.Auth.JWT.Secret = "s"
 	cfg.Contracts = []Contract{{Name: "internal", Path: "/"}, {Name: "public"}, {Name: "partner", Default: "exclude"}}
 	if err := cfg.Validate(); err != nil {
 		t.Fatal(err)
@@ -270,7 +287,7 @@ func TestContracts(t *testing.T) {
 }
 
 func TestContractsFromEnv(t *testing.T) {
-	t.Setenv("PDBQ_RLS_AUTH_JWT__SECRET", "s")
+	t.Setenv("PDBQ_AUTH_JWT_SECRET", "s")
 	t.Setenv("PDBQ_CONTRACTS", "public,partner")
 	cfg, err := Load("", nil)
 	if err != nil {

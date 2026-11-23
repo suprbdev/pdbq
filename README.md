@@ -23,8 +23,10 @@ time=... msg=listening addr=:8080 graphiql=true
   `json_build_object` trees, relations become `LEFT JOIN LATERAL`, lists
   become `json_agg`; PostgreSQL returns the response JSON directly.
 - **RLS-aware by default** — each request runs in a transaction with
-  `SET LOCAL ROLE` and claims exposed via `set_config('pdbq.claims.*', ...)`,
-  from a verified JWT or trusted gateway headers.
+  `SET LOCAL ROLE` and claims exposed via `set_config('jwt.claims.*', ...)`
+  (and optionally PostgREST's `request.jwt.claims` JSON), from a verified JWT
+  or trusted gateway headers; requests without credentials are refused
+  unless an anonymous role is configured.
 - **Filters with an indexed-only policy** — only indexed columns are
   filterable out of the box (`filters.indexed_only: false` opens it up),
   with per-type operator sets (`likeInsensitive` for text, `@>` for arrays/jsonb, ...).
@@ -39,11 +41,11 @@ time=... msg=listening addr=:8080 graphiql=true
   atomically swaps the schema during development.
 - **Plugins** — five small hook interfaces (catalog, inflection, schema,
   compile, request) with four built-ins proving the design:
-  `smart-comments` (tune the schema with PostGraphile-style `@omit`/`@name`/
+  `smart_comments` (tune the schema with PostGraphile-style `@omit`/`@name`/
   `@primaryKey`/... tags in database `COMMENT`s, see
-  [docs/smart-comments.md](docs/smart-comments.md)), `simple-names` (`users`
-  instead of `allUsers`), `advanced-filters` (filter across relations and
-  filter/order by computed columns), and `nested-mutations` (nested
+  [docs/smart-comments.md](docs/smart-comments.md)), `simple_names` (`users`
+  instead of `allUsers`), `advanced_filters` (filter across relations and
+  filter/order by computed columns), and `nested_mutations` (nested
   connect/create/update/delete/disconnect inputs on create and update
   mutations, compiled to multi-CTE statements in a forced transaction). The opt-in `aggregates` plugin adds
   `@graphile/pg-aggregates`-style `aggregates`/`groupedAggregates` on
@@ -112,6 +114,7 @@ See [docs/quickstart.md](docs/quickstart.md) for the full tour.
 | [docs/quickstart.md](docs/quickstart.md) | First run, first queries |
 | [docs/configuration.md](docs/configuration.md) | Config layering; full reference in [examples/pdbq.example.yaml](examples/pdbq.example.yaml) |
 | [docs/cli.md](docs/cli.md) | All subcommands, scripting patterns |
+| [docs/upgrading.md](docs/upgrading.md) | Breaking changes and config migration from 0.x to 1.0 |
 | [docs/rls.md](docs/rls.md) | Roles, JWT/header claims, policies |
 | [docs/filtering.md](docs/filtering.md) | Filter operators, indexed-only policy |
 | [docs/mutations.md](docs/mutations.md) | Table and custom mutations, payload fields (`query`, relations, edges), what a payload sees |

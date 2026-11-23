@@ -55,7 +55,7 @@ func (b *Builder) noOutput(c *introspect.Column) bool {
 // [RowValueSuffix] and has one nullable field per column, bound like a
 // composite attribute (KindCompositeField), so nested rows render through
 // json_build_object over the columns they expose. Raster columns and
-// columns of hidden row types are left out, and the smart-comments plugin
+// columns of hidden row types are left out, and the smart_comments plugin
 // removes the columns hidden from reads, as it does from t's own type.
 // Relations, computed columns and nodeId are not part of it: a nested row
 // is a value, not necessarily a row stored in t.
