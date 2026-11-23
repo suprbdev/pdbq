@@ -17,7 +17,7 @@ func testAuth() *Authenticator {
 		AnonymousRole: "anonymous",
 		RoleClaim:     "role",
 		Auth:          config.Auth{Mode: "jwt", JWTSecret: "test-secret"},
-	})
+	}, nil)
 }
 
 func testServer(cfg config.Server) *Server {

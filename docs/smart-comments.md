@@ -45,7 +45,7 @@ Tags may repeat where noted. Disable everything with
 | Tag | Effect |
 |---|---|
 | `@omit` | Hide the column everywhere: every action below. The column may still back foreign keys (relations join through it). |
-| `@omit read` | Hide its value: the output field, PostGIS derived accessors, full-text rank fields, aggregates and group-by keys, distinctOn, distance / rank / similarity orderings, and every key including the column (see [What `@omit read` hides](#what-omit-read-hides)). Filter and orderBy stay. |
+| `@omit read` | Hide its value: the output field, PostGIS derived accessors, full-text rank fields, aggregates and group-by keys, distinctOn, distance / rank / similarity orderings, and every key including the column (see [What `@omit read` hides](#what-omit-read-hides)). It also implies `@omit filter`, `@omit order` and `@omit aggregates`: the column is left out of filters, conditions, orderBy and distinctOn too. |
 | `@omit create` / `update` | Leave it out of the create input / update patch, nested-mutation inputs included; an upsert never overwrites a column left out of the patch. |
 | `@omit filter` | No filter or condition field, distinctOn value, `having` or relation-aggregate filter. |
 | `@omit order` | No orderBy values (relational and aggregate ones included), distinctOn or group-by value. |
@@ -68,18 +68,20 @@ upsert, no nested-mutation operation addressing rows by it, and, for a
 primary key, no `nodeId` (the type leaves the `Node` interface) and no
 payload edge; connection cursors fall back to offsets rather than encode
 the key. Looking a row up by the hidden value would tell a client whether
-its guess exists. The key's columns stay filterable (indexed) unless
-tagged `@omit filter` too.
-
+its guess exists. 
 A foreign key referencing such a column keeps its relation fields, but
 nested `connect…` / `create` / `disconnect…` operations setting it are not
 generated: they would copy the hidden value into the referencing row's
 readable column.
 
-`@omit read` does not imply `@omit filter` or `@omit order`, as in
-PostGraphile: a column left filterable can still be matched against, so a
-client can recover its value by bisecting with range operators. Use a bare
-`@omit` to hide a value completely.
+`@omit read` implies `@omit filter`, `@omit order` and `@omit aggregates` on
+a column. **This differs from PostGraphile**, where `@omit read` only hides
+the output field and leaves the column filterable and sortable. A column
+that can still be filtered or ordered leaks its value to a client that
+bisects with range operators (`salary > 50000`), so pdbq removes it from
+filters, conditions, orderBy, distinctOn, aggregates (groupBy, having, sum,
+min, max, distinctCount), keyset cursors and unique-key lookups as well. There
+is no tag combination that keeps a column filterable but unreadable.
 
 A type whose every field is hidden keeps a single `_empty: Boolean`
 placeholder (always null), since GraphQL object types need a field.
