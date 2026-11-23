@@ -7,11 +7,11 @@ mutation {
   publishPost(input: {postId: 7}) {
     post {
       title
-      author {
+      userByAuthorId {
         email
       }
     }
-    author {
+    userByAuthorId {
       email
     }
     postEdge(orderBy: [TITLE_ASC]) {
@@ -30,7 +30,7 @@ mutation {
   }
   unpublishPost(input: {postId: 7, clientMutationId: "cm-2"}) {
     clientMutationId
-    author {
+    userByAuthorId {
       id
     }
   }
@@ -40,7 +40,7 @@ mutation {
   publishPosts(input: {postIds: [1, 2]}) {
     posts {
       id
-      author {
+      userByAuthorId {
         email
       }
     }

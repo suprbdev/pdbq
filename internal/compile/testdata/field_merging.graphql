@@ -3,8 +3,8 @@
 # backward relations, connection internals and composite columns alike.
 {
   postById(id: 1) {
-    author { email }
-    ... on Post { author { id } }
+    userByAuthorId { email }
+    ... on Post { userByAuthorId { id } }
     ...authorName
   }
   userById(id: 1) {
@@ -16,5 +16,5 @@
 }
 
 fragment authorName on Post {
-  author { fullName }
+  userByAuthorId { fullName }
 }

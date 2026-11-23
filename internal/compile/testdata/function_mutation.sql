@@ -8,7 +8,7 @@ SELECT coalesce(json_agg(__t_1::text), '[]'::json) AS data
 FROM "public"."publish_post"("post_id" => $1::"pg_catalog"."int4") AS __t_1
 -- args: [7]
 -- then:
-SELECT json_build_object('post', CASE WHEN __t_1 IS NULL THEN NULL ELSE json_build_object('title', __t_1."title", 'author', __l_4.data) END, 'author', __l_6.data, 'postEdge', CASE WHEN __t_1 IS NULL THEN NULL ELSE json_build_object('__typename', 'PostEdge'::text, 'cursor', replace(encode(convert_to(jsonb_build_array('Post'::text, __t_1."id")::text, 'UTF8'), 'base64'), E'\n', ''), 'node', json_build_object('id', __t_1."id")) END, 'query', json_build_object('__typename', 'Query'::text, 'postById', (SELECT __q_8.data FROM (
+SELECT json_build_object('post', CASE WHEN __t_1 IS NULL THEN NULL ELSE json_build_object('title', __t_1."title", 'userByAuthorId', __l_4.data) END, 'userByAuthorId', __l_6.data, 'postEdge', CASE WHEN __t_1 IS NULL THEN NULL ELSE json_build_object('__typename', 'PostEdge'::text, 'cursor', replace(encode(convert_to(jsonb_build_array('Post'::text, __t_1."id")::text, 'UTF8'), 'base64'), E'\n', ''), 'node', json_build_object('id', __t_1."id")) END, 'query', json_build_object('__typename', 'Query'::text, 'postById', (SELECT __q_8.data FROM (
   SELECT json_build_object('published', __t_7."published") AS data
   FROM "public"."posts" AS __t_7
   WHERE __t_7."id" = $2
@@ -35,7 +35,7 @@ SELECT coalesce(json_agg(__t_1::text), '[]'::json) AS data
 FROM "public"."unpublish_post"("post_id" => $1::"pg_catalog"."int4") AS __t_1
 -- args: [7]
 -- then:
-SELECT json_build_object('clientMutationId', $2::text, 'author', __l_4.data) AS data
+SELECT json_build_object('clientMutationId', $2::text, 'userByAuthorId', __l_4.data) AS data
 FROM json_array_elements_text($1::json) AS __r_2(v)
 CROSS JOIN LATERAL (SELECT (__r_2.v::"public"."posts").*) AS __t_1
 LEFT JOIN LATERAL (
@@ -57,7 +57,7 @@ FROM "public"."publish_posts"("post_ids" => $1::"pg_catalog"."_int4") AS __t_1
 -- args: [[1,2]]
 -- then:
 SELECT json_build_object('posts', (SELECT coalesce(json_agg(__s_5.data ORDER BY __s_5.n), '[]'::json) FROM (
-  SELECT json_build_object('id', __t_1."id", 'author', __l_3.data) AS data, __r_4.n
+  SELECT json_build_object('id', __t_1."id", 'userByAuthorId', __l_3.data) AS data, __r_4.n
   FROM json_array_elements_text($1::json) WITH ORDINALITY AS __r_4(v, n)
   CROSS JOIN LATERAL (SELECT (__r_4.v::"public"."posts").*) AS __t_1
   LEFT JOIN LATERAL (

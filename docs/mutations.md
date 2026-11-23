@@ -33,7 +33,7 @@ The single-row payloads (`CreatePostPayload`, `UpdatePostPayload`,
 | `post` | `Post` | The mutated row (as it was, for a delete). |
 | `clientMutationId` | `String` | Echoes `input.clientMutationId` (`patch.clientMutationId` for updates, the `clientMutationId` argument for deletes). |
 | `query` | `Query` | The query root: read anything alongside the mutation's result. |
-| `author`, … | | The row's forward relations, named as on the row type. |
+| `userByAuthorId`, … | | The row's forward relations, named as on the row type. |
 | `postEdge(orderBy:)` | `PostEdge` | An edge for adding the row to a Relay connection (tables with a primary key). |
 | `deletedPostNodeId` | `ID` | Delete payloads only: the deleted row's `nodeId`, computed in the same statement from the row's keys (tables with a `nodeId`). |
 
@@ -48,7 +48,7 @@ column). A delete that matches no row is still the not-found error.
 mutation {
   createPost(input: {authorId: 1, title: "Hello"}) {
     post { id title }
-    author { email }
+    userByAuthorId { email }
     postEdge { cursor node { id } }
     query { allPosts { totalCount } }
   }
@@ -58,9 +58,12 @@ mutation {
 The bulk payloads carry the mutated rows (`posts: [Post!]!`),
 `affectedCount`, `clientMutationId` and `query`.
 
-A forward relation whose name is already a payload field (a `query_id`
-column's `query` relation, say) takes the `<referencedTable>By<Columns>` form
-on the payload (`savedQueryByQueryId`); it keeps its name on the row type.
+A forward relation whose name is already one of the payload's own fields
+(`clientMutationId`, `query`, the row field, `<row>Edge`,
+`deleted<Type>NodeId`) is left out of that payload with a build warning; it
+keeps its name on the row type, so the row field still reaches it. With
+`simple_names`, a `query_id` column's `query` relation is such a case. The
+relation is never renamed.
 
 ## Custom mutations
 
@@ -78,7 +81,7 @@ type PublishPostPayload {
   post: Post
   clientMutationId: String
   query: Query
-  author: User
+  userByAuthorId: User
   postEdge(orderBy: [PostsOrderBy!]): PostEdge
 }
 ```
@@ -186,7 +189,7 @@ before the modification.
   ```graphql
   mutation {
     writePost(input: {authorName: "grace", title: "Hello"}) {
-      post { id author { name } }      # the author the function inserted
+      post { id authorByAuthorId { name } } # the author the function inserted
       query { allPosts { totalCount } } # counts the new post
     }
   }
@@ -289,8 +292,8 @@ Interactions:
 
 ## Differences from PostGraphile
 
-- Payload relations use pdbq's relation names (`author`, not
-  `userByAuthorId`), the same as on the row type.
+- A payload's forward relation named like one of the payload's own fields is
+  left out of the payload (with a build warning) rather than renamed.
 - `query` fields compile in the core compiler: `CompileHook` plugins do not
   see them, and JWT minting applies to a custom mutation's result field, not
   to a token-returning function selected under `query`.

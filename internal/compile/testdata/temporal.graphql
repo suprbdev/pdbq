@@ -1,12 +1,12 @@
 {
   allBookingNotes(
-    filter: {roomBookingsByRoomIdAndValidAt: {some: {roomId: {equalTo: 1}}, none: {roomId: {equalTo: 9}}}, authorExists: true}
+    filter: {roomBookingsByRoomIdAndValidAt: {some: {roomId: {equalTo: 1}}, none: {roomId: {equalTo: 9}}}, userByAuthorIdExists: true}
     orderBy: [ROOM_BOOKINGS_BY_ROOM_ID_AND_VALID_AT__ROOM_ID_DESC]
   ) {
     nodes {
       note
       validAt { start { value } end { value inclusive } }
-      author { email }
+      userByAuthorId { email }
       roomBookingsByRoomIdAndValidAt(first: 5) { totalCount nodes { guest validAt { start { value } } } }
     }
   }

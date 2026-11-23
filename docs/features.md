@@ -84,8 +84,9 @@ These shipped features are outside the 1.0 compatibility promise: they may chang
 - [x] Single-row lookup by primary key (`userById`)
 - [x] Single-row lookup per unique constraint (`userByEmail`)
 - [x] Point-in-time lookup per temporal key (`roomBookingByRoomId(roomId:, at:)` → `valid_at @> $n`; no exact-tuple lookup or upsert for `WITHOUT OVERLAPS` keys)
-- [x] Forward relations (FK → parent object field)
-- [x] Backward relations (FK → child connection field with full connection args)
+- [x] Forward relations (FK → parent object field, `userByAuthorId`)
+- [x] Backward relations (FK → child connection field with full connection args, `postsByAuthorId`)
+- [x] PostGraphile v4 names by default; names never depend on collisions: a relation named like another field of its type is a schema build error (fix with `@fieldName` / `@foreignFieldName`), a payload relation named like a payload field is left out of that payload
 - [x] Temporal (`PERIOD`) foreign keys joined by overlap (`&&`) in every relation surface; the forward side is a connection (a child may reference several parent rows)
 - [x] Arbitrarily nested relation selections, compiled to one SQL statement (lateral joins, no N+1)
 - [x] Field aliases and `__typename`
@@ -113,8 +114,8 @@ These shipped features are outside the 1.0 compatibility promise: they may chang
 - [x] `jsonb` path operators (`@?`/`@@` via `pathExists`/`pathMatch`)
 - [x] Range operators (`overlaps contains containsElement containedBy strictlyLeftOf strictlyRightOf notExtendsRightOf notExtendsLeftOf adjacentTo`), on multiranges too
 - [x] Contrib operator sets respect `filters.indexed_only` per index hint (no unindexable operators; trigram operators/ordering only on GIN/GiST-indexed columns; unaccent and fuzzystrmatch operators, vector/bit distance thresholds, the earthdistance `point` surface and the ltree, hstore and intarray value filters and orderings only on allowlisted columns; each vector distance ordering only on columns led by an HNSW/IVFFlat index built for its metric; index hints matched by operator class; cube and earth thresholds and orderings only on GiST-indexed columns)
-- [x] Filtering across relations (`posts: {some: {title: {equalTo: ...}}}`) — built-in `advanced_filters` plugin: forward FK takes the parent's filter, reverse FK a `{some|none|every}` wrapper, compiled to EXISTS subqueries
-- [x] Filtering on relation existence (`postsExist: true`, `authorExists: false`) — Boolean variant per relation, compiled to a bare `(NOT) EXISTS`
+- [x] Filtering across relations (`postsByAuthorId: {some: {title: {equalTo: ...}}}`) — built-in `advanced_filters` plugin: forward FK takes the parent's filter, reverse FK a `{some|none|every}` wrapper, compiled to EXISTS subqueries
+- [x] Filtering on relation existence (`postsByAuthorIdExist: true`, `userByAuthorIdExists: false`) — Boolean variant per relation, compiled to a bare `(NOT) EXISTS`
 - [x] Filtering/ordering on computed columns — built-in `advanced_filters` plugin (single-row-argument stable functions; not index-backed)
 - [x] `distinctOn` (column-enum arg on connections → `SELECT DISTINCT ON`; distinct-aware `totalCount`; first/offset pagination only)
 
@@ -234,8 +235,8 @@ These shipped features are outside the 1.0 compatibility promise: they may chang
 - [x] `RequestHook` — before/after operation, context + tx control
 - [x] Enable/disable/configure per plugin via `plugins.*` config
 - [x] Library embedding: `pdbq.New(cfg, pdbq.WithPlugins(...))`
-- [x] Collision detection with warnings at schema build
-- [x] Built-in: `simple_names`
+- [x] Collision detection at schema build (warnings; relation-name conflicts are errors)
+- [x] Built-in: `simple_names` (opt-in short names, `plugins.settings.simple_names.enabled`)
 - [x] Built-in: `nested_mutations`
 - [x] Built-in: `contrib` (full-text, pg_trgm, unaccent, fuzzystrmatch, hstore, ltree, intarray, range, inet and cube operators; rank, similarity, Levenshtein, pgvector, cube and earthdistance distance ordering and scores, distance thresholds; ltree, hstore and intarray value fields, filters and ordering; `plugins.settings.contrib.{filters,ordering}`)
 - [x] Built-in: `advanced_filters` (relation filters + computed-column filtering/ordering; halves toggle via `plugins.settings.advanced_filters.{relations,computed}`)

@@ -8,7 +8,7 @@ __vis AS NOT MATERIALIZED (
   SELECT "id", "author_id", "title" FROM "public"."posts"
   UNION ALL SELECT "id", "author_id", "title" FROM __mut
 )
-SELECT json_build_object('post', json_build_object('title', __t_1."title", 'author', __l_7.data)) AS data
+SELECT json_build_object('post', json_build_object('title', __t_1."title", 'userByAuthorId', __l_7.data)) AS data
 FROM __mut AS __t_1
 LEFT JOIN LATERAL (
   SELECT json_build_object('postsByAuthorId', __l_6.data) AS data
@@ -40,7 +40,7 @@ __vis AS NOT MATERIALIZED (
   SELECT "id", "parent_id", "body" FROM "public"."comments"
   UNION ALL SELECT "id", "parent_id", "body" FROM __mut
 )
-SELECT json_build_object('comment', json_build_object('body', __t_1."body", 'parent', __l_7.data)) AS data
+SELECT json_build_object('comment', json_build_object('body', __t_1."body", 'commentByParentId', __l_7.data)) AS data
 FROM __mut AS __t_1
 LEFT JOIN LATERAL (
   SELECT json_build_object('body', __t_2."body", 'commentsByParentId', __l_6.data) AS data
@@ -73,7 +73,7 @@ __vis AS NOT MATERIALIZED (
   SELECT "id", "author_id", "title" FROM "public"."posts" WHERE ("public"."posts"."id" = $2) IS NOT TRUE
   UNION ALL SELECT "id", "author_id", "title" FROM __mut
 )
-SELECT json_build_object('post', json_build_object('id', __t_1."id", 'author', __l_6.data)) AS data
+SELECT json_build_object('post', json_build_object('id', __t_1."id", 'userByAuthorId', __l_6.data)) AS data
 FROM __mut AS __t_1
 LEFT JOIN LATERAL (
   SELECT json_build_object('postsByAuthorId', __l_5.data) AS data
@@ -110,7 +110,7 @@ FROM __mut AS __t_1
 LEFT JOIN LATERAL (
   SELECT json_build_object('nodes', coalesce(json_agg(__s_5.ndata ORDER BY __s_5.__rn ASC) FILTER (WHERE __s_5.__rn <= $3), '[]'::json)) AS data
   FROM (
-    SELECT json_build_object('author', __l_4.data) AS ndata, __t_2.__rn
+    SELECT json_build_object('userByAuthorId', __l_4.data) AS ndata, __t_2.__rn
     FROM (
       SELECT __t_2."author_id", row_number() OVER (ORDER BY __t_2."id" ASC) AS __rn
       FROM "public"."posts" AS __t_2
@@ -146,7 +146,7 @@ FROM __mut AS __t_1
 LEFT JOIN LATERAL (
   SELECT json_build_object('nodes', coalesce(json_agg(__s_5.ndata ORDER BY __s_5.__rn ASC) FILTER (WHERE __s_5.__rn <= $3), '[]'::json)) AS data
   FROM (
-    SELECT json_build_object('author', __l_4.data) AS ndata, __t_2.__rn
+    SELECT json_build_object('userByAuthorId', __l_4.data) AS ndata, __t_2.__rn
     FROM (
       SELECT __t_2."author_id", row_number() OVER (ORDER BY __t_2."id" ASC) AS __rn
       FROM "public"."posts" AS __t_2
@@ -174,7 +174,7 @@ WITH __mut AS (
 __vis AS NOT MATERIALIZED (
   SELECT "id", "author_id" FROM "public"."posts" WHERE ("public"."posts"."id" = $1) IS NOT TRUE
 )
-SELECT json_build_object('post', json_build_object('title', __t_1."title", 'author', __l_7.data)) AS data
+SELECT json_build_object('post', json_build_object('title', __t_1."title", 'userByAuthorId', __l_7.data)) AS data
 FROM __mut AS __t_1
 LEFT JOIN LATERAL (
   SELECT json_build_object('postsByAuthorId', __l_6.data) AS data
@@ -208,7 +208,7 @@ __vis AS NOT MATERIALIZED (
   UNION ALL SELECT "id", "author_id" FROM __mut
 )
 SELECT json_build_object('posts', (SELECT coalesce(json_agg(__s_8.data), '[]'::json) FROM (
-  SELECT json_build_object('author', __l_7.data) AS data
+  SELECT json_build_object('userByAuthorId', __l_7.data) AS data
   FROM __mut AS __t_1
   LEFT JOIN LATERAL (
     SELECT json_build_object('postsByAuthorId', __l_6.data) AS data
@@ -243,7 +243,7 @@ __vis AS NOT MATERIALIZED (
   UNION ALL SELECT "id", "author_id", "title" FROM __mut
 )
 SELECT json_build_object('posts', (SELECT coalesce(json_agg(__s_8.data), '[]'::json) FROM (
-  SELECT json_build_object('author', __l_7.data) AS data
+  SELECT json_build_object('userByAuthorId', __l_7.data) AS data
   FROM __mut AS __t_1
   LEFT JOIN LATERAL (
     SELECT json_build_object('postsByAuthorId', __l_6.data) AS data
@@ -276,7 +276,7 @@ __vis AS NOT MATERIALIZED (
   SELECT "id", "author_id" FROM "public"."posts" WHERE NOT EXISTS (SELECT 1 FROM __mut AS __m_9 WHERE __m_9."id" = "public"."posts"."id")
 )
 SELECT json_build_object('posts', (SELECT coalesce(json_agg(__s_8.data), '[]'::json) FROM (
-  SELECT json_build_object('author', __l_7.data) AS data
+  SELECT json_build_object('userByAuthorId', __l_7.data) AS data
   FROM __mut AS __t_1
   LEFT JOIN LATERAL (
     SELECT json_build_object('postsByAuthorId', __l_6.data) AS data
@@ -306,7 +306,7 @@ WITH __mut AS (
   WHERE "public"."comments"."id" = $2
   RETURNING "post_id"
 )
-SELECT json_build_object('comment', json_build_object('post', __l_3.data)) AS data
+SELECT json_build_object('comment', json_build_object('postByPostId', __l_3.data)) AS data
 FROM __mut AS __t_1
 LEFT JOIN LATERAL (
   SELECT json_build_object('title', __t_2."title") AS data

@@ -38,7 +38,6 @@ func subsServer(t *testing.T) *subsFixture {
 	jwtIdentity(&cfg, subsSecret)
 	cfg.Roles.Allowed = []string{"anonymous", "app_user"}
 	cfg.Errors.Detail = "dev"
-	cfg.Plugins.Disabled = []string{"simple_names"}
 	cfg.Subscriptions.Enabled = true
 	cfg.Subscriptions.Keepalive = 0
 	if err := cfg.Validate(); err != nil {
@@ -311,7 +310,6 @@ func TestSubscriptionsReconnect(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.Database.URL = url
 	noIdentity(&cfg)
-	cfg.Plugins.Disabled = []string{"simple_names"}
 	cfg.Subscriptions.Enabled = true
 	app := pdbq.New(cfg)
 	t.Cleanup(app.Close)

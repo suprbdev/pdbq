@@ -75,7 +75,7 @@ events are sent when the notifying transaction commits.
 subscription {
   listen(topic: "posts") {
     relatedNodeId
-    relatedNode { ... on Post { id title author { fullName } } }
+    relatedNode { ... on Post { id title userByAuthorId { fullName } } }
     query { allPosts(first: 5) { totalCount } }
   }
 }

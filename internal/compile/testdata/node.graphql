@@ -6,7 +6,7 @@
     nodeId
     ... on Post {
       title
-      author { id email }
+      userByAuthorId { id email }
     }
     ... on User {
       email

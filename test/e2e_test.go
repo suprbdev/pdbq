@@ -38,9 +38,6 @@ func testServer(t *testing.T, mutate func(*config.Config)) *httptest.Server {
 	cfg.Database.URL = url
 	noIdentity(&cfg)
 	cfg.Errors.Detail = "dev"
-	// The e2e suite asserts against the verbose default naming; a dedicated
-	// subtest covers simple_names separately.
-	cfg.Plugins.Disabled = []string{"simple_names"}
 	if mutate != nil {
 		mutate(&cfg)
 	}
@@ -122,8 +119,8 @@ func TestQueries(t *testing.T) {
 	t.Run("repeated selections merge", func(t *testing.T) {
 		res := post(t, hs.URL, `{
 			postById(id: 1) {
-				author { email }
-				... on Post { author { id } }
+				userByAuthorId { email }
+				... on Post { userByAuthorId { id } }
 				...authorName
 			}
 			userById(id: 1) {
@@ -133,9 +130,9 @@ func TestQueries(t *testing.T) {
 				postsByAuthorId(orderBy: [ID_ASC]) { totalCount nodes { title } }
 			}
 		}
-		fragment authorName on Post { author { fullName } }`, nil)
+		fragment authorName on Post { userByAuthorId { fullName } }`, nil)
 		requireNoErrors(t, res)
-		if got, want := normalize(t, res.Data["postById"]), normalizeStr(t, `{"author": {"email": "ada@example.com", "id": 1, "fullName": "Ada Lovelace"}}`); got != want {
+		if got, want := normalize(t, res.Data["postById"]), normalizeStr(t, `{"userByAuthorId": {"email": "ada@example.com", "id": 1, "fullName": "Ada Lovelace"}}`); got != want {
 			t.Errorf("merged relation: got %s want %s", got, want)
 		}
 		want := normalizeStr(t, `{
@@ -548,7 +545,7 @@ func TestQueries(t *testing.T) {
 	})
 
 	t.Run("function", func(t *testing.T) {
-		res := post(t, hs.URL, `{searchPosts(term: "compilers") { title author { email } }}`, nil)
+		res := post(t, hs.URL, `{searchPosts(term: "compilers") { title userByAuthorId { email } }}`, nil)
 		requireNoErrors(t, res)
 		if !strings.Contains(string(res.Data["searchPosts"]), "grace@example.com") {
 			t.Errorf("searchPosts: %s", res.Data["searchPosts"])
@@ -573,11 +570,47 @@ func TestQueries(t *testing.T) {
 
 // TestAdvancedFilters covers the advanced_filters built-in: relation filters
 // (EXISTS subqueries) and computed-column filtering/ordering.
+// TestSimpleNames runs the opt-in simple_names naming against the fixture:
+// short root fields and mutations, relations named after the _id column and
+// after the child table, and the same relation names on payloads and in
+// filters.
+func TestSimpleNames(t *testing.T) {
+	hs := testServer(t, func(cfg *config.Config) { cfg.Plugins.Settings.SimpleNames.Enabled = true })
+
+	res := post(t, hs.URL, `{
+		user(id: 1) { email posts(orderBy: ID_ASC, first: 1) { nodes { title author { email } } } }
+		posts(filter: {author: {email: {equalTo: "grace@example.com"}}}) { nodes { title } }
+		places(orderBy: ID_ASC, first: 1) { nodes { owner { fullName } } }
+	}`, nil)
+	requireNoErrors(t, res)
+	for field, want := range map[string]string{
+		"user":   `{"email": "ada@example.com", "posts": {"nodes": [{"title": "Notes on the Analytical Engine", "author": {"email": "ada@example.com"}}]}}`,
+		"posts":  `{"nodes": [{"title": "Compilers 101"}]}`,
+		"places": `{"nodes": [{"owner": {"fullName": "Ada Lovelace"}}]}`,
+	} {
+		if got := normalize(t, res.Data[field]); got != normalizeStr(t, want) {
+			t.Errorf("%s = %s, want %s", field, got, want)
+		}
+	}
+
+	res = post(t, hs.URL, `mutation { updatePost(id: 1, patch: {title: "Notes on the Analytical Engine"}) { post { id } author { email } } }`, nil)
+	requireNoErrors(t, res)
+	if got, want := normalize(t, res.Data["updatePost"]), normalizeStr(t, `{"post": {"id": 1}, "author": {"email": "ada@example.com"}}`); got != want {
+		t.Errorf("updatePost = %s, want %s", got, want)
+	}
+
+	for _, verbose := range []string{`{ allUsers { totalCount } }`, `{ userById(id: 1) { id } }`, `{ postById(id: 1) { userByAuthorId { id } } }`} {
+		if res := post(t, hs.URL, verbose, nil); len(res.Errors) == 0 {
+			t.Errorf("simple_names schema answers the verbose %s", verbose)
+		}
+	}
+}
+
 func TestAdvancedFilters(t *testing.T) {
 	hs := testServer(t, nil)
 
 	t.Run("forward relation filter", func(t *testing.T) {
-		got := emails(t, hs.URL, `{allPosts(filter: {author: {email: {equalTo: "grace@example.com"}}}) { nodes { title } }}`, "allPosts", "title")
+		got := emails(t, hs.URL, `{allPosts(filter: {userByAuthorId: {email: {equalTo: "grace@example.com"}}}) { nodes { title } }}`, "allPosts", "title")
 		if len(got) != 1 || got[0] != "Compilers 101" {
 			t.Errorf("author filter: got %v", got)
 		}
@@ -607,7 +640,7 @@ func TestAdvancedFilters(t *testing.T) {
 		if len(got) != 0 {
 			t.Errorf("exist false: got %v", got)
 		}
-		got = emails(t, hs.URL, `{allPosts(filter: {authorExists: true}) { nodes { title } }}`, "allPosts", "title")
+		got = emails(t, hs.URL, `{allPosts(filter: {userByAuthorIdExists: true}) { nodes { title } }}`, "allPosts", "title")
 		if len(got) != 4 {
 			t.Errorf("forward exists true: got %v", got)
 		}
@@ -615,7 +648,7 @@ func TestAdvancedFilters(t *testing.T) {
 
 	t.Run("relational order", func(t *testing.T) {
 		// Forward: posts sorted by their author's email.
-		got := emails(t, hs.URL, `{allPosts(orderBy: [AUTHOR__EMAIL_ASC, ID_ASC]) { nodes { title } }}`, "allPosts", "title")
+		got := emails(t, hs.URL, `{allPosts(orderBy: [USER_BY_AUTHOR_ID__EMAIL_ASC, ID_ASC]) { nodes { title } }}`, "allPosts", "title")
 		want := []string{"Notes on the Analytical Engine", "Unpublished draft", "On Computable Numbers", "Compilers 101"}
 		if fmt.Sprint(got) != fmt.Sprint(want) {
 			t.Errorf("forward order: got %v want %v", got, want)
@@ -635,7 +668,7 @@ func TestAdvancedFilters(t *testing.T) {
 	})
 
 	t.Run("relational order keyset pagination", func(t *testing.T) {
-		res := post(t, hs.URL, `{allPosts(orderBy: [AUTHOR__EMAIL_ASC, ID_ASC], first: 2) {
+		res := post(t, hs.URL, `{allPosts(orderBy: [USER_BY_AUTHOR_ID__EMAIL_ASC, ID_ASC], first: 2) {
 			nodes { title } pageInfo { endCursor hasNextPage }
 		}}`, nil)
 		requireNoErrors(t, res)
@@ -650,7 +683,7 @@ func TestAdvancedFilters(t *testing.T) {
 		if len(page.Nodes) != 2 || page.Nodes[1].Title != "Unpublished draft" || !page.PageInfo.HasNextPage {
 			t.Fatalf("first page: %+v", page)
 		}
-		got := emails(t, hs.URL, fmt.Sprintf(`{allPosts(orderBy: [AUTHOR__EMAIL_ASC, ID_ASC], first: 2, after: %q) { nodes { title } }}`, page.PageInfo.EndCursor), "allPosts", "title")
+		got := emails(t, hs.URL, fmt.Sprintf(`{allPosts(orderBy: [USER_BY_AUTHOR_ID__EMAIL_ASC, ID_ASC], first: 2, after: %q) { nodes { title } }}`, page.PageInfo.EndCursor), "allPosts", "title")
 		want := []string{"On Computable Numbers", "Compilers 101"}
 		if fmt.Sprint(got) != fmt.Sprint(want) {
 			t.Errorf("after relational-order cursor: got %v want %v", got, want)
@@ -1473,7 +1506,7 @@ func TestFunctionMutations(t *testing.T) {
 	// relations.
 	res = post(t, hs.URL, `mutation {
 	  publishPost(input: {postId: 2}) {
-	    post { title published author { email } }
+	    post { title published userByAuthorId { email } }
 	  }
 	}`, nil)
 	requireNoErrors(t, res)

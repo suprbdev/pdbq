@@ -8,7 +8,7 @@ SELECT coalesce(json_agg(__t_1::text), '[]'::json) AS data
 FROM "public"."unpublish_post"("post_id" => $1::"pg_catalog"."int4") AS __t_1
 -- args: [1]
 -- then:
-SELECT json_build_object('postEdge', CASE WHEN __t_1 IS NULL THEN NULL ELSE json_build_object('node', json_build_object('author', __l_4.data)) END) AS data
+SELECT json_build_object('postEdge', CASE WHEN __t_1 IS NULL THEN NULL ELSE json_build_object('node', json_build_object('userByAuthorId', __l_4.data)) END) AS data
 FROM json_array_elements_text($1::json) AS __r_2(v)
 CROSS JOIN LATERAL (SELECT (__r_2.v::"public"."posts").*) AS __t_1
 LEFT JOIN LATERAL (

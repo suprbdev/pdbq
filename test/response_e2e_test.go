@@ -89,7 +89,7 @@ func responseKeys(t *testing.T, raw json.RawMessage) []string {
 // objects wider than one json_build_object call accepts.
 func TestResponseFieldOrder(t *testing.T) {
 	hs := testServer(t, nil)
-	res := post(t, hs.URL, `{allPosts(first: 1, orderBy: ID_ASC) {totalCount nodes {title id __typename author {fullName email id}} pageInfo {hasNextPage endCursor}}}`, nil)
+	res := post(t, hs.URL, `{allPosts(first: 1, orderBy: ID_ASC) {totalCount nodes {title id __typename userByAuthorId {fullName email id}} pageInfo {hasNextPage endCursor}}}`, nil)
 	requireNoErrors(t, res)
 	conn := res.Data["allPosts"]
 	if got, want := responseKeys(t, conn), []string{"totalCount", "nodes", "pageInfo"}; !slices.Equal(got, want) {
@@ -102,11 +102,11 @@ func TestResponseFieldOrder(t *testing.T) {
 	if len(parsed.Nodes) != 1 {
 		t.Fatalf("nodes: %s", conn)
 	}
-	if got, want := responseKeys(t, parsed.Nodes[0]), []string{"title", "id", "__typename", "author"}; !slices.Equal(got, want) {
+	if got, want := responseKeys(t, parsed.Nodes[0]), []string{"title", "id", "__typename", "userByAuthorId"}; !slices.Equal(got, want) {
 		t.Errorf("node keys %v, want %v", got, want)
 	}
 	var node struct {
-		Author json.RawMessage `json:"author"`
+		Author json.RawMessage `json:"userByAuthorId"`
 	}
 	mustUnmarshal(t, parsed.Nodes[0], &node)
 	if got, want := responseKeys(t, node.Author), []string{"fullName", "email", "id"}; !slices.Equal(got, want) {

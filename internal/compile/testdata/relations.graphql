@@ -8,7 +8,7 @@
         nodes {
           id
           title
-          author {
+          userByAuthorId {
             id
             email
           }

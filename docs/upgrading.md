@@ -241,3 +241,19 @@ explicit work; set `limits.max_cost: 10000` to keep the old budget. A
 connection's `totalCount`, `pageInfo`, `aggregates` and `groupedAggregates`
 are no longer multiplied by its page size: they are computed once per
 connection, so only `nodes` and `edges` repeat per row.
+
+### Default naming
+
+pdbq's default names are now PostGraphile v4's, and `simple_names` is an
+opt-in. Relation names depend on the schema alone, never on which other
+fields exist.
+
+| Before | After | Notes |
+|---|---|---|
+| `simple_names` on by default (`users`, `user(id:)`, `updateUser`) | off by default (`allUsers`, `userById`, `updateUserById`) | `plugins.settings.simple_names.enabled: true` restores the short names; `plugins.disabled: [simple_names]` is no longer needed for verbose names |
+| forward relation `author` (both modes) | `userByAuthorId` by default; `author` with `simple_names` | also on mutation payloads, in filters (`userByAuthorId: UserFilter`, `userByAuthorIdExists`), orderBy (`USER_BY_AUTHOR_ID__EMAIL_ASC`) and nested-mutation inputs (`userByAuthorId: PostUserByAuthorIdNestedInput`) |
+| forward name from the first FK column without `_id`/`Id`, for every key (`created_by` → `createdBy`, `(org_id, user_id)` → `org`) | with `simple_names`, the column without the suffix only for a single-column key ending in `_id`/`Id`; any other key keeps the verbose name | `userByCreatedBy`, `orgMemberByOrgIdAndUserId` |
+| `simple_names` backward name `posts` when the child table has at most one FK in total | `posts` when the child table has exactly one FK to this parent; otherwise `postsByAuthorId` | counted per child → parent pair: `transfers` with `from_id`, `to_id` → `users` and `memo_id` → `memos` gives `User.transfersByFromId`, `User.transfersByToId` and `Memo.transfers` |
+| a forward relation named like a column or an earlier relation fell back to `<referencedTable>By<Columns>` | schema build error naming the type, the field, the constraint and the fix | rename with `@fieldName` (forward) or `@foreignFieldName` (backward) on the constraint, or switch naming mode; also a conflict with a computed column |
+| a payload relation named like a payload field (`query`, …) fell back to `<referencedTable>By<Columns>` | left out of that payload with a build warning | the row field still reaches it (`createRun { run { query { … } } }`) |
+| `@name` on a referenced table did not reach forward relation names | it does (`customerByAuthorId`) | as for every other derived name |

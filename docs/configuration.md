@@ -130,6 +130,7 @@ same names: `limits.*` (`max_body_bytes`, `max_depth`, `max_cost`,
 | `watch.channel` | `pdbq_ddl` | NOTIFY channel used by the DDL event trigger |
 | `errors.detail` | `prod` | `dev` exposes full PG error detail; `strict` hides even constraint-violation messages |
 | `plugins.disabled` | `[]` | built-in plugin names to disable: `smart_comments`, `simple_names`, `advanced_filters`, `postgis`, `contrib`, `aggregates`, `nested_mutations`; any other name is an error (with a "did you mean" hint) |
+| `plugins.settings.simple_names.enabled` | `false` | short names (`users`, `user(id:)`, `updateUser`, `author`, `posts`) instead of PostGraphile v4's (`allUsers`, `userById`, `updateUserById`, `userByAuthorId`, `postsByAuthorId`); see [Plugins](plugins.md#worked-example-1-simple_names) |
 | `plugins.settings.advanced_filters.relations` | `true` | relation filters (forward, reverse `some`/`none`/`every`, `<rel>Exists`); see [Filtering](filtering.md) |
 | `plugins.settings.advanced_filters.computed` | `true` | filtering and ordering by computed columns (not index-backed: bypasses `filters.indexed_only`) |
 | `plugins.settings.advanced_filters.relation_order` | `true` | one-level relational orderBy values (`REL__COLUMN_ASC`); off too when `relations` is off |

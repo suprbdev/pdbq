@@ -235,7 +235,7 @@ func builtinPlugins(cfg config.Config) []plugin.Plugin {
 	s := cfg.Plugins.Settings
 	return []plugin.Plugin{
 		smartcomments.New(),
-		simplenames.New(),
+		simplenames.New(s.SimpleNames),
 		advancedfilters.New(s.AdvancedFilters),
 		postgisplugin.New(s.Postgis),
 		contribplugin.New(s.Contrib),

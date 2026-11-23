@@ -394,7 +394,7 @@ func TestWSSubscriptionLimits(t *testing.T) {
 	c := dialWS(t, f.url, subprotocolTransportWS)
 	c.init("")
 	for id, tc := range map[string]struct{ query, want string }{
-		"depth":         {`subscription { listen(topic: \"a\") { query { allPosts { nodes { author { id } } } } } }`, "exceeds limit 4"},
+		"depth":         {`subscription { listen(topic: \"a\") { query { allPosts { nodes { userByAuthorId { id } } } } } }`, "exceeds limit 4"},
 		"introspection": {`subscription { listen(topic: \"a\") { query { __schema { queryType { name } } } } }`, "introspection is disabled"},
 		"within limits": {`subscription { listen(topic: \"a\", initialEvent: true) { query { __typename } } }`, ""},
 	} {

@@ -20,10 +20,10 @@ __vis_5 AS NOT MATERIALIZED (
   SELECT "id", "post_id", "parent_id", "body" FROM "public"."comments"
   UNION ALL SELECT "id", "post_id", "parent_id", "body" FROM __mut
 )
-SELECT json_build_object('comment', json_build_object('body', __t_1."body", 'post', __l_13.data)) AS data
+SELECT json_build_object('comment', json_build_object('body', __t_1."body", 'postByPostId', __l_13.data)) AS data
 FROM __mut AS __t_1
 LEFT JOIN LATERAL (
-  SELECT json_build_object('title', __t_2."title", 'author', __l_8.data, 'commentsByPostId', __l_12.data) AS data
+  SELECT json_build_object('title', __t_2."title", 'userByAuthorId', __l_8.data, 'commentsByPostId', __l_12.data) AS data
   FROM __vis_4 AS __t_2
   LEFT JOIN LATERAL (
     SELECT json_build_object('email', __t_3."email", 'postsByAuthorId', __l_7.data) AS data
@@ -96,7 +96,7 @@ LEFT JOIN LATERAL (
   SELECT json_build_object('totalCount', (SELECT count(*) FROM __vis_6 AS __c_11
   WHERE __c_11."author_id" = __t_1."id" AND EXISTS (SELECT 1 FROM __vis_7 AS __r_12 WHERE __r_12."post_id" = __c_11."id" AND (__r_12."parent_id" IS NULL)))::int, 'nodes', coalesce(json_agg(__s_10.ndata ORDER BY __s_10.__rn ASC) FILTER (WHERE __s_10.__rn <= $7), '[]'::json)) AS data
   FROM (
-    SELECT json_build_object('title', __t_2."title", 'author', __l_4.data, 'commentsByPostId', __l_8.data) AS ndata, __t_2.__rn
+    SELECT json_build_object('title', __t_2."title", 'userByAuthorId', __l_4.data, 'commentsByPostId', __l_8.data) AS ndata, __t_2.__rn
     FROM (
       SELECT __t_2."id", __t_2."author_id", __t_2."title", row_number() OVER (ORDER BY __t_2."id" ASC) AS __rn
       FROM __vis_6 AS __t_2
@@ -146,12 +146,12 @@ __vis_4 AS NOT MATERIALIZED (
   UNION ALL SELECT "id", "post_id", "body" FROM __c_2
 ),
 __guard AS MATERIALIZED (
-  SELECT (SELECT CASE WHEN count(*) > 0 THEN true ELSE concat('nested_mutations: author.connectById matched ', count(*), ' rows')::boolean END FROM __p_1) AS ok
+  SELECT (SELECT CASE WHEN count(*) > 0 THEN true ELSE concat('nested_mutations: userByAuthorId.connectById matched ', count(*), ' rows')::boolean END FROM __p_1) AS ok
 )
 SELECT __guarded.data
 FROM __guard
 LEFT JOIN LATERAL (
-  SELECT json_build_object('post', json_build_object('title', __t_1."title", 'author', __l_7.data, 'commentsByPostId', __l_10.data)) AS data
+  SELECT json_build_object('post', json_build_object('title', __t_1."title", 'userByAuthorId', __l_7.data, 'commentsByPostId', __l_10.data)) AS data
   FROM __mut AS __t_1
   LEFT JOIN LATERAL (
     SELECT json_build_object('email', __t_2."email", 'postsByAuthorId', __l_6.data) AS data
@@ -205,12 +205,12 @@ __vis_4 AS NOT MATERIALIZED (
   UNION ALL SELECT "id" FROM __mut
 ),
 __guard AS MATERIALIZED (
-  SELECT (SELECT CASE WHEN count(*) > 0 THEN true ELSE concat('nested_mutations: post.create.author.connectById matched ', count(*), ' rows')::boolean END FROM __p_2) AS ok
+  SELECT (SELECT CASE WHEN count(*) > 0 THEN true ELSE concat('nested_mutations: postByPostId.create.userByAuthorId.connectById matched ', count(*), ' rows')::boolean END FROM __p_2) AS ok
 )
 SELECT __guarded.data
 FROM __guard
 LEFT JOIN LATERAL (
-  SELECT json_build_object('post', __l_3.data, 'query', json_build_object('allPosts', (SELECT __q_7.data FROM (
+  SELECT json_build_object('postByPostId', __l_3.data, 'query', json_build_object('allPosts', (SELECT __q_7.data FROM (
     SELECT json_build_object('totalCount', (SELECT count(*) FROM __vis_3 AS __c_6
     WHERE __c_6."title" = $5)::int) AS data
     FROM (

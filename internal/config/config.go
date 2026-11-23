@@ -76,6 +76,7 @@ type (
 // configurable built-in plugin. The aggregates plugin is configured by the
 // top-level aggregates section.
 type PluginSettings struct {
+	SimpleNames     simplenames.Settings     `koanf:"simple_names" doc:"simple_names plugin: PgSimplifyInflector-style short names instead of PostGraphile's verbose ones."`
 	AdvancedFilters advancedfilters.Settings `koanf:"advanced_filters" doc:"advanced_filters plugin: relation filters, relational ordering and computed-column filtering and ordering."`
 	Postgis         postgis.Settings         `koanf:"postgis" doc:"postgis plugin: spatial filters, accessors, projection arguments and distance ordering."`
 	Contrib         contrib.Settings         `koanf:"contrib" doc:"contrib plugin: full-text, pg_trgm, hstore, ltree, range, inet, pgvector, cube and earthdistance surfaces."`
@@ -85,6 +86,7 @@ type PluginSettings struct {
 // DefaultPluginSettings returns every plugin's default settings.
 func DefaultPluginSettings() PluginSettings {
 	return PluginSettings{
+		SimpleNames:     simplenames.DefaultSettings(),
 		AdvancedFilters: advancedfilters.DefaultSettings(),
 		Postgis:         postgis.DefaultSettings(),
 		Contrib:         contrib.DefaultSettings(),

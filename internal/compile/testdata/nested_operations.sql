@@ -16,7 +16,7 @@ __vis_5 AS NOT MATERIALIZED (
   UNION ALL SELECT "id", "post_id", "body" FROM __c_3
 ),
 __guard AS MATERIALIZED (
-  SELECT (SELECT CASE WHEN count(*) > 0 THEN true ELSE concat('nested_mutations: author.connectByEmail matched ', count(*), ' rows')::boolean END FROM __p_1)
+  SELECT (SELECT CASE WHEN count(*) > 0 THEN true ELSE concat('nested_mutations: userByAuthorId.connectByEmail matched ', count(*), ' rows')::boolean END FROM __p_1)
     AND (SELECT CASE WHEN count(*) > 0 THEN true ELSE concat('nested_mutations: commentsByPostId.deleteById[0] matched ', count(*), ' rows')::boolean END FROM __c_2)
     AND (SELECT CASE WHEN count(*) > 0 THEN true ELSE concat('nested_mutations: commentsByPostId.updateByNodeId[0] matched ', count(*), ' rows')::boolean END FROM __c_3)
     AND (SELECT CASE WHEN count(*) > 0 THEN true ELSE concat('nested_mutations: updatePostById matched ', count(*), ' rows')::boolean END FROM __mut) AS ok
@@ -24,7 +24,7 @@ __guard AS MATERIALIZED (
 SELECT __guarded.data
 FROM __guard
 LEFT JOIN LATERAL (
-  SELECT json_build_object('post', json_build_object('title', __t_1."title", 'author', __l_3.data, 'commentsByPostId', __l_7.data)) AS data
+  SELECT json_build_object('post', json_build_object('title', __t_1."title", 'userByAuthorId', __l_3.data, 'commentsByPostId', __l_7.data)) AS data
   FROM __mut AS __t_1
   LEFT JOIN LATERAL (
     SELECT json_build_object('email', __t_2."email") AS data
@@ -138,14 +138,14 @@ __vis_3 AS NOT MATERIALIZED (
   UNION ALL SELECT "id", "full_name" FROM __p_2
 ),
 __guard AS MATERIALIZED (
-  SELECT (SELECT CASE WHEN count(*) > 0 THEN true ELSE concat('nested_mutations: owner.deleteByEmail matched ', count(*), ' rows')::boolean END FROM __d_1)
-    AND (SELECT CASE WHEN count(*) > 0 THEN true ELSE concat('nested_mutations: owner.updateById matched ', count(*), ' rows')::boolean END FROM __p_2)
+  SELECT (SELECT CASE WHEN count(*) > 0 THEN true ELSE concat('nested_mutations: userByOwnerId.deleteByEmail matched ', count(*), ' rows')::boolean END FROM __d_1)
+    AND (SELECT CASE WHEN count(*) > 0 THEN true ELSE concat('nested_mutations: userByOwnerId.updateById matched ', count(*), ' rows')::boolean END FROM __p_2)
     AND (SELECT CASE WHEN count(*) > 0 THEN true ELSE concat('nested_mutations: updatePlaceById matched ', count(*), ' rows')::boolean END FROM __mut) AS ok
 )
 SELECT __guarded.data
 FROM __guard
 LEFT JOIN LATERAL (
-  SELECT json_build_object('place', json_build_object('owner', __l_3.data)) AS data
+  SELECT json_build_object('place', json_build_object('userByOwnerId', __l_3.data)) AS data
   FROM __mut AS __t_1
   LEFT JOIN LATERAL (
     SELECT json_build_object('fullName', __t_2."full_name") AS data

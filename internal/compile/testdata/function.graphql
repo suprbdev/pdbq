@@ -2,6 +2,6 @@
   searchPosts(term: "graphql") {
     id
     title
-    author { email }
+    userByAuthorId { email }
   }
 }

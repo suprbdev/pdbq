@@ -143,7 +143,7 @@ func FuzzFilter(f *testing.F) {
 		createEmbedding(input: {embedding: $vec, half: $vec, sparse: $cfg}) { embedding { id embedding } }
 		publishPost(input: {postId: $n, clientMutationId: $e}) {
 			clientMutationId
-			post { title author { email } }
+			post { title userByAuthorId { email } }
 			query { allUsers(filter: {email: {startsWith: $e}}) { totalCount } }
 		}
 	}`

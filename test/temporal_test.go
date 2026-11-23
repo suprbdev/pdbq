@@ -72,11 +72,11 @@ func TestTemporal(t *testing.T) {
 	t.Run("PERIOD foreign key joins every overlapping parent", func(t *testing.T) {
 		query(t, `{ allBookingNotes(orderBy: ID_ASC) { nodes {
 			note
-			author { email }
+			userByAuthorId { email }
 			roomBookingsByRoomIdAndValidAt { totalCount nodes { guest } }
 		} } }`, `{"allBookingNotes":{"nodes":[`+
-			`{"author":{"email":"ada@example.com"},"note":"Spans both","roomBookingsByRoomIdAndValidAt":{"nodes":[{"guest":"Ada"},{"guest":"Grace"}],"totalCount":2}},`+
-			`{"author":null,"note":"Short","roomBookingsByRoomIdAndValidAt":{"nodes":[{"guest":"Ada"}],"totalCount":1}}]}}`)
+			`{"note":"Spans both","roomBookingsByRoomIdAndValidAt":{"nodes":[{"guest":"Ada"},{"guest":"Grace"}],"totalCount":2},"userByAuthorId":{"email":"ada@example.com"}},`+
+			`{"note":"Short","roomBookingsByRoomIdAndValidAt":{"nodes":[{"guest":"Ada"}],"totalCount":1},"userByAuthorId":null}]}}`)
 	})
 
 	t.Run("backward relation over a PERIOD foreign key", func(t *testing.T) {
@@ -145,7 +145,7 @@ func TestTemporal(t *testing.T) {
 		query(t, `{
 			someGrace: allBookingNotes(filter: {roomBookingsByRoomIdAndValidAt: {some: {guest: {equalTo: "Grace"}}}}) { nodes { note } }
 			everyAda: allBookingNotes(filter: {roomBookingsByRoomIdAndValidAt: {every: {guest: {equalTo: "Ada"}}}}) { nodes { note } }
-			dangling: allBookingNotes(filter: {authorExists: false}) { nodes { note } }
+			dangling: allBookingNotes(filter: {userByAuthorIdExists: false}) { nodes { note } }
 			noteless: allRoomBookings(filter: {bookingNotesByRoomIdAndValidAtExist: false}) { nodes { guest } }
 			byParent: allBookingNotes(orderBy: [ROOM_BOOKINGS_BY_ROOM_ID_AND_VALID_AT__GUEST_DESC]) { nodes { note } }
 		}`, `{"byParent":{"nodes":[{"note":"Spans both"},{"note":"Short"}]},`+

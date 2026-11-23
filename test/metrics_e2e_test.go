@@ -27,7 +27,6 @@ func metricsConfig(t *testing.T) config.Config {
 	cfg.Database.URL = url
 	noIdentity(&cfg)
 	cfg.Errors.Detail = "dev"
-	cfg.Plugins.Disabled = []string{"simple_names"}
 	cfg.Metrics.Enabled = true
 	return cfg
 }

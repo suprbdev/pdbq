@@ -50,7 +50,7 @@ const (
 	KindUpdateInput            Kind = "update_input"              // UserUpdateInput
 	KindPayloadTypeName        Kind = "payload_type_name"         // CreateUserPayload
 	KindPayloadDeletedNodeID   Kind = "payload_deleted_node_id"   // DeleteUserPayload -> deletedUserNodeId
-	KindRelationForward        Kind = "relation_forward"          // FK column -> parent object field (author)
+	KindRelationForward        Kind = "relation_forward"          // FK -> parent object field (userByAuthorId)
 	KindRelationBackward       Kind = "relation_backward"         // reverse FK -> child list field (postsByAuthorId)
 	KindRelationForwardMany    Kind = "relation_forward_many"     // PERIOD FK -> parent connection field (roomBookingsByRoomIdAndValidAt)
 	KindFunctionField          Kind = "function_field"            // pg function -> query/mutation field
@@ -117,7 +117,7 @@ func Default(kind Kind, in Input) string {
 	case KindPayloadDeletedNodeID:
 		return "deleted" + inflect.UpperCamel(inflect.Singularize(in.Table)) + "NodeId"
 	case KindRelationForward:
-		return inflect.LowerCamel(strings.TrimSuffix(strings.TrimSuffix(in.Column, "_id"), "Id"))
+		return inflect.LowerCamel(inflect.Singularize(in.Table)) + "By" + inflect.ByColumns(in.Columns)
 	case KindRelationBackward, KindRelationForwardMany:
 		return inflect.LowerCamel(inflect.Pluralize(inflect.Singularize(in.Table))) + "By" + inflect.ByColumns(in.Columns)
 	case KindFunctionField:

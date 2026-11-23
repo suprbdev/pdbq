@@ -63,7 +63,7 @@ func TestMutationPayloads(t *testing.T) {
 		  payHit(input: {postId: 1, clientMutationId: "cm"}) {
 		    clientMutationId
 		    payPost { title hits }
-		    author { name }
+		    payAuthorByAuthorId { name }
 		    payPostEdge(orderBy: [TITLE_ASC]) { cursor node { id hits } }
 		    query { payPostById(id: 2) { title } }
 		  }
@@ -76,7 +76,7 @@ func TestMutationPayloads(t *testing.T) {
 		}
 		mustUnmarshal(t, res.Data["payHit"], &out)
 		expectField(t, res, "payHit", `{"clientMutationId": "cm", "payPost": {"title": "one", "hits": 1},
-			"author": {"name": "ada"},
+			"payAuthorByAuthorId": {"name": "ada"},
 			"payPostEdge": {"cursor": "`+out.Edge.Cursor+`", "node": {"id": 1, "hits": 1}},
 			"query": {"payPostById": {"title": "two"}}}`)
 
@@ -104,15 +104,15 @@ func TestMutationPayloads(t *testing.T) {
 	t.Run("custom mutation payload sees the function's writes", func(t *testing.T) {
 		res := post(t, hs.URL, `mutation {
 		  payWrite(input: {authorName: "grace", postTitle: "ten"}) {
-		    payPost { id title author { name } }
-		    author { name }
-		    payPostEdge { node { author { name } } }
+		    payPost { id title payAuthorByAuthorId { name } }
+		    payAuthorByAuthorId { name }
+		    payPostEdge { node { payAuthorByAuthorId { name } } }
 		    query { payAuthorById(id: 10) { name } allPayPosts { totalCount } }
 		  }
 		}`, nil)
 		requireNoErrors(t, res)
-		expectField(t, res, "payWrite", `{"payPost": {"id": 10, "title": "ten", "author": {"name": "grace"}},
-			"author": {"name": "grace"}, "payPostEdge": {"node": {"author": {"name": "grace"}}},
+		expectField(t, res, "payWrite", `{"payPost": {"id": 10, "title": "ten", "payAuthorByAuthorId": {"name": "grace"}},
+			"payAuthorByAuthorId": {"name": "grace"}, "payPostEdge": {"node": {"payAuthorByAuthorId": {"name": "grace"}}},
 			"query": {"payAuthorById": {"name": "grace"}, "allPayPosts": {"totalCount": 3}}}`)
 	})
 
@@ -130,8 +130,8 @@ func TestMutationPayloads(t *testing.T) {
 	})
 
 	t.Run("setof result keeps the function's order", func(t *testing.T) {
-		res := post(t, hs.URL, `mutation { payNewest(input: {}) { payPosts { id author { name } } } }`, nil)
-		expectField(t, res, "payNewest", `{"payPosts": [{"id": 2, "author": {"name": "ada"}}, {"id": 1, "author": {"name": "ada"}}]}`)
+		res := post(t, hs.URL, `mutation { payNewest(input: {}) { payPosts { id payAuthorByAuthorId { name } } } }`, nil)
+		expectField(t, res, "payNewest", `{"payPosts": [{"id": 2, "payAuthorByAuthorId": {"name": "ada"}}, {"id": 1, "payAuthorByAuthorId": {"name": "ada"}}]}`)
 	})
 
 	t.Run("payload error rolls back the function", func(t *testing.T) {
@@ -149,7 +149,7 @@ func TestMutationPayloads(t *testing.T) {
 	t.Run("table mutation payload", func(t *testing.T) {
 		res := post(t, hs.URL, `mutation {
 		  createPayPost(input: {id: 3, authorId: 1, title: "three"}) {
-		    author { name }
+		    payAuthorByAuthorId { name }
 		    payPostEdge { node { title } }
 		    query { allPayPosts(orderBy: [ID_ASC]) { totalCount nodes { id } } }
 		  }
@@ -162,7 +162,7 @@ func TestMutationPayloads(t *testing.T) {
 		    query { allPayPosts(filter: {title: {equalTo: "same"}}) { totalCount } }
 		  }
 		}`, nil)
-		expectField(t, res, "createPayPost", `{"author": {"name": "ada"}, "payPostEdge": {"node": {"title": "three"}},
+		expectField(t, res, "createPayPost", `{"payAuthorByAuthorId": {"name": "ada"}, "payPostEdge": {"node": {"title": "three"}},
 			"query": {"allPayPosts": {"totalCount": 4, "nodes": [{"id": 1}, {"id": 2}, {"id": 3}, {"id": 10}]}}}`)
 		expectField(t, res, "deletePayPostById", `{"payPost": {"id": 3}, "query": {"payPostById": null, "allPayPosts": {"totalCount": 3}}}`)
 		expectField(t, res, "updatePayPosts", `{"affectedCount": 2, "query": {"allPayPosts": {"totalCount": 2}}}`)
@@ -170,12 +170,12 @@ func TestMutationPayloads(t *testing.T) {
 
 	t.Run("nested mutation payload", func(t *testing.T) {
 		res := post(t, hs.URL, `mutation {
-		  createPayPost(input: {id: 20, title: "nested", author: {create: {id: 20, name: "linus"}}}) {
-		    author { name }
+		  createPayPost(input: {id: 20, title: "nested", payAuthorByAuthorId: {create: {id: 20, name: "linus"}}}) {
+		    payAuthorByAuthorId { name }
 		    query { payAuthorById(id: 20) { name } }
 		  }
 		}`, nil)
-		expectField(t, res, "createPayPost", `{"author": {"name": "linus"}, "query": {"payAuthorById": {"name": "linus"}}}`)
+		expectField(t, res, "createPayPost", `{"payAuthorByAuthorId": {"name": "linus"}, "query": {"payAuthorById": {"name": "linus"}}}`)
 	})
 
 	t.Run("not-found update still errors", func(t *testing.T) {

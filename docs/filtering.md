@@ -128,7 +128,7 @@ enum also carries one-level relational values named
 from the column:
 
 ```graphql
-{ allPosts(orderBy: [AUTHOR__EMAIL_ASC]) { nodes { title } } }        # forward
+{ allPosts(orderBy: [USER_BY_AUTHOR_ID__EMAIL_ASC]) { nodes { title } } }   # forward
 { allUsers(orderBy: [POSTS_BY_AUTHOR_ID__TITLE_DESC]) { nodes { email } } }  # reverse
 ```
 

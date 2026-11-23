@@ -18,7 +18,7 @@ mutation {
   unpublishPost(input: {postId: 1}) {
     postEdge {
       node {
-        author {
+        userByAuthorId {
           email
         }
       }

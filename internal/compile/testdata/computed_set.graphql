@@ -4,7 +4,7 @@
     tagWords
     recentPosts(n: 3) {
       title
-      author { email }
+      userByAuthorId { email }
     }
   }
 }

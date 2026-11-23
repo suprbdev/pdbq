@@ -2,35 +2,35 @@ mutation {
   createPost(input: {authorId: 1, title: "New"}) {
     post {
       title
-      author { postsByAuthorId(filter: {title: {startsWith: "N"}}) { totalCount nodes { title } } }
+      userByAuthorId { postsByAuthorId(filter: {title: {startsWith: "N"}}) { totalCount nodes { title } } }
     }
   }
   createComment(input: {postId: 1, parentId: 3, body: "Reply"}) {
-    comment { body parent { body commentsByParentId { totalCount } } }
+    comment { body commentByParentId { body commentsByParentId { totalCount } } }
   }
   updatePostById(id: 1, patch: {title: "Renamed"}) {
-    post { id author { postsByAuthorId(orderBy: TITLE_ASC) { nodes { id title } } } }
+    post { id userByAuthorId { postsByAuthorId(orderBy: TITLE_ASC) { nodes { id title } } } }
   }
   updateUserByEmail(email: "a@b.c", patch: {email: "z@b.c"}) {
-    user { email postsByAuthorId { nodes { author { email } } } }
+    user { email postsByAuthorId { nodes { userByAuthorId { email } } } }
   }
   upsertUserByEmail(input: {email: "a@b.c", fullName: "Ada"}) {
-    user { email postsByAuthorId { nodes { author { fullName } } } }
+    user { email postsByAuthorId { nodes { userByAuthorId { fullName } } } }
   }
   deletePostById(id: 1) {
-    post { title author { postsByAuthorId { totalCount } } }
+    post { title userByAuthorId { postsByAuthorId { totalCount } } }
   }
   createPosts(input: [{authorId: 1, title: "A"}, {authorId: 1, title: "B"}]) {
-    posts { author { postsByAuthorId { totalCount } } }
+    posts { userByAuthorId { postsByAuthorId { totalCount } } }
   }
   updatePosts(filter: {authorId: {equalTo: 1}}, patch: {published: true}) {
-    posts { author { postsByAuthorId(filter: {title: {startsWith: "P"}}) { totalCount } } }
+    posts { userByAuthorId { postsByAuthorId(filter: {title: {startsWith: "P"}}) { totalCount } } }
   }
   deletePosts(filter: {title: {startsWith: "Draft"}}) {
-    posts { author { postsByAuthorId { totalCount } } }
+    posts { userByAuthorId { postsByAuthorId { totalCount } } }
     affectedCount
   }
   updateCommentById(id: 1, patch: {body: "Edited"}) {
-    comment { post { title } }
+    comment { postByPostId { title } }
   }
 }

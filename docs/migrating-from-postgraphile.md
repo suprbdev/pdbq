@@ -29,32 +29,38 @@ $ # PostGraphile v4: postgraphile --export-schema-graphql postgraphile.graphql .
 $ diff -u postgraphile.graphql pdbq.graphql
 ```
 
-`pdbq schema print` needs no running server. Add `plugins.disabled:
-[simple_names]` (below) first, so the diff shows real differences instead of
-naming noise.
+`pdbq schema print` needs no running server. pdbq's default naming is
+PostGraphile v4's, so the diff shows real differences rather than naming
+noise.
 
 ## Naming
 
-| PostGraphile v4 | pdbq (default) | pdbq with `plugins.disabled: [simple_names]` |
+| PostGraphile v4 | pdbq (default) | pdbq with `plugins.settings.simple_names.enabled: true` |
 |---|---|---|
-| `allUsers` | `users` | `allUsers` |
-| `userById(id:)` | `user(id:)` | `userById(id:)` |
+| `allUsers` | `allUsers` | `users` |
+| `userById(id:)` | `userById(id:)` | `user(id:)` |
 | `userByEmail(email:)` (unique key) | `userByEmail(email:)` | same |
 | `node(nodeId:)`, `nodeId: ID!` | same | same |
-| forward relation `userByAuthorId` | `author` | `author` |
-| backward relation `postsByAuthorId` | `posts` | `postsByAuthorId` |
-| mutation `createUser`, `updateUserById`, `deleteUserById` | `createUser`, `updateUser`, `deleteUser` | `createUser`, `updateUserById`, `deleteUserById` |
+| forward relation `userByAuthorId` | `userByAuthorId` | `author` |
+| backward relation `postsByAuthorId` | `postsByAuthorId` | `posts` |
+| mutation `createUser`, `updateUserById`, `deleteUserById` | `createUser`, `updateUserById`, `deleteUserById` | `createUser`, `updateUser`, `deleteUser` |
 
-- **`simple_names` is on by default** (PostGraphile's simplify-inflector
-  look). Disable it to get v4's default `all*` / `*ById` names.
-- **Forward relations are always named for the relation**, `author`, not
-  `userByAuthorId`. Where a table has several foreign keys to the same table
-  pdbq falls back to the verbose form so names do not collide.
+- **The default naming is PostGraphile v4's.** The opt-in `simple_names`
+  plugin gives names like `@graphile-contrib/pg-simplify-inflector`'s:
+  a forward relation over a single `_id` / `Id` column is named after the
+  column (`author_id` → `author`, other keys keep `userByAuthorId`), and a
+  backward relation is the plural child table (`posts`) when the child has
+  exactly one foreign key to the parent.
+- **Names never depend on collisions.** A relation whose name is already a
+  field of its type is a schema build error, as in PostGraphile: rename it
+  with `@fieldName` / `@foreignFieldName` on the constraint. A payload's
+  forward relation named like a payload field (`query`, the row, the edge)
+  is left out of that payload.
 - **Filter types** are `<Type>Filter` with `<Scalar>FilterOps` operator types
   (`StringFilterOps`), and order-by enums are `<Types>OrderBy` with
   `<COLUMN>_ASC|_DESC` values. There is no `PRIMARY_KEY_ASC` and no
   `NATURAL`: the primary key is appended to every `orderBy` as the tiebreaker.
-  Related-column ordering uses `AUTHOR__EMAIL_ASC` (forward) and
+  Related-column ordering uses `USER_BY_AUTHOR_ID__EMAIL_ASC` (forward) and
   `POSTS_BY_AUTHOR_ID__TITLE_DESC` (backward).
 - Enum types, composite types, domains, ranges, intervals and PostGIS
   `GeoJSON` follow PostGraphile's shapes (`IntRange`, `Interval`, a scalar named
@@ -112,12 +118,12 @@ Differences, on `main` today:
 | Area | PostGraphile v4 | pdbq |
 |---|---|---|
 | create | `createUser(input: {user: {...}})` | `createUser(input: {...})` with a flat `UserCreateInput` |
-| update | `updateUserById(input: {id, userPatch})` | `updateUser(id:, patch: UserUpdateInput!)` |
-| delete | `deleteUserById(input: {id})` | `deleteUser(id:)` |
+| update | `updateUserById(input: {id, userPatch})` | `updateUserById(id:, patch: UserUpdateInput!)` |
+| delete | `deleteUserById(input: {id})` | `deleteUserById(id:)` |
 | bulk | not generated | `createUsers`, `updateUsers(filter:, patch:)`, `deleteUsers(filter:)` |
 | nested | `postgraphile-plugin-nested-mutations` | the `nested_mutations` plugin, similar shapes, **experimental** ([compatibility.md](compatibility.md#experimental-features)) |
 
-- Payload relations use pdbq's relation names (`author`, not `userByAuthorId`).
+- Payload relations have the row type's relation names (`userByAuthorId`).
 - Every mutation runs inside a transaction; there is no `transactions.mutations`
   switch.
 - `@arg0variant` is not supported: pdbq has one row input type, with every
@@ -240,13 +246,12 @@ closest key.
 ## Migration order
 
 1. Run pdbq next to PostGraphile against the same database, with
-   `plugins.disabled: [simple_names]` and `filters.indexed_only: false`, and
-   diff the two schemas.
+   `filters.indexed_only: false`, and diff the two schemas.
 2. Set `auth`, `roles` and `claims` to match your tokens, and check one policy
    per role end to end ([quickstart](quickstart.md#secure-setup)).
-3. Decide on naming: keep `simple_names` and update clients, or disable it and
-   keep v4's names. Then adapt the mutation call sites (flat inputs,
-   `id`/`patch` arguments).
+3. Decide on naming: keep v4's names (the default), or enable
+   `simple_names` if your clients used pg-simplify-inflector. Then adapt
+   the mutation call sites (flat inputs, `id`/`patch` arguments).
 4. Tighten: restore `filters.indexed_only: true` and add the indexes your
    clients' filters need, or opt columns in with `@filterable`.
 5. Set page sizes (`limits.max_page_size`), cost and depth limits, and

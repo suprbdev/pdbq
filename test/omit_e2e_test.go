@@ -165,9 +165,9 @@ func TestOmitEnforcement(t *testing.T) {
 		if strings.Contains(sdl, "approvalsByAccountId") {
 			t.Error("SDL exposes approvalsByAccountId")
 		}
-		res := post(t, url, `{ allApprovals { nodes { note account { name } } } }`, nil)
+		res := post(t, url, `{ allApprovals { nodes { note accountByAccountId { name } } } }`, nil)
 		requireNoErrors(t, res)
-		if got := normalize(t, res.Data["allApprovals"]); got != `{"nodes":[{"account":{"name":"acme"},"note":"first"}]}` {
+		if got := normalize(t, res.Data["allApprovals"]); got != `{"nodes":[{"accountByAccountId":{"name":"acme"},"note":"first"}]}` {
 			t.Fatalf("forward relation = %s", got)
 		}
 	})

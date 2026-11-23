@@ -49,8 +49,9 @@ per request, row-level security applies): see
   compile, request) with built-ins proving the design:
   `smart_comments` (tune the schema with PostGraphile-style `@omit`/`@name`/
   `@primaryKey`/... tags in database `COMMENT`s, see
-  [docs/smart-comments.md](docs/smart-comments.md)), `simple_names` (`users`
-  instead of `allUsers`), `advanced_filters` (filter across relations and
+  [docs/smart-comments.md](docs/smart-comments.md)), the opt-in `simple_names`
+  (`users` and `author` instead of `allUsers` and `userByAuthorId`),
+  `advanced_filters` (filter across relations and
   filter/order by computed columns), and `nested_mutations` (nested
   connect/create/update/delete/disconnect inputs on create and update
   mutations, compiled to multi-CTE statements in a forced transaction). The opt-in `aggregates` plugin adds
@@ -70,7 +71,7 @@ per request, row-level security applies): see
 - **Incremental delivery (opt-in)** — `@defer` and `@stream` over
   `multipart/mixed` and WebSocket, every payload read from one snapshot, see
   [docs/incremental.md](docs/incremental.md).
-- **Pipe-friendly CLI** — `echo '{users {nodes {email}}}' | pdbq query -` prints
+- **Pipe-friendly CLI** — `echo '{allUsers {nodes {email}}}' | pdbq query -` prints
   JSON and exits non-zero on GraphQL errors.
 
 ## Installation

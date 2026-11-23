@@ -160,7 +160,7 @@ func TestDocumentCacheConcurrent(t *testing.T) {
 	ctx := context.Background()
 	compiled := []string{
 		`query($id: Int!, $skip: Boolean!) {userById(id: $id) {id email @skip(if: $skip) ...F}} fragment F on User {fullName}`,
-		`{allUsers(first: 10) {nodes {id email postsByAuthorId(first: 5) {nodes {id title author {id}}}}}}`,
+		`{allUsers(first: 10) {nodes {id email postsByAuthorId(first: 5) {nodes {id title userByAuthorId {id}}}}}}`,
 		`{allUsers(filter: {and: [{email: {like: "%x%"}}, {or: [{id: {greaterThan: 5}}, {mood: {equalTo: HAPPY}}]}]}) {nodes {id}}}`,
 		`{a: userById(id: 1) {id} b: userById(id: 1) {email} ... on Query {c: allUsers(first: 2) {totalCount}}}`,
 	}

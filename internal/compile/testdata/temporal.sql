@@ -1,11 +1,11 @@
 -- field: allBookingNotes
 SELECT json_build_object('nodes', coalesce(json_agg(__s_13.ndata ORDER BY __s_13.__rn ASC) FILTER (WHERE __s_13.__rn <= $4), '[]'::json)) AS data
 FROM (
-  SELECT json_build_object('note', __t_1."note", 'validAt', (SELECT json_build_object('start', CASE WHEN lower(__rg_2.r) IS NULL THEN NULL ELSE json_build_object('value', lower(__rg_2.r)) END, 'end', CASE WHEN upper(__rg_2.r) IS NULL THEN NULL ELSE json_build_object('value', upper(__rg_2.r), 'inclusive', upper_inc(__rg_2.r)) END) FROM (SELECT __t_1."valid_at" AS r) AS __rg_2 WHERE __rg_2.r IS NOT NULL), 'author', __l_4.data, 'roomBookingsByRoomIdAndValidAt', __l_9.data) AS ndata, __t_1.__rn
+  SELECT json_build_object('note', __t_1."note", 'validAt', (SELECT json_build_object('start', CASE WHEN lower(__rg_2.r) IS NULL THEN NULL ELSE json_build_object('value', lower(__rg_2.r)) END, 'end', CASE WHEN upper(__rg_2.r) IS NULL THEN NULL ELSE json_build_object('value', upper(__rg_2.r), 'inclusive', upper_inc(__rg_2.r)) END) FROM (SELECT __t_1."valid_at" AS r) AS __rg_2 WHERE __rg_2.r IS NOT NULL), 'userByAuthorId', __l_4.data, 'roomBookingsByRoomIdAndValidAt', __l_9.data) AS ndata, __t_1.__rn
   FROM (
     SELECT __t_1."room_id", __t_1."valid_at", __t_1."note", __t_1."author_id", row_number() OVER (ORDER BY (SELECT MAX(__ro."room_id") FROM "public"."room_bookings" AS __ro WHERE __ro."room_id" = __t_1."room_id" AND __ro."valid_at" && __t_1."valid_at") DESC NULLS LAST, __t_1."id" ASC) AS __rn
     FROM "public"."booking_notes" AS __t_1
-    WHERE EXISTS (SELECT 1 FROM "public"."users" AS __r_10 WHERE __r_10."id" = __t_1."author_id") AND NOT EXISTS (SELECT 1 FROM "public"."room_bookings" AS __r_11 WHERE __r_11."room_id" = __t_1."room_id" AND __r_11."valid_at" && __t_1."valid_at" AND (__r_11."room_id" = $2)) AND EXISTS (SELECT 1 FROM "public"."room_bookings" AS __r_12 WHERE __r_12."room_id" = __t_1."room_id" AND __r_12."valid_at" && __t_1."valid_at" AND (__r_12."room_id" = $3))
+    WHERE NOT EXISTS (SELECT 1 FROM "public"."room_bookings" AS __r_10 WHERE __r_10."room_id" = __t_1."room_id" AND __r_10."valid_at" && __t_1."valid_at" AND (__r_10."room_id" = $2)) AND EXISTS (SELECT 1 FROM "public"."room_bookings" AS __r_11 WHERE __r_11."room_id" = __t_1."room_id" AND __r_11."valid_at" && __t_1."valid_at" AND (__r_11."room_id" = $3)) AND EXISTS (SELECT 1 FROM "public"."users" AS __r_12 WHERE __r_12."id" = __t_1."author_id")
     ORDER BY (SELECT MAX(__ro."room_id") FROM "public"."room_bookings" AS __ro WHERE __ro."room_id" = __t_1."room_id" AND __ro."valid_at" && __t_1."valid_at") DESC NULLS LAST, __t_1."id" ASC
     LIMIT 101
   ) AS __t_1

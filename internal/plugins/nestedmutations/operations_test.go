@@ -24,8 +24,8 @@ import (
 func TestNestedInputShapes(t *testing.T) {
 	_, built := setupWith(t, plugin.NewRegistry(nestedmutations.New(nestedmutations.DefaultSettings())))
 	for _, want := range []string{
-		"input PostAuthorNestedInput {\n  connectById: UserConnectByIdInput\n  connectByEmail: UserConnectByEmailInput\n  connectByNodeId: UserConnectByNodeIdInput\n  create: UserCreateInput\n}",
-		"input PostAuthorNestedPatchInput {\n  connectById: UserConnectByIdInput\n  connectByEmail: UserConnectByEmailInput\n  connectByNodeId: UserConnectByNodeIdInput\n  create: UserCreateInput\n  updateById: UserUpdateByIdInput\n  updateByEmail: UserUpdateByEmailInput\n  updateByNodeId: UserUpdateByNodeIdInput\n  deleteById: UserDeleteByIdInput\n  deleteByEmail: UserDeleteByEmailInput\n  deleteByNodeId: UserDeleteByNodeIdInput\n}",
+		"input PostUserByAuthorIdNestedInput {\n  connectById: UserConnectByIdInput\n  connectByEmail: UserConnectByEmailInput\n  connectByNodeId: UserConnectByNodeIdInput\n  create: UserCreateInput\n}",
+		"input PostUserByAuthorIdNestedPatchInput {\n  connectById: UserConnectByIdInput\n  connectByEmail: UserConnectByEmailInput\n  connectByNodeId: UserConnectByNodeIdInput\n  create: UserCreateInput\n  updateById: UserUpdateByIdInput\n  updateByEmail: UserUpdateByEmailInput\n  updateByNodeId: UserUpdateByNodeIdInput\n  deleteById: UserDeleteByIdInput\n  deleteByEmail: UserDeleteByEmailInput\n  deleteByNodeId: UserDeleteByNodeIdInput\n}",
 		"input UserPostsByAuthorIdNestedInput {\n  connectById: [PostConnectByIdInput!]\n  connectByNodeId: [PostConnectByNodeIdInput!]\n  create: [PostCreateInput!]\n}",
 		"input UserPostsByAuthorIdNestedPatchInput {\n  connectById: [PostConnectByIdInput!]\n  connectByNodeId: [PostConnectByNodeIdInput!]\n  create: [PostCreateInput!]\n  updateById: [PostUpdateByIdInput!]\n",
 		"  disconnectById: [PlaceDisconnectByIdInput!]\n  disconnectByNodeId: [PlaceDisconnectByNodeIdInput!]\n}",
@@ -41,8 +41,8 @@ func TestNestedInputShapes(t *testing.T) {
 		}
 	}
 	for header, fields := range map[string][]string{
-		"input PostCreateInput {": {"author: PostAuthorNestedInput", "commentsByPostId: PostCommentsByPostIdNestedInput"},
-		"input PostUpdateInput {": {"author: PostAuthorNestedPatchInput", "commentsByPostId: PostCommentsByPostIdNestedPatchInput"},
+		"input PostCreateInput {": {"userByAuthorId: PostUserByAuthorIdNestedInput", "commentsByPostId: PostCommentsByPostIdNestedInput"},
+		"input PostUpdateInput {": {"userByAuthorId: PostUserByAuthorIdNestedPatchInput", "commentsByPostId: PostCommentsByPostIdNestedPatchInput"},
 	} {
 		block := sdlBlock(built.SDL, header)
 		for _, want := range fields {
@@ -51,7 +51,7 @@ func TestNestedInputShapes(t *testing.T) {
 			}
 		}
 	}
-	for _, header := range []string{"input UserPostsByAuthorIdNestedPatchInput {", "input PostAuthorNestedPatchInput {", "input UserPlacesByOwnerIdNestedInput {", "input CommentParentNestedInput {"} {
+	for _, header := range []string{"input UserPostsByAuthorIdNestedPatchInput {", "input PostUserByAuthorIdNestedPatchInput {", "input UserPlacesByOwnerIdNestedInput {", "input CommentCommentByParentIdNestedInput {"} {
 		if strings.Contains(sdlBlock(built.SDL, header), "disconnect") {
 			t.Errorf("%s must not offer disconnect (NOT NULL foreign key or create input)", header)
 		}
@@ -61,7 +61,7 @@ func TestNestedInputShapes(t *testing.T) {
 func TestNestedUpdateMutation(t *testing.T) {
 	reg, built := setupWith(t, plugin.NewRegistry(nestedmutations.New(nestedmutations.DefaultSettings())))
 	sql := compileRoot(t, reg, built, `mutation {
-		updatePostById(id: 1, patch: {title: "T", author: {connectByEmail: {email: "a@b.c"}},
+		updatePostById(id: 1, patch: {title: "T", userByAuthorId: {connectByEmail: {email: "a@b.c"}},
 			commentsByPostId: {connectById: [{id: 2}], updateById: {id: 3, commentPatch: {body: "b"}}, deleteById: [{id: 4}]}}) {
 			post { id commentsByPostId { nodes { body } } }
 		}
@@ -74,7 +74,7 @@ func TestNestedUpdateMutation(t *testing.T) {
 		`UPDATE "public"."comments" SET "body" = $7 FROM __mut WHERE "public"."comments"."id" = $6 AND "public"."comments"."post_id" = __mut."id" RETURNING`,
 		`SELECT "id", "post_id", "body" FROM "public"."comments" WHERE NOT EXISTS (SELECT 1 FROM __c_2 AS __m WHERE __m."id" = "public"."comments"."id") AND NOT EXISTS (SELECT 1 FROM __c_3 AS __m`,
 		"\n  UNION ALL SELECT \"id\", \"post_id\", \"body\" FROM __c_2\n  UNION ALL SELECT \"id\", \"post_id\", \"body\" FROM __c_4\n)",
-		"__guard AS MATERIALIZED (\n  SELECT (SELECT CASE WHEN count(*) > 0 THEN true ELSE concat('nested_mutations: author.connectByEmail matched ', count(*), ' rows')::boolean END FROM __p_1)",
+		"__guard AS MATERIALIZED (\n  SELECT (SELECT CASE WHEN count(*) > 0 THEN true ELSE concat('nested_mutations: userByAuthorId.connectByEmail matched ', count(*), ' rows')::boolean END FROM __p_1)",
 		"concat('nested_mutations: commentsByPostId.updateById[0] matched ', count(*), ' rows')",
 		"concat('nested_mutations: updatePostById matched ', count(*), ' rows')::boolean END FROM __mut) AS ok\n)",
 		"FROM __guard\nLEFT JOIN LATERAL (\n",
@@ -118,7 +118,7 @@ func TestNestedForwardOperationsTargetTheReferencedRow(t *testing.T) {
 	reg, built := setupWith(t, plugin.NewRegistry(nestedmutations.New(nestedmutations.DefaultSettings())))
 	user := base64.StdEncoding.EncodeToString([]byte(`["User", 7]`))
 	sql := compileRoot(t, reg, built, `mutation {
-		updatePostById(id: 9, patch: {author: {updateByNodeId: {nodeId: "`+user+`", userPatch: {fullName: "U"}}, deleteByEmail: {email: "e"}}}) { post { id } }
+		updatePostById(id: 9, patch: {userByAuthorId: {updateByNodeId: {nodeId: "`+user+`", userPatch: {fullName: "U"}}, deleteByEmail: {email: "e"}}}) { post { id } }
 	}`).SQL
 	owner := `EXISTS (SELECT 1 FROM "public"."posts" AS __o WHERE __o."id" = $1 AND __o."author_id" = "public"."users"."id")`
 	for _, want := range []string{
@@ -157,13 +157,13 @@ func TestForwardDisconnect(t *testing.T) {
 		t.Fatal(err)
 	}
 	sql := compileRoot(t, reg, built, `mutation {
-		updateMemoById(id: 1, patch: {owner: {disconnectByEmail: {email: "a@b.c"}}}) { memo { id } }
+		updateMemoById(id: 1, patch: {userByOwnerId: {disconnectByEmail: {email: "a@b.c"}}}) { memo { id } }
 	}`).SQL
 	if want := `SET "owner_id" = CASE WHEN "public"."memos"."owner_id" = $2 THEN NULL ELSE "public"."memos"."owner_id" END`; !strings.Contains(sql, want) {
 		t.Errorf("disconnect by the referenced key compares the FK:\n%s", sql)
 	}
 	sql = compileRoot(t, reg, built, `mutation {
-		updateMemoById(id: 1, patch: {owner: {disconnectById: {id: 7}}}) { memo { id } }
+		updateMemoById(id: 1, patch: {userByOwnerId: {disconnectById: {id: 7}}}) { memo { id } }
 	}`).SQL
 	if want := `CASE WHEN EXISTS (SELECT 1 FROM "public"."users" AS __r WHERE __r."id" = $2 AND __r."email" = "public"."memos"."owner_id") THEN NULL`; !strings.Contains(sql, want) {
 		t.Errorf("disconnect by another key looks the row up:\n%s", sql)
@@ -174,23 +174,23 @@ func TestNestedErrors(t *testing.T) {
 	reg, built := setupWith(t, plugin.NewRegistry(nestedmutations.New(nestedmutations.Settings{MaxDepth: 2, MaxOperations: 3})))
 	post := base64.StdEncoding.EncodeToString([]byte(`["Post", 1]`))
 	for _, tc := range []struct{ name, query, want string }{
-		{"two links", `mutation { createPost(input: {title: "x", author: {connectById: {id: 1}, create: {email: "e"}}}) { post { id } } }`,
-			"author: specify at most one of create, connect or disconnect"},
-		{"no operation", `mutation { createPost(input: {title: "x", author: {}}) { post { id } } }`,
-			"author: specify an operation"},
-		{"column and link", `mutation { createPost(input: {title: "x", authorId: 1, author: {connectById: {id: 1}}}) { post { id } } }`,
+		{"two links", `mutation { createPost(input: {title: "x", userByAuthorId: {connectById: {id: 1}, create: {email: "e"}}}) { post { id } } }`,
+			"userByAuthorId: specify at most one of create, connect or disconnect"},
+		{"no operation", `mutation { createPost(input: {title: "x", userByAuthorId: {}}) { post { id } } }`,
+			"userByAuthorId: specify an operation"},
+		{"column and link", `mutation { createPost(input: {title: "x", authorId: 1, userByAuthorId: {connectById: {id: 1}}}) { post { id } } }`,
 			"sets a column already set by the input"},
-		{"connect and disconnect", `mutation { updateCommentById(id: 1, patch: {parent: {connectById: {id: 2}, disconnectById: {id: 3}}}) { comment { id } } }`,
-			"parent: specify at most one of create, connect or disconnect"},
+		{"connect and disconnect", `mutation { updateCommentById(id: 1, patch: {commentByParentId: {connectById: {id: 2}, disconnectById: {id: 3}}}) { comment { id } } }`,
+			"commentByParentId: specify at most one of create, connect or disconnect"},
 		{"operations", `mutation { createUser(input: {email: "e", postsByAuthorId: {create: [{title: "1"}, {title: "2"}, {title: "3"}, {title: "4"}]}}) { user { id } } }`,
 			"more than 3 nested operations"},
-		{"foreign nodeId", `mutation { createPost(input: {title: "x", author: {connectByNodeId: {nodeId: "` + post + `"}}}) { post { id } } }`,
-			"author.connectByNodeId: nodeId does not identify a User"},
-		{"bulk create", `mutation { createPosts(input: [{title: "x", author: {connectById: {id: 1}}}]) { affectedCount } }`,
+		{"foreign nodeId", `mutation { createPost(input: {title: "x", userByAuthorId: {connectByNodeId: {nodeId: "` + post + `"}}}) { post { id } } }`,
+			"userByAuthorId.connectByNodeId: nodeId does not identify a User"},
+		{"bulk create", `mutation { createPosts(input: [{title: "x", userByAuthorId: {connectById: {id: 1}}}]) { affectedCount } }`,
 			"createPosts does not take nested mutation fields"},
-		{"bulk update", `mutation { updatePosts(filter: {}, patch: {author: {connectById: {id: 1}}}) { affectedCount } }`,
+		{"bulk update", `mutation { updatePosts(filter: {}, patch: {userByAuthorId: {connectById: {id: 1}}}) { affectedCount } }`,
 			"updatePosts does not take nested mutation fields"},
-		{"depth", `mutation { createComment(input: {body: "x", post: {create: {title: "t", author: {create: {email: "e"}}}}}) { comment { id } } }`,
+		{"depth", `mutation { createComment(input: {body: "x", postByPostId: {create: {title: "t", userByAuthorId: {create: {email: "e"}}}}}) { comment { id } } }`,
 			"nesting depth exceeds limit 2"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

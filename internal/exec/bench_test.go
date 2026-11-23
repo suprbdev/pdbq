@@ -14,7 +14,7 @@ import (
 
 var benchShapes = []struct{ name, query string }{
 	{"single_row", `{userById(id: 1) {id email fullName}}`},
-	{"nested_relations", `{allUsers(first: 10) {nodes {id email postsByAuthorId(first: 5) {nodes {id title author {id}}}}}}`},
+	{"nested_relations", `{allUsers(first: 10) {nodes {id email postsByAuthorId(first: 5) {nodes {id title userByAuthorId {id}}}}}}`},
 	{"connection", `{allUsers(first: 10) {totalCount nodes {id} pageInfo {hasNextPage endCursor}}}`},
 	{"filters", `{allUsers(filter: {and: [{email: {like: "%x%"}}, {or: [{id: {greaterThan: 5}}, {mood: {equalTo: HAPPY}}]}]}) {nodes {id}}}`},
 }

@@ -225,7 +225,7 @@ func TestExampleYAMLCoversEverything(t *testing.T) {
 		"database:", "url:", "server:", "max_depth:", "filters:", "indexed_only:",
 		"auth:", "jwt:", "secret_file:", "headers:", "trusted_proxies:", "mint_type:",
 		"roles:", "switch:", "anonymous:", "claims:", "json_setting:", "transactions:", "watch:", "errors:",
-		"plugins:", "advanced_filters:", "relations_opt_in:", "postgis:", "typed_geometry:", "contrib:",
+		"plugins:", "simple_names:", "advanced_filters:", "relations_opt_in:", "postgis:", "typed_geometry:", "contrib:",
 		"aggregates:", "scan_cost:", "nested_mutations:", "max_operations:", "log:",
 		"limits:", "max_cost:", "persisted_queries:", "subscriptions:", "live:", "incremental:",
 		"document_cache:", "introspection:", "domains:", "partial:", "max_items:",

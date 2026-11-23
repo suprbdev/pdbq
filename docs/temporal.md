@@ -101,5 +101,5 @@ and the period pair by overlap (`&&`):
 
 PostgreSQL never checks them, so a child may reference a missing row even
 when its columns are `NOT NULL`. The forward relation field is nullable
-(`author: User`) and resolves to `null` for a dangling reference;
-`authorExists: false` finds those rows.
+(`userByAuthorId: User`) and resolves to `null` for a dangling reference;
+`userByAuthorIdExists: false` finds those rows.

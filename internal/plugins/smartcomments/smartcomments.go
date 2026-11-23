@@ -102,11 +102,7 @@ func tableKey(schema, name string) string { return schema + "." + name }
 // default inflector all derive from the new name.
 func (p *Plugin) Inflect(kind inflect.Kind, in inflect.Input, next inflect.Next) string {
 	switch kind {
-	case inflect.KindRelationForward:
-		if name := p.Index().Constraint(in.Schema, in.Constraint).First("fieldName"); name != "" {
-			return name
-		}
-	case inflect.KindRelationForwardMany:
+	case inflect.KindRelationForward, inflect.KindRelationForwardMany:
 		if name := p.Index().Constraint(in.Schema, in.Constraint).First("fieldName"); name != "" {
 			return name
 		}

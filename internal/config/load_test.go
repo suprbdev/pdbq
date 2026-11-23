@@ -131,6 +131,30 @@ func TestPluginSettingsFromEnv(t *testing.T) {
 	}
 }
 
+func TestSimpleNamesSetting(t *testing.T) {
+	t.Setenv("PDBQ_AUTH_JWT_SECRET", "s")
+	cfg, err := Load("", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Plugins.Settings.SimpleNames.Enabled {
+		t.Error("simple_names must be off by default")
+	}
+	cfg, err = Load(writeConfig(t, "plugins:\n  settings:\n    simple_names:\n      enabled: true\n"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Plugins.Settings.SimpleNames.Enabled {
+		t.Error("plugins.settings.simple_names.enabled: true not applied")
+	}
+	t.Setenv("PDBQ_PLUGINS_SETTINGS_SIMPLE__NAMES_ENABLED", "true")
+	if cfg, err = Load("", nil); err != nil || !cfg.Plugins.Settings.SimpleNames.Enabled {
+		t.Errorf("PDBQ_PLUGINS_SETTINGS_SIMPLE__NAMES_ENABLED not applied: %v", err)
+	}
+	wantLoadError(t, writeConfig(t, "plugins:\n  settings:\n    simple_names:\n      enable: true\n"),
+		"did you mean plugins.settings.simple_names.enabled?")
+}
+
 func TestPluginsDisabledNames(t *testing.T) {
 	wantLoadError(t, writeConfig(t, "auth:\n  jwt:\n    secret: s\nplugins:\n  disabled: [smart-comments, nope]\n"),
 		`plugins.disabled: unknown plugin "smart-comments", did you mean "smart_comments"?`,

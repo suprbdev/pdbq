@@ -1,5 +1,5 @@
 -- field: node
-SELECT json_build_object('__typename', 'Post'::text, 'nodeId', replace(encode(convert_to(jsonb_build_array('Post'::text, __t_1."id")::text, 'UTF8'), 'base64'), E'\n', ''), 'title', __t_1."title", 'author', __l_3.data) AS data
+SELECT json_build_object('__typename', 'Post'::text, 'nodeId', replace(encode(convert_to(jsonb_build_array('Post'::text, __t_1."id")::text, 'UTF8'), 'base64'), E'\n', ''), 'title', __t_1."title", 'userByAuthorId', __l_3.data) AS data
 FROM "public"."posts" AS __t_1
 LEFT JOIN LATERAL (
   SELECT json_build_object('id', __t_2."id", 'email', __t_2."email") AS data

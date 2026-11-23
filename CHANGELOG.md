@@ -23,6 +23,17 @@ becomes the release notes of the next tag.
 
 ### Changed
 
+- **Breaking:** PostGraphile v4 naming is the default (`allUsers`,
+  `userById`, `updateUserById`, forward relation `userByAuthorId`, backward
+  `postsByAuthorId`). `simple_names` is opt-in through
+  `plugins.settings.simple_names.enabled`; it names a forward relation over
+  a single `_id`/`Id` column after the column (`author`) and a backward
+  relation after the child table (`posts`) when the child has one foreign
+  key to the parent. Names never depend on collisions: a relation named like
+  another field of its type is a schema build error (rename it with
+  `@fieldName`/`@foreignFieldName`), and a payload relation named like a
+  payload field is left out of that payload. See
+  [docs/upgrading.md](docs/upgrading.md#default-naming).
 - `go install github.com/suprbdev/pdbq/cmd/pdbq@vX.Y.Z` builds report the
   module version in `pdbq --version`.
 - The quickstarts use the current `auth`/`roles` config shape and a first

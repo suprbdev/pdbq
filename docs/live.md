@@ -10,7 +10,7 @@ field is repeated on the `Subscription` root under the same name:
 ```graphql
 subscription {
   allPosts(filter: {published: {equalTo: true}}, first: 20) {
-    nodes { id title author { fullName } }
+    nodes { id title userByAuthorId { fullName } }
   }
 }
 ```

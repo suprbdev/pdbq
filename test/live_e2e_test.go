@@ -32,7 +32,6 @@ func liveServer(t *testing.T, mutate func(*config.Live)) (string, *pgx.Conn) {
 	jwtIdentity(&cfg, subsSecret)
 	cfg.Roles.Allowed = []string{"anonymous", "app_user"}
 	cfg.Errors.Detail = "dev"
-	cfg.Plugins.Disabled = []string{"simple_names"}
 	cfg.Subscriptions.Enabled = true
 	cfg.Subscriptions.Keepalive = 0
 	cfg.Live.Enabled = true
