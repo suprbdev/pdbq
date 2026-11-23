@@ -9,7 +9,7 @@ app := pdbq.New(cfg, pdbq.WithPlugins(myPlugin{}))
 app.Serve(ctx)
 ```
 
-(Out-of-process plugins — go-plugin/wasm — are a v2 track; these interfaces
+(Out-of-process plugins — go-plugin/wasm — are a possible future direction; these interfaces
 are the contract either way.)
 
 ## Hook surfaces
