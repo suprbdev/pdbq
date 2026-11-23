@@ -26,7 +26,7 @@ func FuzzFilter(f *testing.F) {
 	built := buildContrib(f)
 	aggBuilt := buildAggregates(f)
 
-	const query = `query ($e: String, $tag: [String!], $n: Int!, $h: KeyValueHash, $b: Boolean!, $d: Datetime, $ip: InternetAddress, $ips: [InternetAddress!], $cfg: String, $vec: [Float!], $fl: Float!, $sv: String!, $vv: [Float!]!) {
+	const query = `query ($e: String, $tag: [String!], $n: Int!, $h: KeyValueHash, $b: Boolean!, $d: Datetime, $ip: InternetAddress, $ips: [InternetAddress!], $cfg: String, $vec: [Float!], $fl: Float!, $sv: String!, $vv: [Float!]!, $k: String!) {
 		allUsers(filter: {
 			and: [
 				{email: {like: $e, startsWith: $e}}
@@ -52,6 +52,17 @@ func FuzzFilter(f *testing.F) {
 			similarTo: {label: $e, title: $e}
 			orderBy: [SEARCH_RANK_DESC, LABEL_SIMILARITY_DESC]
 		) { nodes { id searchRank attrs span { start { value inclusive } } labelSimilarity titleWordSimilarity } }
+		values: allDocuments(
+			filter: {
+				pathNlevel: {greaterThan: $n, in: [$n]}
+				attrsValue: {key: $k, equalTo: $e, in: $tag}
+				tagIds: {matchesQueryInt: $e, overlaps: [$n]}
+				notes: {soundexEqualTo: $e, doubleMetaphoneEqualTo: $e}
+				or: [{attrsValue: {key: $k, isNull: true}}, {pathNlevel: {lessThan: $n}}]
+			}
+			hstoreKey: {attrs: $e}
+			orderBy: [ATTRS_VALUE_ASC, PATH_NLEVEL_DESC]
+		) { nodes { id pathNlevel pathParent pathsLca tagIdsIcount attrsValue(key: $k) pathLca(path: $k) } }
 		allEmbeddings(
 			filter: {
 				embedding: {cosineDistanceLessThan: {vector: $vv, distance: $fl}, l2DistanceLessThan: {vector: $vv, distance: $fl}}
@@ -89,6 +100,13 @@ func FuzzFilter(f *testing.F) {
 			groupedAggregates(groupBy: [CREATED_AT_TRUNCATED_TO_DAY], having: {max: {createdAt: {greaterThan: $d}}}) { keys }
 		}
 	}`
+	const fuzzyQuery = `query ($e: String!, $n: Int!, $len: Int) {
+		allDocuments(
+			filter: {notes: {levenshteinDistanceLessThan: {text: $e, distance: $n}, metaphoneEqualTo: $e}}
+			similarTo: {notes: $e}
+			orderBy: [NOTES_LEVENSHTEIN_DISTANCE_ASC]
+		) { nodes { id notesLevenshteinDistance pathSubpath(offset: $n, length: $len) } }
+	}`
 	const mutationQuery = `mutation ($e: String, $n: Int!, $vec: [Float!], $cfg: String) {
 		createEmbedding(input: {embedding: $vec, half: $vec, sparse: $cfg}) { embedding { id embedding } }
 		publishPost(input: {postId: $n, clientMutationId: $e}) {
@@ -100,12 +118,17 @@ func FuzzFilter(f *testing.F) {
 	type target struct {
 		built *schema.Built
 		op    *ast.OperationDefinition
+		// lenient targets carry operands with value limits (fuzzystrmatch
+		// lengths, subpath positions): a compile error on them is a refused
+		// value, not a failure, and the statement is skipped.
+		lenient bool
 	}
 	var targets []target
 	for _, tc := range []struct {
-		built *schema.Built
-		query string
-	}{{built, query}, {aggBuilt, aggQuery}, {built, mutationQuery}} {
+		built   *schema.Built
+		query   string
+		lenient bool
+	}{{built, query, false}, {aggBuilt, aggQuery, false}, {built, mutationQuery, false}, {built, fuzzyQuery, true}} {
 		doc, perr := parser.ParseQuery(&ast.Source{Input: tc.query})
 		if perr != nil {
 			f.Fatal(perr)
@@ -113,17 +136,22 @@ func FuzzFilter(f *testing.F) {
 		if errs := validator.ValidateWithRules(tc.built.Schema, doc, nil); len(errs) > 0 {
 			f.Fatal(errs)
 		}
-		targets = append(targets, target{tc.built, doc.Operations[0]})
+		targets = append(targets, target{tc.built, doc.Operations[0], tc.lenient})
 	}
 
 	compileWith := func(t testing.TB, email, tag string, n int) []*compile.Statement {
 		t.Helper()
+		var length any
+		if n%2 != 0 {
+			length = n
+		}
 		var out []*compile.Statement
 		for _, tg := range targets {
 			vars, verr := validator.VariableValues(tg.built.Schema, tg.op, map[string]any{
 				"e": email, "tag": []any{tag}, "n": n, "h": map[string]any{tag: email}, "b": n%2 == 0,
 				"d": email, "ip": email, "ips": []any{tag}, "cfg": "c" + email, "big": tag, "bigs": []any{tag}, "bf": email,
 				"vec": []any{float64(n), 0.5, -float64(n)}, "fl": float64(n) / 4, "sv": "c" + email, "vv": []any{0.5, float64(n)},
+				"len": length, "k": email,
 			})
 			if verr != nil {
 				t.Skipf("rejected variables: %v", verr)
@@ -135,6 +163,10 @@ func FuzzFilter(f *testing.F) {
 					Built:    tg.built,
 					MaxDepth: 15,
 				})
+				if err != nil && tg.lenient {
+					out = append(out, nil)
+					continue
+				}
 				if err != nil {
 					t.Fatalf("compile error on valid input: %v", err)
 				}
@@ -147,7 +179,12 @@ func FuzzFilter(f *testing.F) {
 	// function of the query shape — values only move through the parameter
 	// list, so any two value sets must produce byte-identical SQL.
 	baseline := compileWith(f, "a@example.com", "admin", 5)
-	if baseline[len(baseline)-1].Then == nil {
+	for i, stmt := range baseline {
+		if stmt == nil {
+			f.Fatalf("baseline statement %d failed to compile", i)
+		}
+	}
+	if baseline[len(baseline)-2].Then == nil {
 		f.Fatal("the custom mutation compiled without a Then statement")
 	}
 
@@ -158,6 +195,9 @@ func FuzzFilter(f *testing.F) {
 
 	f.Fuzz(func(t *testing.T, email, tag string, n int) {
 		for i, stmt := range compileWith(t, email, tag, n) {
+			if stmt == nil {
+				continue
+			}
 			if stmt.SQL != baseline[i].SQL {
 				t.Fatalf("SQL text varied with input values:\n--- baseline ---\n%s\n--- got ---\n%s", baseline[i].SQL, stmt.SQL)
 			}

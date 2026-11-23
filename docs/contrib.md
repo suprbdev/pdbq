@@ -1,4 +1,4 @@
-# Full-text search, trigrams, unaccent, hstore, ltree, ranges, network types and vectors
+# Full-text search, trigrams, unaccent, fuzzystrmatch, hstore, ltree, intarray, ranges, network types and vectors
 
 pdbq maps PostgreSQL's non-scalar built-in types and the common contrib
 extensions onto GraphQL types, reads and writes them in the same single
@@ -25,6 +25,8 @@ connection-filter operator names) wherever PostGraphile has one.
 | `inet` / `cidr` | `InternetAddress` / `CidrAddress` | same | `InternetAddressFilterOps` / `CidrAddressFilterOps` |
 | `text`, `varchar`, `char(n)`, `citext` with `pg_trgm` installed | `String` | `String` | `StringTrgmFilterOps` (see [Trigram](#trigram-similarity-pg_trgm)) |
 | the same with `unaccent` installed | `String` | `String` | `StringUnaccentFilterOps` / `StringTrgmUnaccentFilterOps` (see [Unaccent](#unaccent)) |
+| the same with `fuzzystrmatch` installed | `String` | `String` | `String[Trgm][Unaccent]FuzzyFilterOps` (see [fuzzystrmatch](#fuzzystrmatch)) |
+| `int4[]` with `intarray` installed | `[Int!]` | `[Int!]` | `IntListFilterOps`, `IntListIntarrayFilterOps` with `matchesQueryInt` (see [intarray](#intarray)) |
 | `vector`, `halfvec` (pgvector) | `[Float!]` | `[Float!]` | `VectorFilterOps` (`isNull` only), `VectorDistanceFilterOps` with distance thresholds (see [pgvector](#pgvector)) |
 | `sparsevec` (pgvector) | `String` (`"{1:1.5,3:2}/5"`) | `String` | `VectorFilterOps`, `SparseVectorDistanceFilterOps` with distance thresholds |
 | `bit`, `varbit` with pgvector installed | `String` (`"101"`) | `String` | `StringFilterOps`, `BitDistanceFilterOps` with Hamming/Jaccard thresholds (see [Bit vectors](#bit-vectors)) |
@@ -96,7 +98,9 @@ the vocabulary:
 | `FullTextFilterOps` | `matches` (`to_tsquery`: `& \| ! <->`, `:*` prefixes), `matchesPlain` (`plainto_tsquery`), `matchesPhrase` (`phraseto_tsquery`), `matchesWebsearch` (`websearch_to_tsquery`: `"quoted phrase"`, `or`, `-negation`; never raises), and `config` |
 | `StringTrgmFilterOps` | every `StringFilterOps` operator, `similarTo` (`%`), `wordSimilarTo` (`<%`), `strictWordSimilarTo` (`<<%`) |
 | `StringUnaccentFilterOps`, `StringTrgmUnaccentFilterOps` | every `StringFilterOps` / `StringTrgmFilterOps` operator, `unaccentEqualTo`, `unaccentLike`, `unaccentIncludes`, `unaccentStartsWith` (see [Unaccent](#unaccent)) |
-| `KeyValueHashFilterOps` | `containsKey` (`?`), `containsAllKeys` (`?&`), `containsAnyKeys` (`?\|`), `contains` (`@>`), `containedBy` (`<@`) |
+| `StringFuzzyFilterOps`, `StringTrgmFuzzyFilterOps`, `StringUnaccentFuzzyFilterOps`, `StringTrgmUnaccentFuzzyFilterOps` | the operators of the input without `Fuzzy`, `levenshteinDistanceLessThan`, `soundexEqualTo`, `metaphoneEqualTo`, `doubleMetaphoneEqualTo` (see [fuzzystrmatch](#fuzzystrmatch)) |
+| `IntListIntarrayFilterOps` | every `IntListFilterOps` operator, `matchesQueryInt` (`@@ query_int`, see [intarray](#intarray)) |
+| `KeyValueHashFilterOps` | `containsKey` (`?`), `containsAllKeys` (`?&`), `containsAnyKeys` (`?\|`), `contains` (`@>`), `containedBy` (`<@`), `containsDefinedKey` (`defined(col, key)`: present with a non-null value) |
 | `LtreeFilterOps` | `ancestorOf` (`@>`), `descendantOf` (`<@`), `ancestorOfAny`, `descendantOfAny`, `matchesLquery` (`~`), `matchesAnyLquery` (`?`), `matchesLtxtquery` (`@`) |
 | `LtreeListFilterOps` | the same, holding when some element matches (no `*Any` forms) |
 | `<X>RangeFilterOps`, `<X>MultirangeFilterOps` | `overlaps` (`&&`), `contains` (`@>`), `containsElement` (`@>` element), `containedBy` (`<@`), `strictlyLeftOf` (`<<`), `strictlyRightOf` (`>>`), `notExtendsRightOf` (`&<`), `notExtendsLeftOf` (`&>`), `adjacentTo` (`-\|-`); range operands for multiranges too |
@@ -136,10 +140,16 @@ Columns follow the usual [indexed-only policy](filtering.md#the-indexed-only-pol
 On top of that, with `indexed_only` on (the default):
 
 - operators no index can serve are left out of the shared inputs:
-  `KeyValueHashFilterOps.containedBy`, `LtreeFilterOps.ancestorOfAny` /
-  `descendantOfAny`, `LtreeListFilterOps.ancestorOf`;
-- the unaccent operators, which no index can serve, are offered only on
-  columns listed in `filters.allow_columns`;
+  `KeyValueHashFilterOps.containedBy` / `containsDefinedKey`,
+  `LtreeFilterOps.ancestorOfAny` / `descendantOfAny`,
+  `LtreeListFilterOps.ancestorOf`;
+- the unaccent and fuzzystrmatch operators, which no index can serve, are
+  offered only on columns listed in `filters.allow_columns`, and so are the
+  ltree, hstore and intarray value filters and orderings (`<field>Nlevel`,
+  `<field>Value`, `<field>Icount`) and Levenshtein distance ordering;
+- an `int4[]` column takes `IntListIntarrayFilterOps` only when an index
+  led by it is a GIN or GiST index (build it with `gin__int_ops` /
+  `gist__int_ops`);
 - a text column takes `StringTrgmFilterOps` only when an index led by it is a
   GIN or GiST index (build it with `gin_trgm_ops` / `gist_trgm_ops`), so the
   common btree-indexed text column keeps `StringFilterOps`;
@@ -152,8 +162,9 @@ On top of that, with `indexed_only` on (the default):
   only on columns listed in `filters.allow_columns`.
 
 Columns listed in `filters.allow_columns` get everything on their own inputs
-(trigram, unaccent, vector and bit surface; the hstore and ltree operators above
-live on shared inputs and stay out). Operator classes are not introspected:
+(trigram, unaccent, fuzzystrmatch, intarray, vector and bit surface, and the
+value filters and orderings; the hstore and ltree operators above live on
+shared inputs and stay out). Operator classes are not introspected:
 a GIN index on a text column is taken to be a trigram index, and an HNSW
 index on a vector column is taken to serve every metric, although pgvector
 uses one only for the distance of its operator class.
@@ -323,7 +334,8 @@ them, so filter them out (`{embedding: {isNull: false}}`) when that
 difference matters. Under `filters.indexed_only` each metric is offered only
 when an index led by the column has a method that serves it (see
 [above](#filtersindexed_only)). The `dims` and `norm` accessors of pdbcore's
-vocabulary are not exposed, like the other contrib accessors.
+vocabulary are not exposed, like the inet and range accessors (the ltree,
+hstore and intarray values are, see [below](#ltree-paths)).
 
 ### Distance fields
 
@@ -425,6 +437,120 @@ CREATE FUNCTION search_items(q vector(1536), n int DEFAULT 10) RETURNS SETOF ite
 $$;
 ```
 
+## fuzzystrmatch
+
+With the `fuzzystrmatch` extension installed, text columns (`text`,
+`varchar`, `char(n)`, `citext`) can take edit-distance and phonetic
+comparisons:
+
+| Operator | SQL |
+|---|---|
+| `levenshteinDistanceLessThan: {text, distance}` | `levenshtein_less_equal(col, $1, $2) < $2`: fewer than `distance` single-character edits away from `text` |
+| `soundexEqualTo` | `soundex(col) = soundex($1)` |
+| `metaphoneEqualTo` | `metaphone(col, 255) = metaphone($1, 255)` |
+| `doubleMetaphoneEqualTo` | `dmetaphone(col) = dmetaphone($1)` (primary code) |
+
+```graphql
+{
+  allPeople(
+    filter: {lastName: {levenshteinDistanceLessThan: {text: "Jonson", distance: 3}}}
+    similarTo: {lastName: "Jonson"}
+    orderBy: [LAST_NAME_LEVENSHTEIN_DISTANCE_ASC]
+  ) { nodes { lastName lastNameLevenshteinDistance } }
+}
+```
+
+`<COLUMN>_LEVENSHTEIN_DISTANCE_ASC/_DESC` orders by `levenshtein(col,
+similarTo)` (`_ASC` is nearest first) and `<field>LevenshteinDistance: Int`
+selects it, both against the list's `similarTo:` text for the column, like
+the trigram similarities; ordering without one is an error and the field is
+`null` without it. fuzzystrmatch rejects arguments longer than 255
+characters (`metaphone`: 255 bytes): a longer reference text is a client
+error, and a longer column value has no distance (`null`, sorted last) and
+matches neither an operator nor its negation under `not`. Levenshtein
+comparisons are case-sensitive, also on `citext`; the phonetic codes are
+not.
+
+No index serves these operators (an expression index such as
+`(soundex(col))` does not match what pdbq emits), so under
+`filters.indexed_only` they, the ordering and the distance field are offered
+only on columns listed in `filters.allow_columns`; with it off, on every
+text column. The column then takes the `…FuzzyFilterOps` variant of its
+input, named after everything it adds to `StringFilterOps`
+(`StringTrgmUnaccentFuzzyFilterOps` with pg_trgm and unaccent too).
+
+## hstore values
+
+Every readable `hstore` column gets `<field>Value(key: String!): String`, the
+value of one key (`col -> $1`), `null` when the key is absent or its value is
+`null`. Under the policy below it is also a filter and an ordering:
+
+```graphql
+{
+  allProducts(
+    filter: {attrsValue: {key: "color", in: ["red", "blue"]}}
+    hstoreKey: {attrs: "size"}
+    orderBy: [ATTRS_VALUE_ASC]
+  ) { nodes { id color: attrsValue(key: "color") size: attrsValue(key: "size") } }
+}
+```
+
+`<field>Value: KeyValueHashValueFilter` takes the `key` plus the
+`StringFilterOps` comparisons of its value (`isNull: true` matches rows
+without the key); several keys combine with `and`. `<COLUMN>_VALUE_ASC/_DESC`
+sorts by the value of the key named for the column in the list's
+`hstoreKey: <Type>HstoreKeyInput` argument (`null` values last), and is an
+error without it. Keyset cursors work with it. `containsDefinedKey: "k"`
+(`defined(col, k)`) on `KeyValueHashFilterOps` matches a key present with a
+non-null value.
+
+## ltree paths
+
+`ltree` columns get `<field>Nlevel: Int` (number of labels), `<field>Parent:
+String` (the path without its last label: `""` for a single label, `null`
+for the empty path), `<field>Lca(path: String!): String` (the longest common
+ancestor with the given path) and `<field>Subpath(offset: Int!, length: Int):
+String` (the labels from `offset`, counted from the end when negative,
+`length` of them or the rest of the path; `null` when `offset` lies outside
+the row's path instead of ltree's error; a negative `length` is a client
+error). `ltree[]` columns get `<field>Lca: String`, the longest common
+ancestor of the non-null elements. `<field>Nlevel` is also a filter
+(`<field>Nlevel: IntFilterOps`) and an ordering (`<COLUMN>_NLEVEL_ASC/_DESC`):
+
+```graphql
+{
+  allCategories(filter: {pathNlevel: {lessThanOrEqualTo: 2}}, orderBy: [PATH_NLEVEL_ASC]) {
+    nodes { path pathParent pathSubpath(offset: -1) }
+  }
+}
+```
+
+## intarray
+
+With the `intarray` extension installed, `int4[]` columns can take
+`matchesQueryInt`, intarray's boolean query match (`col @@ '1&(2|3)'::query_int`;
+`&`, `|`, `!` and parentheses), on `IntListIntarrayFilterOps`. A GIN index
+built with `gin__int_ops` (or GiST with `gist__int_ops` / `gist__intbig_ops`)
+serves it, so under `filters.indexed_only` the column needs a GIN or GiST
+index led by it (or an allowlist entry). A malformed query is a client
+error; so is a row whose array contains a `NULL` element, which intarray's
+operators reject. `<field>Icount: Int` selects the number of elements and,
+like `<field>Nlevel`, is also a filter and an ordering
+(`<COLUMN>_ICOUNT_ASC/_DESC`). Containment and overlap stay the core array
+operators (`contains`, `containedBy`, `overlaps`).
+
+### Policy and smart comments
+
+The value fields (`<field>Nlevel`, `<field>Parent`, `<field>Lca`,
+`<field>Subpath`, `<field>Value`, `<field>Icount`) are projections of the
+row: they exist whenever the plugin is enabled and the column is readable,
+their arguments are bind parameters, and the cost estimator prices each like
+a column. No index serves the value filters and orderings, so under
+`filters.indexed_only` they are offered only on columns listed in
+`filters.allow_columns` (on every column with it off). `@omit read` removes
+the fields, filters and orderings, `@omit filter` the filters and `@omit
+order` the orderings.
+
 ## Mutations
 
 Inputs go through each type's constructor or cast: `hstore($1::text[])` from
@@ -439,19 +565,24 @@ hstore, `["1","3")` for ranges).
 ## Settings
 
 The `contrib` plugin (priority 170) adds the vocabulary operators, the rank
-fields and the rank, similarity and vector distance ordering; the type
+fields, the ltree, hstore and intarray value fields, filters and orderings
+and the rank, similarity, Levenshtein and vector distance ordering; the type
 mapping, reads, writes and generic comparisons are core. `plugins.disabled: [contrib]` removes the
 plugin's surface.
 
 | Key | Default | Effect |
 |---|---|---|
-| `plugins.settings.contrib.filters` | `true` | vocabulary operators, `StringTrgmFilterOps`, the unaccent inputs, the distance-threshold inputs, `<field>Rank` fields (and so rank ordering) |
-| `plugins.settings.contrib.ordering` | `true` | `_RANK_`, `_SIMILARITY_` and vector `_DISTANCE_`/`_INNER_PRODUCT_` orderBy values, the similarity and distance fields and the `similarTo:` and `nearVector:` arguments |
+| `plugins.settings.contrib.filters` | `true` | vocabulary operators, `StringTrgmFilterOps`, the unaccent, fuzzystrmatch and intarray inputs, the distance-threshold inputs, the value filters (`<field>Nlevel`, `<field>Value`, `<field>Icount`), `<field>Rank` fields (and so rank ordering) |
+| `plugins.settings.contrib.ordering` | `true` | `_RANK_`, `_SIMILARITY_`, `_LEVENSHTEIN_DISTANCE_`, `_NLEVEL_`, `_ICOUNT_`, `_VALUE_` and vector `_DISTANCE_`/`_INNER_PRODUCT_` orderBy values, the similarity and distance fields and the `similarTo:`, `nearVector:` and `hstoreKey:` arguments |
 
 `@omit filter` / `@omit order` on a column removes its filter / ordering
-surface (the similarity and distance fields stay); `@omit read` also
-removes its rank, similarity and distance fields and its rank, similarity
-and vector distance orderings, which measure the value against a reference
-of the client's choosing. Schema contracts hide columns the same way. If a table's `<Type>NearVectorInput` name is already
-taken, its vector ordering is skipped and the builder logs a warning; the
-same goes for the unaccent inputs.
+surface (the similarity, distance and value fields stay); `@omit read` also
+removes its rank, similarity, distance and value fields and its rank,
+similarity and distance orderings, which measure the value against a
+reference of the client's choosing. Schema contracts hide columns the same
+way. If a table's `<Type>NearVectorInput` name is already taken, its vector
+ordering is skipped and the builder logs a warning; the same goes for
+`<Type>HstoreKeyInput` (hstore value ordering), the text operator inputs,
+`TextDistanceInput`, `KeyValueHashValueFilter` and
+`IntListIntarrayFilterOps`, and for a value field or filter field whose
+name a column already takes.

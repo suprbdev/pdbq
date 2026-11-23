@@ -121,6 +121,16 @@ func (s *stmt) filterCond(t *introspect.Table, filterType string, v any, alias s
 					}
 					continue
 				}
+				if cv := s.c.Built.FilterContrib[filterType][key]; cv != nil {
+					cond, err := s.contribFilterCond(t, cv, val, alias)
+					if err != nil {
+						return "", err
+					}
+					if cond != "" {
+						conds = append(conds, cond)
+					}
+					continue
+				}
 				if fn := s.c.Built.FilterComputed[filterType][key]; fn != nil {
 					cond, err := s.computedCond(t, fn, val, alias)
 					if err != nil {

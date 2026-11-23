@@ -173,6 +173,9 @@ type Built struct {
 	// FilterComputed maps filter input type name -> field name -> the
 	// computed-column function backing it (advanced-filters plugin).
 	FilterComputed map[string]map[string]*introspect.Function
+	// FilterContrib maps filter input type name -> field name -> the
+	// contrib value of a column the field compares (contrib plugin).
+	FilterContrib map[string]map[string]*ContribValue
 	// InputAggregates maps input type name -> field name -> the aggregate a
 	// having or relation-aggregate filter field compares (aggregates plugin).
 	InputAggregates map[string]map[string]*Aggregate
@@ -212,6 +215,10 @@ type OrderSpec struct {
 	// distance of Column from the field's nearVector: reference vector
 	// (contrib plugin); nearest first is ascending.
 	Vector string
+	// Contrib orders by a contrib value of Column (contrib plugin): an
+	// accessor, or a derived expression measured against the field's
+	// Contrib.Arg reference for Column.
+	Contrib *ContribValue
 }
 
 // New creates a Builder with all default types generated from the catalog.
@@ -1965,6 +1972,7 @@ func (b *Builder) Build() (*Built, error) {
 		InputColumns:        map[string]map[string]string{},
 		FilterRelations:     map[string]map[string]*FilterRelation{},
 		FilterComputed:      map[string]map[string]*introspect.Function{},
+		FilterContrib:       map[string]map[string]*ContribValue{},
 		InputAggregates:     map[string]map[string]*Aggregate{},
 		GroupBy:             map[string]map[string]*GroupBy{},
 		ContribTypes:        b.contribTypes,
@@ -1996,6 +2004,7 @@ func (b *Builder) Build() (*Built, error) {
 				ordered[v.Name] = OrderSpec{
 					Column: v.Column, Desc: v.Desc, Computed: v.Computed, Relation: v.Relation,
 					Distance: v.Distance, Rank: v.Rank, Similarity: v.Similarity, Vector: v.Vector,
+					Contrib: v.Contrib,
 				}
 			}
 			if v.PGValue != "" {
@@ -2029,6 +2038,12 @@ func (b *Builder) Build() (*Built, error) {
 					built.FilterComputed[name] = map[string]*introspect.Function{}
 				}
 				built.FilterComputed[name][f.Name] = f.Computed
+			}
+			if f.Contrib != nil {
+				if built.FilterContrib[name] == nil {
+					built.FilterContrib[name] = map[string]*ContribValue{}
+				}
+				built.FilterContrib[name][f.Name] = f.Contrib
 			}
 			if f.Aggregate != nil {
 				if built.InputAggregates[name] == nil {

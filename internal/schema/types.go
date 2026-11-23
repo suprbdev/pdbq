@@ -57,6 +57,17 @@ const (
 	// (contrib plugin). Null without the reference, and for rows not read
 	// through such a list.
 	KindScore FieldKind = "score"
+	// KindContribAccessor is an operand-free contrib accessor of
+	// Meta.Column (contrib plugin): <field>Nlevel and <field>Parent of an
+	// ltree column, <field>Lca of an ltree[] column, <field>Icount of an
+	// int4[] column with intarray. Meta.Contrib names it.
+	KindContribAccessor FieldKind = "contrib_accessor"
+	// KindContribDerived is a contrib value of Meta.Column computed from
+	// the field's own arguments (contrib plugin): <field>Value(key:) of an
+	// hstore column, <field>Lca(path:) and <field>Subpath(offset:, length:)
+	// of an ltree column. Meta.Contrib names the expression; the arguments
+	// are bind parameters.
+	KindContribDerived FieldKind = "contrib_derived"
 	// KindAggregates is the aggregates field of a connection (aggregates
 	// plugin): an object of aggregate groups computed over the connection's
 	// filtered row set, ignoring pagination.
@@ -138,12 +149,37 @@ type FieldMeta struct {
 	// Score binds a KindScore field to its reference argument and
 	// expression.
 	Score *Score
+	// Contrib binds a KindContribAccessor or KindContribDerived field to
+	// the contrib value it reads.
+	Contrib *ContribValue
 	// ScanCost is a flat surcharge the executor's cost estimate adds for a
 	// field that reads a whole filtered row set rather than a page (the
 	// aggregates plugin's aggregates and groupedAggregates fields). A
 	// list-typed field with a ScanCost also multiplies its selection by the
 	// list fan-out assumption, even inside a connection.
 	ScanCost int
+}
+
+// ContribValue names a contrib value of a column: an operand-free accessor
+// (ltree nlevel, intarray icount) or a derived expression taking an operand
+// (hstore value, ltree lca and subpath) of one of the column's pdbcore
+// vocabularies. It binds output fields, table-filter fields and orderBy
+// values (contrib plugin).
+type ContribValue struct {
+	// Column is the column the value derives from.
+	Column string
+	// Vocab is the pdbcore vocabulary name (contrib.VocabLtree, ...).
+	Vocab string
+	// Name is the accessor or, with Expr, the expression name.
+	Name string
+	// Expr marks Name as an expression ([contrib.Expr.Derived]) rather
+	// than an accessor.
+	Expr bool
+	// Arg is the argument holding an Expr's text operand: the field's own
+	// argument on a KindContribDerived field ("key", "path"; empty for
+	// subpath, which takes offset and length), the list field argument
+	// holding it per column on an orderBy value ("hstoreKey").
+	Arg string
 }
 
 // Score binds a [KindScore] field.
@@ -320,6 +356,10 @@ type InputField struct {
 	// filter input (aggregates plugin): its operators compare the bound
 	// aggregate's result.
 	Aggregate *Aggregate
+	// Contrib marks a table-filter field comparing a contrib value of a
+	// column (contrib plugin): <field>Nlevel, <field>Icount, <field>Value.
+	// Column stays empty for these.
+	Contrib *ContribValue
 }
 
 // OrderRelation binds a relational orderBy enum value to the catalog
@@ -437,6 +477,11 @@ type EnumValue struct {
 	// expression ("l2Distance", "cosineDistance", ...) of Column from the
 	// field's nearVector: reference (contrib plugin).
 	Vector string
+	// Contrib marks orderBy enum values sorting by a contrib value of
+	// Column (contrib plugin): an accessor (nlevel, icount) or a derived
+	// expression whose operand the list field's Contrib.Arg argument
+	// holds per column (hstore value against hstoreKey:).
+	Contrib *ContribValue
 	// PGValue backs catalog enum values.
 	PGValue string
 	// GroupBy backs groupBy enum values of groupedAggregates (aggregates

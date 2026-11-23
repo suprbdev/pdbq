@@ -1,6 +1,6 @@
 // Package contribtype maps pdbcore's contrib vocabularies (full-text search,
-// pg_trgm, unaccent, hstore, ltree, citext, ranges and multiranges,
-// inet/cidr, pgvector) onto
+// pg_trgm, unaccent, fuzzystrmatch, hstore, ltree, citext, intarray, ranges
+// and multiranges, inet/cidr, pgvector) onto
 // GraphQL: which type a column of such a type surfaces as, which operator
 // input filters it, and the PostGraphile-compatible names of operators and
 // range types.
@@ -30,6 +30,10 @@
 //	interval                -> Interval { seconds minutes hours days months years },
 //	                           input IntervalInput, IntervalFilterOps
 //	interval[]              -> [Interval!], input [IntervalInput!], IntervalListFilterOps
+//
+// Text columns keep String but take StringFilterOps variants adding pg_trgm,
+// unaccent and fuzzystrmatch operators ([StringOps]); int4[] columns with
+// intarray keep [Int!] and may take [IntListIntarrayOps].
 //
 // Range types are named after their element's scalar: Int (int4), BigInt
 // (int8), BigFloat (numeric), Date (date) and Datetime (timestamp and
@@ -115,6 +119,37 @@ const (
 	StringUnaccentOps     = "StringUnaccentFilterOps"
 	StringTrgmUnaccentOps = "StringTrgmUnaccentFilterOps"
 )
+
+// StringOps names the operator input of a text column from the vocabularies
+// it takes on top of StringFilterOps: "String" + "Trgm" (pg_trgm) +
+// "Unaccent" + "Fuzzy" (fuzzystrmatch) + "FilterOps", e.g.
+// StringTrgmFuzzyFilterOps.
+func StringOps(trgm, unaccent, fuzzy bool) string {
+	name := "String"
+	if trgm {
+		name += "Trgm"
+	}
+	if unaccent {
+		name += "Unaccent"
+	}
+	if fuzzy {
+		name += "Fuzzy"
+	}
+	return name + "FilterOps"
+}
+
+// TextDistanceInput is the operand of levenshteinDistanceLessThan: a
+// reference text and an exclusive edit-distance bound.
+const TextDistanceInput = "TextDistanceInput"
+
+// IntListIntarrayOps is IntListFilterOps plus intarray's matchesQueryInt,
+// the operator input of int4[] columns the filter policy admits it on.
+const IntListIntarrayOps = "IntListIntarrayFilterOps"
+
+// KeyValueHashValueFilter is the operand of a <field>Value table-filter
+// field: the key of an hstore column and the String comparisons its value
+// must pass.
+const KeyValueHashValueFilter = "KeyValueHashValueFilter"
 
 // VectorOps is the operator input of pgvector columns: isNull only, since
 // vectors have no meaningful scalar comparison.
@@ -367,6 +402,17 @@ func (c Column) Trgm() (contrib.Vocabulary, bool) { return c.vocab(contrib.Vocab
 // Unaccent returns the unaccent vocabulary applying to the column, if any.
 func (c Column) Unaccent() (contrib.Vocabulary, bool) { return c.vocab(contrib.VocabUnaccent) }
 
+// Fuzzy returns the fuzzystrmatch vocabulary applying to the column, if any.
+func (c Column) Fuzzy() (contrib.Vocabulary, bool) { return c.vocab(contrib.VocabFuzzy) }
+
+// Intarray returns the intarray vocabulary applying to the column (an
+// int4[] column with intarray installed), if any.
+func (c Column) Intarray() (contrib.Vocabulary, bool) { return c.vocab(contrib.VocabIntarray) }
+
+// Vocab returns the vocabulary of the given name applying to the column, if
+// any.
+func (c Column) Vocab(name string) (contrib.Vocabulary, bool) { return c.vocab(name) }
+
 // Distances returns the vocabulary holding the column's pgvector distances:
 // its own for vector, halfvec and sparsevec columns, pgvector's bit
 // vocabulary for bit and varbit columns.
@@ -410,13 +456,13 @@ func (c Column) FilterOps() []contrib.Op {
 }
 
 // Op finds a filter operator by its GraphQL name among the column's owning,
-// pg_trgm and unaccent vocabularies.
+// pg_trgm, unaccent, pgvector bit, fuzzystrmatch and intarray vocabularies.
 func (c Column) Op(name string) (contrib.Op, bool) {
 	var vs []contrib.Vocabulary
 	if c.Owned() {
 		vs = append(vs, c.Own)
 	}
-	for _, n := range []string{contrib.VocabTrgm, contrib.VocabUnaccent, contrib.VocabBit} {
+	for _, n := range []string{contrib.VocabTrgm, contrib.VocabUnaccent, contrib.VocabBit, contrib.VocabFuzzy, contrib.VocabIntarray} {
 		if v, ok := c.vocab(n); ok {
 			vs = append(vs, v)
 		}
@@ -435,9 +481,10 @@ func (c Column) Op(name string) (contrib.Op, bool) {
 // names where those differ.
 var opRenames = map[string]map[string]string{
 	contrib.VocabHstore: {
-		"hasKey":     "containsKey",
-		"hasAllKeys": "containsAllKeys",
-		"hasAnyKeys": "containsAnyKeys",
+		"hasKey":        "containsKey",
+		"hasAllKeys":    "containsAllKeys",
+		"hasAnyKeys":    "containsAnyKeys",
+		"hasDefinedKey": "containsDefinedKey",
 	},
 	contrib.VocabInet: {
 		"containsOrEquals":    "containsOrEqualTo",

@@ -52,7 +52,7 @@ func enumValues(b *schema.Builder, enum, prefix string) []string {
 func TestUnaccentSurface(t *testing.T) {
 	ops := []string{"unaccentEqualTo", "unaccentLike", "unaccentIncludes", "unaccentStartsWith"}
 
-	b := buildWith(t, contribfixture.Catalog(), nil, true, true)
+	b := buildWith(t, withoutExtension(contribfixture.Catalog(), "fuzzystrmatch"), nil, true, true)
 	for _, field := range []string{"title", "label"} {
 		if got := fieldType(t, b, "DocumentFilter", field); got != "StringTrgmFilterOps" {
 			t.Errorf("indexed_only: DocumentFilter.%s = %s, want StringTrgmFilterOps", field, got)
@@ -62,7 +62,7 @@ func TestUnaccentSurface(t *testing.T) {
 		t.Error("indexed_only declared an unaccent input without an allowlisted column")
 	}
 
-	b, _ = buildAllowing(t, contribfixture.Catalog(), map[string][]string{"public.documents": {"notes"}})
+	b, _ = buildAllowing(t, withoutExtension(contribfixture.Catalog(), "fuzzystrmatch"), map[string][]string{"public.documents": {"notes"}})
 	if got := fieldType(t, b, "DocumentFilter", "notes"); got != "StringTrgmUnaccentFilterOps" {
 		t.Errorf("allowlisted notes = %s", got)
 	}
@@ -75,7 +75,7 @@ func TestUnaccentSurface(t *testing.T) {
 		}
 	}
 
-	noTrgm := buildWith(t, withoutExtension(contribfixture.Catalog(), "pg_trgm"), nil, false, true)
+	noTrgm := buildWith(t, withoutExtension(withoutExtension(contribfixture.Catalog(), "fuzzystrmatch"), "pg_trgm"), nil, false, true)
 	if got := fieldType(t, noTrgm, "DocumentFilter", "notes"); got != "StringUnaccentFilterOps" {
 		t.Errorf("notes without pg_trgm = %s, want StringUnaccentFilterOps", got)
 	}
@@ -88,19 +88,19 @@ func TestUnaccentSurface(t *testing.T) {
 		t.Error("StringUnaccentFilterOps carries pg_trgm operators")
 	}
 
-	noUnaccent := buildWith(t, withoutExtension(contribfixture.Catalog(), "unaccent"), nil, false, true)
+	noUnaccent := buildWith(t, withoutExtension(withoutExtension(contribfixture.Catalog(), "fuzzystrmatch"), "unaccent"), nil, false, true)
 	if strings.Contains(noUnaccent.SDL(), "unaccent") {
 		t.Error("unaccent surface without the extension")
 	}
 
-	off := buildWith(t, contribfixture.Catalog(), map[string]any{"filters": false}, false, true)
+	off := buildWith(t, withoutExtension(contribfixture.Catalog(), "fuzzystrmatch"), map[string]any{"filters": false}, false, true)
 	if strings.Contains(off.SDL(), "Unaccent") {
 		t.Error("filters: false kept the unaccent operators")
 	}
 }
 
 func TestUnaccentInputNameTaken(t *testing.T) {
-	b := schema.New(contribfixture.Catalog(), inflect.Next(inflect.Default), schema.Options{
+	b := schema.New(withoutExtension(contribfixture.Catalog(), "fuzzystrmatch"), inflect.Next(inflect.Default), schema.Options{
 		Logger: slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil)),
 	})
 	b.Inputs["StringTrgmUnaccentFilterOps"] = &schema.Input{Name: "StringTrgmUnaccentFilterOps"}

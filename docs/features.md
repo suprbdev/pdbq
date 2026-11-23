@@ -44,8 +44,10 @@ Checklist of PostgreSQL and GraphQL features pdbq supports. Checked = implemente
 - [x] `macaddr`, custom range types → `String` fallback
 - [x] `interval` → `Interval { seconds minutes hours days months years }` with an `IntervalInput` (PostGraphile shape), in columns, arrays, composites, function arguments and results, filters and aggregates — see [Intervals](interval.md)
 - [x] Range and multirange types with structured bounds: `IntRange { start { value inclusive } end { … } }` (PostGraphile shape; `BigIntRange`, `BigFloatRange`, `DateRange`, `DatetimeRange`), multiranges as lists — see [Contrib types](contrib.md)
-- [x] `hstore` → `KeyValueHash` JSON object, with `containsKey containsAllKeys containsAnyKeys contains containedBy`
-- [x] `ltree` / `ltree[]` with `ancestorOf descendantOf matchesLquery matchesAnyLquery matchesLtxtquery` (+ `*Any` forms)
+- [x] `hstore` → `KeyValueHash` JSON object, with `containsKey containsAllKeys containsAnyKeys contains containedBy containsDefinedKey`; key lookup `<field>Value(key:)`, `<field>Value: {key, …StringFilterOps}` filters and `<COLUMN>_VALUE_*` ordering via `hstoreKey:` — see [Contrib types](contrib.md#hstore-values)
+- [x] `ltree` / `ltree[]` with `ancestorOf descendantOf matchesLquery matchesAnyLquery matchesLtxtquery` (+ `*Any` forms); `<field>Nlevel` (also filter and `<COLUMN>_NLEVEL_*` ordering), `<field>Parent`, `<field>Lca(path:)`, `<field>Subpath(offset:, length:)`, and `<field>Lca` on `ltree[]` — see [Contrib types](contrib.md#ltree-paths)
+- [x] `fuzzystrmatch`: `levenshteinDistanceLessThan soundexEqualTo metaphoneEqualTo doubleMetaphoneEqualTo` on text columns (unindexable, so only on `filters.allow_columns` columns under `indexed_only`), `<COLUMN>_LEVENSHTEIN_DISTANCE_*` ordering and `<field>LevenshteinDistance` against `similarTo:` — see [Contrib types](contrib.md#fuzzystrmatch)
+- [x] `intarray`: `matchesQueryInt` (`query_int`) on `int4[]` columns (`IntListIntarrayFilterOps`, GIN/GiST-indexed or allowlisted), `<field>Icount` (also filter and ordering) — see [Contrib types](contrib.md#intarray)
 - [x] `inet`/`cidr` → `InternetAddress`/`CidrAddress` with containment operators
 - [x] Full-text search: `tsvector` → `FullText` with `matches matchesPlain matchesPhrase matchesWebsearch` (+ `config`), `<field>Rank` and `<COLUMN>_RANK_*` ordering
 - [x] `pg_trgm`: `StringTrgmFilterOps` (`similarTo wordSimilarTo strictWordSimilarTo`), index-assisted `<COLUMN>_SIMILARITY_*` ordering via `similarTo:` and selectable `<field>Similarity`/`WordSimilarity`/`StrictWordSimilarity` scores against it
@@ -91,7 +93,7 @@ Checklist of PostgreSQL and GraphQL features pdbq supports. Checked = implemente
 - [x] Filters/ordering on backward relation fields, not just root lists
 - [x] `jsonb` path operators (`@?`/`@@` via `pathExists`/`pathMatch`)
 - [x] Range operators (`overlaps contains containsElement containedBy strictlyLeftOf strictlyRightOf notExtendsRightOf notExtendsLeftOf adjacentTo`), on multiranges too
-- [x] Contrib operator sets respect `filters.indexed_only` per index hint (no unindexable operators; trigram operators/ordering only on GIN/GiST-indexed columns; unaccent operators and vector/bit distance thresholds only on allowlisted columns; each vector distance ordering only on columns led by an HNSW/IVFFlat index serving it)
+- [x] Contrib operator sets respect `filters.indexed_only` per index hint (no unindexable operators; trigram operators/ordering only on GIN/GiST-indexed columns; unaccent and fuzzystrmatch operators, vector/bit distance thresholds and the ltree, hstore and intarray value filters and orderings only on allowlisted columns; each vector distance ordering only on columns led by an HNSW/IVFFlat index serving it)
 - [x] Filtering across relations (`posts: {some: {title: {equalTo: ...}}}`) — built-in `advanced-filters` plugin: forward FK takes the parent's filter, reverse FK a `{some|none|every}` wrapper, compiled to EXISTS subqueries
 - [x] Filtering on relation existence (`postsExist: true`, `authorExists: false`) — Boolean variant per relation, compiled to a bare `(NOT) EXISTS`
 - [x] Filtering/ordering on computed columns — built-in `advanced-filters` plugin (single-row-argument stable functions; not index-backed)
@@ -215,7 +217,7 @@ Checklist of PostgreSQL and GraphQL features pdbq supports. Checked = implemente
 - [x] Collision detection with warnings at schema build
 - [x] Built-in: `simple-names`
 - [x] Built-in: `nested-mutations`
-- [x] Built-in: `contrib` (full-text, pg_trgm, unaccent, hstore, ltree, range and inet operators; rank, similarity and pgvector distance ordering and scores, distance thresholds; `plugins.settings.contrib.{filters,ordering}`)
+- [x] Built-in: `contrib` (full-text, pg_trgm, unaccent, fuzzystrmatch, hstore, ltree, intarray, range and inet operators; rank, similarity, Levenshtein and pgvector distance ordering and scores, distance thresholds; ltree, hstore and intarray value fields, filters and ordering; `plugins.settings.contrib.{filters,ordering}`)
 - [x] Built-in: `advanced-filters` (relation filters + computed-column filtering/ordering; halves toggle via `plugins.settings.advanced-filters.{relations,computed}`)
 - [x] Built-in: `aggregates` (connection, grouped, relational-order and relational-filter aggregates; off unless `plugins.settings.aggregates.enabled` or an `@aggregates` table tag; see [Aggregates](aggregates.md))
 - [ ] Out-of-process plugins (go-plugin gRPC or wasm) — the existing hook interfaces are the contract either way

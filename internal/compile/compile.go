@@ -498,12 +498,15 @@ type orderTerm struct {
 	// plugin).
 	expr     *pgcontrib.Expr
 	exprArgs []string
-	desc     bool
+	// acc set: order by this operand-free contrib accessor of col (ltree
+	// nlevel, intarray icount; contrib plugin).
+	acc  *pgcontrib.Accessor
+	desc bool
 }
 
 // plain reports whether the term sorts by col itself.
 func (t orderTerm) plain() bool {
-	return t.fn == nil && t.rel == nil && t.near == "" && !t.rank && t.expr == nil
+	return t.fn == nil && t.rel == nil && t.near == "" && !t.rank && t.expr == nil && t.acc == nil
 }
 
 // orderTerms maps orderBy enum values to order terms for rows of t read at
@@ -528,6 +531,15 @@ func (s *stmt) orderTerms(t *introspect.Table, f *ast.Field, alias string) []ord
 						col: spec.Column, rank: true, rankKey: alias + "." + quoteIdent(spec.Column),
 						value: name, desc: spec.Desc,
 					})
+					continue
+				}
+				if spec.Contrib != nil {
+					term, err := s.contribOrderTerm(t, f, name, spec)
+					if err != nil {
+						s.fail(err)
+						continue
+					}
+					terms = append(terms, term)
 					continue
 				}
 				if spec.Similarity != "" || spec.Vector != "" {
@@ -621,6 +633,9 @@ func (s *stmt) orderExprSQL(t *introspect.Table, term orderTerm, alias string) s
 	}
 	if term.expr != nil {
 		return term.expr.Render(alias+"."+quoteIdent(term.col), term.exprArgs...)
+	}
+	if term.acc != nil {
+		return term.acc.SQL(alias + "." + quoteIdent(term.col))
 	}
 	if term.rel != nil {
 		return s.relationOrderSQL(term, alias)

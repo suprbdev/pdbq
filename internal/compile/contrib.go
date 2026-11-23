@@ -362,9 +362,10 @@ func (s *stmt) rangeBound(ci contribtype.Column, ref string, f *ast.Field) strin
 }
 
 // exprTerm resolves an orderBy value sorting by a contrib expression of a
-// column against a per-column reference: pg_trgm similarity (spec.Similarity,
-// referenced by similarTo:) or pgvector distance (spec.Vector, referenced by
-// nearVector:). The reference's parameters are allocated here.
+// column against a per-column reference: pg_trgm similarity or Levenshtein
+// distance (spec.Similarity, referenced by similarTo:) or pgvector distance
+// (spec.Vector, referenced by nearVector:). The reference's parameters are
+// allocated here.
 func (s *stmt) exprTerm(t *introspect.Table, f *ast.Field, value string, spec schema.OrderSpec) (orderTerm, error) {
 	col := t.Column(spec.Column)
 	if col == nil {
@@ -390,11 +391,17 @@ func (s *stmt) exprTerm(t *introspect.Table, f *ast.Field, value string, spec sc
 }
 
 // referenceExpr resolves the contrib expression name measured against the
-// list argument arg: a pg_trgm expression for similarTo:, a pgvector
-// (vector or bit) distance for nearVector:.
+// list argument arg: a pg_trgm expression or the fuzzystrmatch Levenshtein
+// distance for similarTo:, a pgvector (vector or bit) distance for
+// nearVector:.
 func (s *stmt) referenceExpr(col *introspect.Column, arg, name string) (pgcontrib.Expr, error) {
 	ci := s.contrib(col)
 	vocab, ok := ci.Trgm()
+	if fz, fok := ci.Fuzzy(); fok {
+		if _, has := fz.Expr(name); has {
+			vocab, ok = fz, true
+		}
+	}
 	if arg == "nearVector" {
 		vocab, ok = ci.Distances()
 	}
