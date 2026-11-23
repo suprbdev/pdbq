@@ -293,7 +293,7 @@ func orderableColumns(b *schema.Builder, t *introspect.Table) []*introspect.Colu
 	}
 	var out []*introspect.Column
 	for _, v := range en.Values {
-		if v.Column == "" || v.Desc || v.Computed != nil || v.Relation != nil || v.Distance || v.Rank || v.Similarity != "" {
+		if v.Column == "" || v.Desc || v.Computed != nil || v.Relation != nil || v.Distance || v.Rank || v.Similarity != "" || v.Vector != "" {
 			continue
 		}
 		if c := t.Column(v.Column); c != nil {

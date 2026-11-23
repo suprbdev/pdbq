@@ -412,6 +412,10 @@ type EnumValue struct {
 	// expression ("distance", "wordDistance", "strictWordDistance") of
 	// Column from the field's similarTo: reference (contrib plugin).
 	Similarity string
+	// Vector marks orderBy enum values sorting by a pgvector distance
+	// expression ("l2Distance", "cosineDistance", ...) of Column from the
+	// field's nearVector: reference (contrib plugin).
+	Vector string
 	// PGValue backs catalog enum values.
 	PGValue string
 	// GroupBy backs groupBy enum values of groupedAggregates (aggregates

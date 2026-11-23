@@ -1,0 +1,11 @@
+# bboxIntersects2D: && against the 2D bounding box of a GeoJSON or WKT
+# geometry (bboxIntersects takes a BBoxInput instead). PostGIS has a
+# geography overload, so the geography column stays native.
+{
+  geometry: allPlaces(filter: {location: {bboxIntersects2D: "SRID=4326;POLYGON((-1 51,1 51,1 52,-1 51))"}}) {
+    nodes { id }
+  }
+  geography: allPlaces(filter: {area: {bboxIntersects2D: {type: "Point", coordinates: [-0.128, 51.508]}}}) {
+    nodes { id }
+  }
+}

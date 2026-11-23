@@ -1,0 +1,17 @@
+# unaccent operators on an allowlisted text column: accent- and
+# case-insensitive, with the two-argument unaccent naming the dictionary in
+# the extension's schema so it resolves off the search_path. includes and
+# startsWith escape the operand's LIKE wildcards; unaccentLike keeps them.
+{
+  allDocuments(filter: {
+    notes: {
+      unaccentEqualTo: "Crème Brûlée"
+      unaccentLike: "caf_ %"
+      unaccentIncludes: "100%_"
+      unaccentStartsWith: "Élan"
+    }
+    or: [{notes: {unaccentIncludes: "naïve", similarTo: "naive"}}, {title: {startsWith: "x"}}]
+  }) {
+    nodes { id notes }
+  }
+}

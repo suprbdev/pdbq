@@ -1,0 +1,9 @@
+# variables: {"after": "WyJFbWJlZGRpbmciLCAzXQ=="}
+# Keyset pages over a vector distance ordering: the anchor row's distance is
+# recomputed with the page's own reference parameter.
+query ($after: Cursor) {
+  allEmbeddings(nearVector: {embedding: [1, 2, 3]}, orderBy: [EMBEDDING_COSINE_DISTANCE_ASC], after: $after, first: 2) {
+    edges { cursor node { id } }
+    pageInfo { hasNextPage }
+  }
+}

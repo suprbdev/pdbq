@@ -23,6 +23,7 @@ test: ## Unit + golden tests (hermetic, no database needed)
 # and `down -v` here would tear down the dev database.
 test-e2e: ## End-to-end suite against a disposable Postgres
 	docker compose -p pdbq-test -f compose.test.yaml up -d --wait
+	docker compose -p pdbq-test -f compose.test.yaml exec -T db sh -c 'apt-get update -qq && apt-get install -y -qq postgresql-$$PG_MAJOR-pgvector' >/dev/null 2>&1 || echo "pgvector unavailable: its tests will skip"
 	PDBQ_TEST_DATABASE_URL="postgres://pdbq:pdbq@localhost:5433/pdbq_test" $(GO) test -race -count=1 ./test/; \
 	status=$$?; docker compose -p pdbq-test -f compose.test.yaml down -v; exit $$status
 

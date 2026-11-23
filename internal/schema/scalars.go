@@ -124,7 +124,7 @@ func contribFilterOps(ci contribtype.Column) []filterOp {
 	}
 	var out []filterOp
 	switch ci.Kind {
-	case contribtype.FullText:
+	case contribtype.FullText, contribtype.Vector:
 		return isNull
 	case contribtype.Hstore:
 		out = append(slices.Clone(eq), isNull...)

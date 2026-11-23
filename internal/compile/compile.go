@@ -488,16 +488,17 @@ type orderTerm struct {
 	rank    bool
 	rankKey string
 	value   string
-	// trgm set: order by this pg_trgm distance expression of col from the
-	// reference text bound to trgmArgs (contrib plugin).
-	trgm     *pgcontrib.Expr
-	trgmArgs []string
+	// expr set: order by this contrib expression of col (pg_trgm or
+	// pgvector distance) from the reference bound to exprArgs (contrib
+	// plugin).
+	expr     *pgcontrib.Expr
+	exprArgs []string
 	desc     bool
 }
 
 // plain reports whether the term sorts by col itself.
 func (t orderTerm) plain() bool {
-	return t.fn == nil && t.rel == nil && t.near == "" && !t.rank && t.trgm == nil
+	return t.fn == nil && t.rel == nil && t.near == "" && !t.rank && t.expr == nil
 }
 
 // orderTerms maps orderBy enum values to order terms for rows of t read at
@@ -524,8 +525,8 @@ func (s *stmt) orderTerms(t *introspect.Table, f *ast.Field, alias string) []ord
 					})
 					continue
 				}
-				if spec.Similarity != "" {
-					term, err := s.similarityTerm(t, f, name, spec)
+				if spec.Similarity != "" || spec.Vector != "" {
+					term, err := s.exprTerm(t, f, name, spec)
 					if err != nil {
 						s.fail(err)
 						continue
@@ -613,8 +614,8 @@ func (s *stmt) orderExprSQL(t *introspect.Table, term orderTerm, alias string) s
 	if term.rank {
 		return s.rankMarker(rankRef{key: term.rankKey, render: alias + "." + quoteIdent(term.col), order: term.value})
 	}
-	if term.trgm != nil {
-		return term.trgm.Render(alias+"."+quoteIdent(term.col), term.trgmArgs...)
+	if term.expr != nil {
+		return term.expr.Render(alias+"."+quoteIdent(term.col), term.exprArgs...)
 	}
 	if term.rel != nil {
 		return s.relationOrderSQL(term, alias)

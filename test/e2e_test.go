@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -819,6 +820,7 @@ func TestAdvancedFilters(t *testing.T) {
 			"orderingEquals: " + poly,
 			"intersects3D: " + poly,
 			"bboxIntersectsND: " + poly,
+			"bboxIntersects2D: " + poly,
 		}
 		for _, col := range []string{"area", "location"} {
 			for _, op := range ops {
@@ -863,6 +865,9 @@ func TestAdvancedFilters(t *testing.T) {
 			{"area: {orderingEquals: " + trafalgarArea + "}", []string{"Trafalgar Square"}},
 			{"area: {bboxLeftOf: " + origin + "}", []string{"Trafalgar Square"}},
 			{"area: {bboxIntersectsND: " + london + "}", []string{"Trafalgar Square"}},
+			{"location: {bboxIntersects2D: " + london + "}", londoners},
+			{"area: {bboxIntersects2D: " + london + "}", []string{"Trafalgar Square"}},
+			{"area: {bboxIntersects2D: " + origin + "}", nil},
 		}
 		for _, tc := range cases {
 			res := post(t, hs.URL, `{allPlaces(filter: {`+tc.filter+`}, orderBy: [ID_ASC]) { nodes { name } }}`, nil)
@@ -915,6 +920,21 @@ func TestAdvancedFilters(t *testing.T) {
 			}
 		}`, nil)
 		requireNoErrors(t, res)
+		res = post(t, hs.URL, `{placeById(id: 1) { areaPerimeter areaCentroid }}`, nil)
+		requireNoErrors(t, res)
+		var place struct {
+			Perimeter float64 `json:"areaPerimeter"`
+			Centroid  struct {
+				Coordinates []float64 `json:"coordinates"`
+			} `json:"areaCentroid"`
+		}
+		mustUnmarshal(t, res.Data["placeById"], &place)
+		if place.Perimeter < 900 || place.Perimeter > 1100 {
+			t.Errorf("geography perimeter = %v, want about 1000 metres", place.Perimeter)
+		}
+		if c := place.Centroid.Coordinates; len(c) != 2 || math.Abs(c[0]+0.128) > 1e-4 || math.Abs(c[1]-51.508) > 1e-4 {
+			t.Errorf("geography centroid = %v", c)
+		}
 	})
 
 	t.Run("postgis WKT input round-trip", func(t *testing.T) {

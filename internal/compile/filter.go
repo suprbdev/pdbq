@@ -398,7 +398,7 @@ func (s *stmt) oneOp(col *introspect.Column, ref, op string, val any) (string, e
 	case "pathMatch":
 		return jsonbExpr(col, ref) + " @@ " + s.param(val) + "::jsonpath", nil
 	}
-	if _, ok := ci.Trgm(); ok {
+	if _, ok := ci.Op(op); ok {
 		return s.vocabOp(ci, ref, op, val)
 	}
 	return "", errUser("unknown filter operator %q", op)

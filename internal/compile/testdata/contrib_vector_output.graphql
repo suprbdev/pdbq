@@ -1,0 +1,6 @@
+# vector and halfvec values read as JSON arrays of numbers; sparsevec keeps
+# its text form. Function arguments and results map the same way.
+{
+  allEmbeddings { nodes { id embedding half sparse } }
+  scaleVector(v: [1, 2, 3], by: 2)
+}

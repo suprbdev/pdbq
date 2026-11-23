@@ -126,11 +126,14 @@ rows, so pair them with a bounding-box operator when the table is large.
 | `orderingEquals` | `GeoJSON` | `ST_OrderingEquals` | ✔ |
 | `intersects3D` | `GeoJSON` | `ST_3DIntersects` | ✔ |
 | `bboxIntersectsND` | `GeoJSON` | `&&&` | n-D GiST |
+| `bboxIntersects2D` | `GeoJSON` | `&&` | ✔ |
 
 The directional and equality bounding-box operators (`bboxLeftOf` through
-`bboxIntersectsND`) compare against the **bounding box of a geometry**, not a
+`bboxIntersects2D`) compare against the **bounding box of a geometry**, not a
 `BBoxInput`, as `postgraphile-plugin-connection-filter-postgis` does; pass an
-envelope polygon to compare against a box. `exactlyEquals` (`=`) is true only
+envelope polygon to compare against a box. `bboxIntersects2D` is the same `&&`
+as `bboxIntersects`, with a GeoJSON or WKT operand instead of corner
+coordinates. `exactlyEquals` (`=`) is true only
 for the same coordinates in the same order with the same SRID, and is served
 by a B-tree rather than a GiST index. `bboxIntersectsND` (`&&&`) includes Z
 and M in the comparison and needs an n-D GiST index
@@ -158,9 +161,9 @@ This is the cheap first pass for "what is on screen":
 
 ### Geography columns
 
-PostGIS provides geography overloads only for `bboxIntersects`, `intersects`,
-`covers`, `coveredBy`, `dwithin`, `beyond` and `exactlyEquals`; these run
-natively (spheroidal, metres). Every other predicate (`within`, `contains`,
+PostGIS provides geography overloads only for `bboxIntersects`,
+`bboxIntersects2D`, `intersects`, `covers`, `coveredBy`, `dwithin`, `beyond`
+and `exactlyEquals`; these run natively (spheroidal, metres). Every other predicate (`within`, `contains`,
 `crosses`, `touches`, `disjoint`, `bboxContains`, `bboxLeftOf`,
 `intersects3D`, ...) casts the column and the operand to `geometry`, so it
 uses planar semantics; a GiST index on the geography column cannot serve
@@ -195,9 +198,9 @@ extra round trip:
 | Field | Returns | PostGIS |
 |---|---|---|
 | `<field>Area` | `Float` | `ST_Area` (m² for geography, SRID units for geometry) |
-| `<field>Length` | `Float` | `ST_Length` |
-| `<field>Perimeter` | `Float` | `ST_Perimeter` |
-| `<field>Centroid` | `GeoJSON` | `ST_Centroid` |
+| `<field>Length` | `Float` | `ST_Length` (metres for geography, SRID units for geometry) |
+| `<field>Perimeter` | `Float` | `ST_Perimeter` (metres for geography, SRID units for geometry) |
+| `<field>Centroid` | `GeoJSON` | `ST_Centroid` (spheroidal for geography) |
 | `<field>Envelope` | `GeoJSON` | `ST_Envelope` |
 | `<field>Srid` | `Int` | `ST_SRID` |
 | `<field>GeometryType` | `String` | `ST_GeometryType` (e.g. `ST_Point`) |
@@ -221,6 +224,12 @@ extra round trip:
   }
 }
 ```
+
+On geography columns `Area`, `Length` and `Perimeter` use the native
+geography overloads and measure in metres on the spheroid, and `Centroid` is
+the spheroidal centroid; a geography `GeometryCollection`, which the
+geography overload rejects, falls back to the planar centroid of its
+`geometry` cast.
 
 A real column that already owns one of these names keeps it; the accessor is
 skipped rather than shadowing your data.

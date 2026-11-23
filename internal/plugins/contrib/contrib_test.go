@@ -186,8 +186,8 @@ func TestFilterSurface(t *testing.T) {
 		if field == "email" {
 			input = "UserFilter"
 		}
-		if got := fieldType(t, all, input, field); got != "StringTrgmFilterOps" {
-			t.Errorf("%s.%s without indexed_only = %s, want StringTrgmFilterOps", input, field, got)
+		if got := fieldType(t, all, input, field); got != "StringTrgmUnaccentFilterOps" {
+			t.Errorf("%s.%s without indexed_only = %s, want StringTrgmUnaccentFilterOps", input, field, got)
 		}
 	}
 }
@@ -201,8 +201,8 @@ func TestAllowColumnsGetEverything(t *testing.T) {
 	if err := New(nil).TransformSchema(context.Background(), b); err != nil {
 		t.Fatal(err)
 	}
-	if got := fieldType(t, b, "DocumentFilter", "notes"); got != "StringTrgmFilterOps" {
-		t.Errorf("allowlisted notes = %s, want StringTrgmFilterOps", got)
+	if got := fieldType(t, b, "DocumentFilter", "notes"); got != "StringTrgmUnaccentFilterOps" {
+		t.Errorf("allowlisted notes = %s, want StringTrgmUnaccentFilterOps", got)
 	}
 	if !hasEnumValue(b, "DocumentsOrderBy", "NOTES_SIMILARITY_DESC") {
 		t.Error("allowlisted notes lacks similarity ordering")
@@ -227,10 +227,10 @@ func TestOrderingSurface(t *testing.T) {
 		t.Errorf("DocumentSimilarToInput.label = %q", got)
 	}
 	f := b.Query.Field("allDocuments")
-	if !hasArg(f) {
+	if !hasArg(f, "similarTo") {
 		t.Error("allDocuments lacks similarTo:")
 	}
-	if hasArg(b.Query.Field("allUsers")) {
+	if hasArg(b.Query.Field("allUsers"), "similarTo") {
 		t.Error("similarTo: added to an unrelated table")
 	}
 }
@@ -272,7 +272,7 @@ func TestSettingsToggleEachHalf(t *testing.T) {
 	if hasEnumValue(noOrder, "DocumentsOrderBy", "SEARCH_RANK_DESC") || hasEnumValue(noOrder, "DocumentsOrderBy", "LABEL_SIMILARITY_DESC") {
 		t.Error("ordering: false kept contrib orderBy values")
 	}
-	if hasArg(noOrder.Query.Field("allDocuments")) {
+	if hasArg(noOrder.Query.Field("allDocuments"), "similarTo") {
 		t.Error("ordering: false kept similarTo:")
 	}
 	if noOrder.Objects["Document"].Field("searchRank") == nil {

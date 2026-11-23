@@ -1,5 +1,6 @@
 // Package contribtype maps pdbcore's contrib vocabularies (full-text search,
-// pg_trgm, hstore, ltree, citext, ranges and multiranges, inet/cidr) onto
+// pg_trgm, unaccent, hstore, ltree, citext, ranges and multiranges,
+// inet/cidr, pgvector) onto
 // GraphQL: which type a column of such a type surfaces as, which operator
 // input filters it, and the PostGraphile-compatible names of operators and
 // range types.
@@ -23,6 +24,8 @@
 //	                           when the subtype is not a pg_catalog type
 //	inet / cidr             -> InternetAddress / CidrAddress scalars,
 //	                           InternetAddressFilterOps / CidrAddressFilterOps
+//	vector / halfvec        -> [Float!] (input [Float!]), VectorFilterOps
+//	sparsevec               -> String (pgvector's text form), VectorFilterOps
 //	interval                -> Interval { seconds minutes hours days months years },
 //	                           input IntervalInput, IntervalFilterOps
 //	interval[]              -> [Interval!], input [IntervalInput!], IntervalListFilterOps
@@ -38,9 +41,10 @@
 // [For] resolves it for every interval column, and the schema builder keeps
 // the String fallback unless schema.interval_type is "object".
 //
-// Extension types (citext, hstore, ltree) map only when the catalog records
-// the extension; a catalog without it keeps the String fallback, so schemas
-// of databases that use none of these types are unchanged.
+// Extension types (citext, hstore, ltree, the pgvector types) map only when
+// the catalog records the extension; a catalog without it keeps the String
+// fallback, so schemas of databases that use none of these types are
+// unchanged.
 package contribtype
 
 import (
@@ -75,6 +79,9 @@ const (
 	Inet
 	// Interval is an interval column or an array of them (Interval).
 	Interval
+	// Vector is a pgvector vector, halfvec ([Float!]) or sparsevec (String)
+	// column.
+	Vector
 )
 
 // Scalar names declared when a column needs them.
@@ -99,6 +106,18 @@ var IntervalFields = []string{"seconds", "minutes", "hours", "days", "months", "
 // pg_trgm operators: every StringFilterOps operator plus similarTo,
 // wordSimilarTo and strictWordSimilarTo.
 const StringTrgmOps = "StringTrgmFilterOps"
+
+// StringUnaccentOps and StringTrgmUnaccentOps are StringFilterOps and
+// [StringTrgmOps] plus the unaccent operators (unaccentEqualTo,
+// unaccentLike, unaccentIncludes, unaccentStartsWith).
+const (
+	StringUnaccentOps     = "StringUnaccentFilterOps"
+	StringTrgmUnaccentOps = "StringTrgmUnaccentFilterOps"
+)
+
+// VectorOps is the operator input of pgvector columns: isNull only, since
+// vectors have no meaningful scalar comparison.
+const VectorOps = "VectorFilterOps"
 
 // Column is the GraphQL view of one column (or composite attribute, or
 // computed-column return value).
@@ -159,6 +178,11 @@ func For(cat *introspect.Catalog, col *introspect.Column) Column {
 				out.Scalar = ScalarCidrAddress
 			}
 			out.OpsInput = out.Scalar + "FilterOps"
+		case contrib.VocabVector:
+			out.Kind, out.Scalar, out.OpsInput = Vector, "Float", VectorOps
+			if v.Type == "sparsevec" {
+				out.Scalar = "String"
+			}
 		case contrib.VocabRange, contrib.VocabMultirange:
 			if r := catalogRange(cat, col, v); r != nil && r.SubtypeSchema != "pg_catalog" {
 				out.Own = contrib.Vocabulary{}
@@ -268,6 +292,18 @@ func RangeBoundInput(rangeType string) string { return rangeType + "BoundInput" 
 // Owned reports whether the column's own type is mapped by a vocabulary.
 func (c Column) Owned() bool { return c.Kind != None }
 
+// List reports whether a single value of the column's own type is a
+// GraphQL list of Scalar: a multirange, or a dense pgvector vector.
+func (c Column) List() bool {
+	return c.Kind == Multirange || (c.Kind == Vector && c.Scalar != "String")
+}
+
+// Declares reports whether the mapping needs a schema type of its own
+// (Scalar): false for types mapped onto String or the built-in Float.
+func (c Column) Declares() bool {
+	return c.Owned() && c.Scalar != "String" && c.Kind != Vector
+}
+
 // Extension reports whether the owning vocabulary belongs to an extension
 // (citext, hstore, ltree), whose operators must be spelled schema-qualified.
 func (c Column) Extension() bool { return c.Owned() && c.Own.Extension != "" }
@@ -310,9 +346,14 @@ func (c Column) TypeSQL() string {
 }
 
 // Trgm returns the pg_trgm vocabulary applying to the column, if any.
-func (c Column) Trgm() (contrib.Vocabulary, bool) {
+func (c Column) Trgm() (contrib.Vocabulary, bool) { return c.vocab(contrib.VocabTrgm) }
+
+// Unaccent returns the unaccent vocabulary applying to the column, if any.
+func (c Column) Unaccent() (contrib.Vocabulary, bool) { return c.vocab(contrib.VocabUnaccent) }
+
+func (c Column) vocab(name string) (contrib.Vocabulary, bool) {
 	for _, v := range c.Vocabs {
-		if v.Name == contrib.VocabTrgm {
+		if v.Name == name {
 			return v, true
 		}
 	}
@@ -321,9 +362,9 @@ func (c Column) Trgm() (contrib.Vocabulary, bool) {
 
 // FilterOps returns the vocabulary operators the contrib plugin exposes on
 // the column's own operator input (OpsInput): the owning vocabulary's
-// operators. Text vocabularies (pg_trgm) are exposed through
-// [StringTrgmOps] instead, and full-text search over text columns is not
-// exposed.
+// operators. Text vocabularies (pg_trgm, unaccent) are exposed through
+// [StringTrgmOps], [StringUnaccentOps] and [StringTrgmUnaccentOps] instead,
+// and full-text search over text columns is not exposed.
 func (c Column) FilterOps() []contrib.Op {
 	if !c.Owned() {
 		return nil
@@ -331,17 +372,19 @@ func (c Column) FilterOps() []contrib.Op {
 	return c.Own.Ops
 }
 
-// Op finds a filter operator by its GraphQL name among the column's owning
-// and pg_trgm vocabularies.
+// Op finds a filter operator by its GraphQL name among the column's owning,
+// pg_trgm and unaccent vocabularies.
 func (c Column) Op(name string) (contrib.Op, bool) {
+	var vs []contrib.Vocabulary
 	if c.Owned() {
-		for _, o := range c.Own.Ops {
-			if OpName(c.Own, o) == name {
-				return o, true
-			}
+		vs = append(vs, c.Own)
+	}
+	for _, n := range []string{contrib.VocabTrgm, contrib.VocabUnaccent} {
+		if v, ok := c.vocab(n); ok {
+			vs = append(vs, v)
 		}
 	}
-	if v, ok := c.Trgm(); ok {
+	for _, v := range vs {
 		for _, o := range v.Ops {
 			if OpName(v, o) == name {
 				return o, true
@@ -414,4 +457,25 @@ var SimilarityOrders = []SimilarityOrder{
 	{Infix: "_SIMILARITY", Expr: "distance"},
 	{Infix: "_WORD_SIMILARITY", Expr: "wordDistance"},
 	{Infix: "_STRICT_WORD_SIMILARITY", Expr: "strictWordDistance"},
+}
+
+// VectorOrder describes one pgvector distance ordering of a vector column:
+// the orderBy value infix and the vocabulary expression it sorts by.
+type VectorOrder struct {
+	// Infix sits between the column's enum name and the direction:
+	// EMBEDDING_COSINE_DISTANCE_ASC.
+	Infix string
+	// Expr is the vector vocabulary's distance expression; nearest rows
+	// have the smallest distance.
+	Expr string
+	// Label names the metric in descriptions.
+	Label string
+}
+
+// VectorOrders lists the pgvector ordering families in schema order.
+var VectorOrders = []VectorOrder{
+	{Infix: "_L2_DISTANCE", Expr: "l2Distance", Label: "Euclidean (L2) distance"},
+	{Infix: "_NEGATIVE_INNER_PRODUCT", Expr: "negativeInnerProduct", Label: "negative inner product"},
+	{Infix: "_COSINE_DISTANCE", Expr: "cosineDistance", Label: "cosine distance"},
+	{Infix: "_L1_DISTANCE", Expr: "l1Distance", Label: "taxicab (L1) distance"},
 }

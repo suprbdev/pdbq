@@ -16,15 +16,16 @@ import (
 // and asserts the invariant that makes injection impossible: user values
 // never appear in the SQL text, only in the parameter list. It runs against
 // the contrib fixture so the contrib vocabulary operators (full-text,
-// pg_trgm, hstore, ltree, citext, ranges, inet), the codec-typed generic
-// comparisons, rank and similarity ordering are covered too, and against
+// pg_trgm, unaccent, hstore, ltree, citext, ranges, inet), the codec-typed
+// generic comparisons, rank, similarity and vector distance ordering and
+// vector inputs are covered too, and against
 // the aggregates schema for having and relation-aggregate filters, and
 // through a custom mutation whose payload compiles to a Then statement.
 func FuzzFilter(f *testing.F) {
 	built := buildContrib(f)
 	aggBuilt := buildAggregates(f)
 
-	const query = `query ($e: String, $tag: [String!], $n: Int!, $h: KeyValueHash, $b: Boolean!, $d: Datetime, $ip: InternetAddress, $ips: [InternetAddress!], $cfg: String) {
+	const query = `query ($e: String, $tag: [String!], $n: Int!, $h: KeyValueHash, $b: Boolean!, $d: Datetime, $ip: InternetAddress, $ips: [InternetAddress!], $cfg: String, $vec: [Float!]) {
 		allUsers(filter: {
 			and: [
 				{email: {like: $e, startsWith: $e}}
@@ -44,11 +45,17 @@ func FuzzFilter(f *testing.F) {
 				avail: {equalTo: [{start: {value: $n, inclusive: $b}}], containsElement: $n}
 				during: {containsElement: $d}
 				ip: {containedBy: $ip, in: $ips}
+				notes: {unaccentEqualTo: $e, unaccentLike: $e, unaccentIncludes: $e, unaccentStartsWith: $e}
 			}
 			condition: {slug: $e, attrs: $h}
 			similarTo: {label: $e}
 			orderBy: [SEARCH_RANK_DESC, LABEL_SIMILARITY_DESC]
 		) { nodes { id searchRank attrs span { start { value inclusive } } } }
+		allEmbeddings(
+			nearVector: {embedding: $vec, half: $vec, sparse: $cfg}
+			orderBy: [EMBEDDING_COSINE_DISTANCE_ASC, HALF_L2_DISTANCE_DESC, SPARSE_NEGATIVE_INNER_PRODUCT_ASC, EMBEDDING_L1_DISTANCE_ASC]
+			first: 3
+		) { nodes { id embedding half sparse } }
 	}`
 	const aggQuery = `query ($e: String, $tag: [String!], $n: Int!, $big: BigInt, $bigs: [BigInt!], $bf: BigFloat, $d: Datetime) {
 		allPosts(filter: {title: {startsWith: $e}}) {
@@ -73,7 +80,8 @@ func FuzzFilter(f *testing.F) {
 			groupedAggregates(groupBy: [CREATED_AT_TRUNCATED_TO_DAY], having: {max: {createdAt: {greaterThan: $d}}}) { keys }
 		}
 	}`
-	const mutationQuery = `mutation ($e: String, $n: Int!) {
+	const mutationQuery = `mutation ($e: String, $n: Int!, $vec: [Float!], $cfg: String) {
+		createEmbedding(input: {embedding: $vec, half: $vec, sparse: $cfg}) { embedding { id embedding } }
 		publishPost(input: {postId: $n, clientMutationId: $e}) {
 			clientMutationId
 			post { title author { email } }
@@ -106,6 +114,7 @@ func FuzzFilter(f *testing.F) {
 			vars, verr := validator.VariableValues(tg.built.Schema, tg.op, map[string]any{
 				"e": email, "tag": []any{tag}, "n": n, "h": map[string]any{tag: email}, "b": n%2 == 0,
 				"d": email, "ip": email, "ips": []any{tag}, "cfg": "c" + email, "big": tag, "bigs": []any{tag}, "bf": email,
+				"vec": []any{float64(n), 0.5, -float64(n)},
 			})
 			if verr != nil {
 				t.Skipf("rejected variables: %v", verr)
@@ -171,6 +180,7 @@ func FuzzSpatial(f *testing.F) {
 				dwithin: {geometry: $wkt, distance: $d}
 				bboxLeftOf: $wkt
 				bboxIntersectsND: $wkt
+				bboxIntersects2D: $wkt
 			}
 		}) { nodes { id } }
 	}`

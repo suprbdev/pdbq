@@ -207,6 +207,11 @@ type OrderSpec struct {
 	// Column to the field's similarTo: reference text (contrib plugin);
 	// Desc applies to the distance, so best matches first is ascending.
 	Similarity string
+	// Vector names the pgvector distance expression ("l2Distance",
+	// "negativeInnerProduct", "cosineDistance", "l1Distance") ordering by
+	// distance of Column from the field's nearVector: reference vector
+	// (contrib plugin); nearest first is ascending.
+	Vector string
 }
 
 // New creates a Builder with all default types generated from the catalog.
@@ -464,7 +469,7 @@ func (b *Builder) baseTypeForColumn(c *introspect.Column) string {
 	} else if tn, ok := b.TypeForComposite[tableKey(c.TypeSchema, pg)]; ok {
 		base = tn
 	} else if ci := b.ContribColumn(c); ci.Owned() {
-		if ci.Kind == contribtype.Multirange {
+		if ci.List() {
 			return "[" + ci.Scalar + "!]"
 		}
 		base = ci.Scalar
@@ -475,6 +480,12 @@ func (b *Builder) baseTypeForColumn(c *introspect.Column) string {
 		return "[" + base + "!]"
 	}
 	return base
+}
+
+// isVector reports whether c is a pgvector column, which, like a spatial
+// column, has no condition field, distinctOn value or plain orderBy values.
+func (b *Builder) isVector(c *introspect.Column) bool {
+	return b.ContribColumn(c).Kind == contribtype.Vector
 }
 
 // ContribColumn resolves a column's contrib mapping (see package
@@ -493,7 +504,7 @@ func (b *Builder) ContribColumn(c *introspect.Column) contribtype.Column {
 // contrib column once, reporting false when a name is taken by a type it
 // did not declare.
 func (b *Builder) ensureContrib(ci contribtype.Column) bool {
-	if ci.Scalar == "String" || b.contribTypes[ci.Scalar] {
+	if !ci.Declares() || b.contribTypes[ci.Scalar] {
 		return true
 	}
 	names := []string{ci.Scalar}
@@ -589,7 +600,7 @@ func (b *Builder) gqlInputTypeForColumn(c *introspect.Column) string {
 	}
 	if ci := b.ContribColumn(c); ci.Kind == contribtype.Range || (ci.Kind == contribtype.Interval && !ci.Array) {
 		return ci.Input
-	} else if ci.Kind == contribtype.Multirange || ci.Kind == contribtype.Interval {
+	} else if ci.List() || ci.Kind == contribtype.Interval {
 		return "[" + ci.Input + "!]"
 	}
 	return b.gqlTypeForColumn(c)
@@ -916,7 +927,7 @@ func (b *Builder) addCondition(t *introspect.Table) string {
 	for _, c := range cols {
 		// Spatial columns have no plain equality operator; use the filter
 		// argument's spatial predicates (equals, intersects, ...) instead.
-		if postgis.IsSpatial(c.PGType) {
+		if postgis.IsSpatial(c.PGType) || b.isVector(c) {
 			continue
 		}
 		in.AddField(&InputField{
@@ -1014,7 +1025,7 @@ func (b *Builder) addDistinctOn(t *introspect.Table) string {
 	for _, c := range cols {
 		// DISTINCT ON needs a btree equality operator, which PostGIS types do
 		// not provide; offering the value would only produce a runtime error.
-		if postgis.IsSpatial(c.PGType) {
+		if postgis.IsSpatial(c.PGType) || b.isVector(c) {
 			continue
 		}
 		en.Values = append(en.Values, EnumValue{Name: coreinflect.EnumValue(c.Name), Column: c.Name})
@@ -1035,7 +1046,7 @@ func (b *Builder) addOrderBy(t *introspect.Table) string {
 		// PostGIS values have no meaningful linear order; the postgis plugin
 		// adds <COLUMN>_DISTANCE_ASC/_DESC instead, which sorts by distance
 		// from a supplied reference geometry.
-		if postgis.IsSpatial(c.PGType) {
+		if postgis.IsSpatial(c.PGType) || b.isVector(c) {
 			continue
 		}
 		base := coreinflect.EnumValue(c.Name)
@@ -1647,7 +1658,7 @@ func (b *Builder) functionReturnBase(f *introspect.Function, mint bool) (string,
 		return name, true
 	}
 	if ci := b.ContribColumn(ret); ci.Owned() {
-		if ci.Kind == contribtype.Multirange {
+		if ci.List() {
 			return "[" + ci.Scalar + "!]", true
 		}
 		return ci.Scalar, true
@@ -1984,7 +1995,7 @@ func (b *Builder) Build() (*Built, error) {
 			if v.Column != "" || v.Computed != nil || v.Relation != nil {
 				ordered[v.Name] = OrderSpec{
 					Column: v.Column, Desc: v.Desc, Computed: v.Computed, Relation: v.Relation,
-					Distance: v.Distance, Rank: v.Rank, Similarity: v.Similarity,
+					Distance: v.Distance, Rank: v.Rank, Similarity: v.Similarity, Vector: v.Vector,
 				}
 			}
 			if v.PGValue != "" {
