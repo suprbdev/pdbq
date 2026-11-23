@@ -8,6 +8,7 @@ package config
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	flag "github.com/spf13/pflag"
@@ -16,17 +17,18 @@ import (
 )
 
 type Config struct {
-	Database Database `koanf:"database"`
-	Server   Server   `koanf:"server"`
-	Schema   Schema   `koanf:"schema"`
-	Filters  Filters  `koanf:"filters"`
-	RLS      RLS      `koanf:"rls"`
-	TX       TX       `koanf:"transactions"`
-	Watch    Watch    `koanf:"watch"`
-	Errors   Errors   `koanf:"errors"`
-	Plugins  Plugins  `koanf:"plugins"`
-	Log      Log      `koanf:"log"`
-	Metrics  Metrics  `koanf:"metrics"`
+	Database  Database   `koanf:"database"`
+	Server    Server     `koanf:"server"`
+	Schema    Schema     `koanf:"schema"`
+	Filters   Filters    `koanf:"filters"`
+	RLS       RLS        `koanf:"rls"`
+	TX        TX         `koanf:"transactions"`
+	Watch     Watch      `koanf:"watch"`
+	Errors    Errors     `koanf:"errors"`
+	Plugins   Plugins    `koanf:"plugins"`
+	Log       Log        `koanf:"log"`
+	Metrics   Metrics    `koanf:"metrics"`
+	Contracts []Contract `koanf:"contracts" doc:"Schema contracts: named GraphQL schemas for different audiences, each a subset of the full schema selected by @contract / @behavior ±contract:<name> smart comments and served at <path>/graphql. Entries are {name, default: include|exclude, path (default /<name>)}, or bare names. When set, only the contracts are served (give one path: / to serve it at /graphql). Requires the smart-comments plugin."`
 }
 
 // The shared sections (koanf paths and doc strings) live in pdbcore/confx;
@@ -42,6 +44,7 @@ type (
 	Plugins  = confx.Plugins
 	Log      = confx.Log
 	Metrics  = confx.Metrics
+	Contract = confx.Contract
 )
 
 type Server struct {
@@ -226,8 +229,32 @@ func (c *Config) Validate() error {
 		if c.Metrics.Addr == "" && reservedPaths[c.Metrics.Path] {
 			errs = append(errs, fmt.Sprintf("metrics.path: %q is a pdbq route; choose another path or serve metrics on metrics.addr", c.Metrics.Path))
 		}
+		for _, ct := range c.Contracts {
+			if p := ct.URLPath(""); c.Metrics.Addr == "" && p != "/" && (c.Metrics.Path == p || strings.HasPrefix(c.Metrics.Path, p+"/")) {
+				errs = append(errs, fmt.Sprintf("metrics.path: %q is under the path of contract %q; choose another path or serve metrics on metrics.addr", c.Metrics.Path, ct.Name))
+			}
+		}
+	}
+	if len(c.Contracts) > 0 {
+		errs = append(errs, confx.ValidateContracts(c.Contracts, "", true)...)
+		if c.DisabledPlugins()["smart-comments"] {
+			errs = append(errs, "contracts require the smart-comments plugin: it removes the columns a contract hides (remove smart-comments from plugins.disabled)")
+		}
 	}
 	return confx.InvalidConfig(errs)
+}
+
+// Contract returns the configured contract named name; "" is the full
+// schema and is always found.
+func (c *Config) Contract(name string) (Contract, error) {
+	if name == "" {
+		return Contract{}, nil
+	}
+	ct, ok := confx.FindContract(c.Contracts, name)
+	if !ok {
+		return Contract{}, fmt.Errorf("config: unknown contract %q", name)
+	}
+	return ct, nil
 }
 
 // reservedPaths are the routes pdbq serves on the main listener, which

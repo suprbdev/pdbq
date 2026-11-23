@@ -299,6 +299,7 @@ func schemaCmd() *cobra.Command {
 	configFlags(check)
 
 	var asJSON bool
+	var contractName string
 	print := &cobra.Command{
 		Use:   "print",
 		Short: "Print the generated GraphQL schema (SDL, or introspection JSON with --json)",
@@ -314,7 +315,7 @@ func schemaCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			built, err := app.BuildSchema(ctx, cat)
+			built, err := app.BuildContractSchema(ctx, cat, contractName)
 			if err != nil {
 				return err
 			}
@@ -334,6 +335,7 @@ func schemaCmd() *cobra.Command {
 		},
 	}
 	print.Flags().BoolVar(&asJSON, "json", false, "output introspection-format JSON instead of SDL")
+	print.Flags().StringVar(&contractName, "contract", "", "print the schema of this configured contract instead of the full schema")
 	configFlags(print)
 
 	cmd.AddCommand(dump, check, print)

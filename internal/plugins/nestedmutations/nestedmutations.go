@@ -40,6 +40,13 @@ type Plugin struct {
 	maxDepth      int
 	maxOperations int
 
+	// state is the schema being built by TransformSchema; requests read
+	// the state of their own schema from Built.Ext.
+	*state
+}
+
+// state is what the plugin knows about one schema.
+type state struct {
 	// specs: row input type (create input or patch) -> nested field -> spec.
 	specs map[string]map[string]*nestedSpec
 	// ops: nested input type -> operation field -> operation.
@@ -47,6 +54,17 @@ type Plugin struct {
 	// inputForTable / patchForTable: "schema.table" -> create input / patch.
 	inputForTable map[string]string
 	patchForTable map[string]string
+}
+
+// stateOf returns the plugin's state for built (an empty state when the
+// plugin did not run on it).
+func stateOf(built *schema.Built) *state {
+	if built != nil {
+		if st, ok := built.Ext[pluginName].(*state); ok {
+			return st
+		}
+	}
+	return &state{}
 }
 
 // nestedSpec binds a nested field of a row input to its foreign key.
@@ -85,7 +103,6 @@ type opSpec struct {
 // New builds the plugin from its `plugins.settings.nested-mutations` map.
 func New(settings map[string]any) *Plugin {
 	p := &Plugin{forceTx: true, maxDepth: defaultMaxDepth, maxOperations: defaultMaxOperations}
-	p.reset()
 	if v, ok := settings["force_transactions"].(bool); ok {
 		p.forceTx = v
 	}
@@ -110,20 +127,25 @@ func intSetting(v any) int {
 	return 0
 }
 
-func (p *Plugin) reset() {
-	p.specs = map[string]map[string]*nestedSpec{}
-	p.ops = map[string]map[string]*opSpec{}
-	p.inputForTable = map[string]string{}
-	p.patchForTable = map[string]string{}
+func (p *Plugin) reset(b *schema.Builder) {
+	p.state = &state{
+		specs:         map[string]map[string]*nestedSpec{},
+		ops:           map[string]map[string]*opSpec{},
+		inputForTable: map[string]string{},
+		patchForTable: map[string]string{},
+	}
+	b.Ext[pluginName] = p.state
 }
 
-func (p *Plugin) Name() string  { return "nested-mutations" }
+const pluginName = "nested-mutations"
+
+func (p *Plugin) Name() string  { return pluginName }
 func (p *Plugin) Priority() int { return 200 }
 
 // ---- SchemaHook ----
 
 func (p *Plugin) TransformSchema(_ context.Context, b *schema.Builder) error {
-	p.reset()
+	p.reset(b)
 	for _, t := range b.Catalog.Tables {
 		key := t.Schema + "." + t.Name
 		if b.TypeForTable[key] == "" {
@@ -539,7 +561,8 @@ func (p *Plugin) WrapCompile(next compile.Func) compile.Func {
 			return nil, err
 		}
 		argType := argTypeName(req.Field, argName)
-		if !p.usesNested(argType, val) {
+		st := stateOf(req.Built)
+		if !st.usesNested(argType, val) {
 			return next(ctx, req)
 		}
 		if meta.Kind != schema.KindCreate && meta.Kind != schema.KindUpdate {
@@ -547,7 +570,7 @@ func (p *Plugin) WrapCompile(next compile.Func) compile.Func {
 		}
 		input, _ := val.(map[string]any)
 
-		g := &cteGen{p: p, req: req, ps: &compile.ParamSet{}, writeIdx: map[string]int{}, dml: map[string]*dmlCTE{}}
+		g := &cteGen{p: p, st: st, req: req, ps: &compile.ParamSet{}, writeIdx: map[string]int{}, dml: map[string]*dmlCTE{}}
 		if meta.Kind == schema.KindCreate {
 			err = g.insertRow(meta.Table, argType, input, "__mut", 1, nil, "")
 		} else {
@@ -593,10 +616,10 @@ func argTypeName(f *ast.Field, arg string) string {
 
 // usesNested reports whether a row input value (or any row of a list of
 // them) sets a nested field.
-func (p *Plugin) usesNested(inputType string, v any) bool {
+func (st *state) usesNested(inputType string, v any) bool {
 	switch v := v.(type) {
 	case map[string]any:
-		specs := p.specs[inputType]
+		specs := st.specs[inputType]
 		for k, fv := range v {
 			if _, ok := specs[k]; ok && fv != nil {
 				return true
@@ -604,7 +627,7 @@ func (p *Plugin) usesNested(inputType string, v any) bool {
 		}
 	case []any:
 		for _, row := range v {
-			if p.usesNested(inputType, row) {
+			if st.usesNested(inputType, row) {
 				return true
 			}
 		}
@@ -621,6 +644,7 @@ func (p *Plugin) usesNested(inputType string, v any) bool {
 // would fail for roles holding column-level grants.
 type cteGen struct {
 	p      *Plugin
+	st     *state
 	req    *compile.Request
 	ps     *compile.ParamSet
 	ctes   []string
@@ -990,7 +1014,7 @@ type childWork struct {
 // before the row's own DML), and returns the backward nested fields. owner
 // identifies the row for an update and is nil for an insert.
 func (g *cteGen) rowFields(t *introspect.Table, inputType string, input map[string]any, a *assignments, depth int, owner *rowKey, path string) ([]childWork, error) {
-	specs := g.p.specs[inputType]
+	specs := g.st.specs[inputType]
 	binding := g.req.Built.InputColumns[inputType]
 	for _, fname := range sortedKeys(input) {
 		col, ok := binding[fname]
@@ -1167,7 +1191,7 @@ func (g *cteGen) matchCond(fk *introspect.ForeignKey, t *introspect.Table, ref, 
 // given parent, update and delete act on the parent the row references.
 // owner identifies the owner row of an update and is nil for an insert.
 func (g *cteGen) forward(t *introspect.Table, spec *nestedSpec, nested map[string]any, a *assignments, depth int, owner *rowKey, path string) error {
-	ops := g.p.ops[spec.Input]
+	ops := g.st.ops[spec.Input]
 	parent := spec.Target
 	pkey := parent.Schema + "." + parent.Name
 	pref := compile.TableRefSQL(parent.Schema, parent.Name)
@@ -1191,7 +1215,7 @@ func (g *cteGen) forward(t *introspect.Table, spec *nestedSpec, nested map[strin
 		case opCreate:
 			setters++
 			link = g.name("p")
-			if err := g.insertRow(parent, g.p.inputForTable[pkey], obj, link, depth+1, nil, opPath+"."); err != nil {
+			if err := g.insertRow(parent, g.st.inputForTable[pkey], obj, link, depth+1, nil, opPath+"."); err != nil {
 				return err
 			}
 		case opConnect:
@@ -1219,7 +1243,7 @@ func (g *cteGen) forward(t *introspect.Table, spec *nestedSpec, nested map[strin
 			}
 			cte := g.name("p")
 			patch, _ := obj[patchField(g.req.Built.TypeForTable[pkey])].(map[string]any)
-			if err := g.updateRow(parent, g.p.patchForTable[pkey], patch, cte, depth+1, key, g.parentScope(spec.FK, t, *owner), opPath+"."); err != nil {
+			if err := g.updateRow(parent, g.st.patchForTable[pkey], patch, cte, depth+1, key, g.parentScope(spec.FK, t, *owner), opPath+"."); err != nil {
 				return err
 			}
 			g.guard(cte, opPath)
@@ -1319,7 +1343,7 @@ func (g *cteGen) backward(spec *nestedSpec, nested map[string]any, parentCTE str
 	if depth+1 > g.p.maxDepth {
 		return compile.UserErrorf("nested-mutations: nesting depth exceeds limit %d", g.p.maxDepth)
 	}
-	ops := g.p.ops[spec.Input]
+	ops := g.st.ops[spec.Input]
 	child := spec.Owner
 	ckey := child.Schema + "." + child.Name
 	ref := compile.TableRefSQL(child.Schema, child.Name)
@@ -1342,7 +1366,7 @@ func (g *cteGen) backward(spec *nestedSpec, nested map[string]any, parentCTE str
 			}
 			opPath := fmt.Sprintf("%s.%s[%d]", path, fname, i)
 			if op.kind == opCreate {
-				if err := g.insertRow(child, g.p.inputForTable[ckey], obj, g.name("c"), depth+1, &parentFill{fk: spec.FK, cte: parentCTE}, opPath+"."); err != nil {
+				if err := g.insertRow(child, g.st.inputForTable[ckey], obj, g.name("c"), depth+1, &parentFill{fk: spec.FK, cte: parentCTE}, opPath+"."); err != nil {
 					return err
 				}
 				continue
@@ -1354,7 +1378,7 @@ func (g *cteGen) backward(spec *nestedSpec, nested map[string]any, parentCTE str
 			cte := g.name("c")
 			if op.kind == opUpdate {
 				patch, _ := obj[patchField(g.req.Built.TypeForTable[ckey])].(map[string]any)
-				if err := g.updateRow(child, g.p.patchForTable[ckey], patch, cte, depth+1, key, g.childScope(spec.FK, child, parentCTE), opPath+"."); err != nil {
+				if err := g.updateRow(child, g.st.patchForTable[ckey], patch, cte, depth+1, key, g.childScope(spec.FK, child, parentCTE), opPath+"."); err != nil {
 					return err
 				}
 				g.guard(cte, opPath)
@@ -1429,6 +1453,7 @@ func (p *Plugin) BeforeOperation(ctx context.Context, op *exec.Operation) (conte
 	if op.Document != nil {
 		frags = op.Document.Fragments
 	}
+	st := stateOf(op.Built)
 	for _, f := range exec.CollectRootFields(op.Definition.SelectionSet, frags, op.Vars) {
 		if f.Definition == nil {
 			continue
@@ -1443,7 +1468,7 @@ func (p *Plugin) BeforeOperation(ctx context.Context, op *exec.Operation) (conte
 			if err != nil {
 				continue
 			}
-			if p.usesNested(argDef.Type.Name(), v) {
+			if st.usesNested(argDef.Type.Name(), v) {
 				op.ForceTx = true
 				return ctx, nil
 			}

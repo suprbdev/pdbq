@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"mime"
 	"net/http"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -59,17 +60,28 @@ type Server struct {
 	wsMu          sync.Mutex
 	wsSessions    map[*wsSession]struct{}
 	wsClosed      bool
-	// wsConns counts WebSocket connections, accepted or being accepted
-	// (guarded by wsMu); wsOps counts their running operations.
-	wsConns int
-	wsOps   atomic.Int64
+	// ws counts WebSocket connections and operations against the limits;
+	// a Group shares one between its servers.
+	ws *wsLimits
+
+	// prefix is the path the server is mounted under by a Group ("" at
+	// the root); the GraphiQL page posts to prefix + /graphql.
+	prefix string
+}
+
+// wsLimits counts WebSocket connections, accepted or being accepted, and
+// their running operations.
+type wsLimits struct {
+	mu    sync.Mutex
+	conns int
+	ops   atomic.Int64
 }
 
 func New(cfg config.Server, authn *Authenticator, ex *exec.Executor, sdl string, log *slog.Logger) (*Server, error) {
 	if log == nil {
 		log = slog.Default()
 	}
-	s := &Server{cfg: cfg, auth: authn, log: log, wsInitTimeout: wsInitTimeout, wsSessions: map[*wsSession]struct{}{}}
+	s := &Server{cfg: cfg, auth: authn, log: log, wsInitTimeout: wsInitTimeout, wsSessions: map[*wsSession]struct{}{}, ws: &wsLimits{}}
 	if cfg.Subscriptions {
 		topics, err := subscribe.NewTopicPolicy(cfg.SubscriptionsTopicPrefix, cfg.SubscriptionsTopics)
 		if err != nil {
@@ -330,7 +342,11 @@ func (s *Server) handleGraphiQL(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Write([]byte(graphiqlHTML)) //nolint:errcheck
+	page := graphiqlHTML
+	if s.prefix != "" {
+		page = strings.Replace(page, "{url: '/graphql'}", "{url: '"+s.prefix+"/graphql'}", 1)
+	}
+	w.Write([]byte(page)) //nolint:errcheck
 }
 
 func writeError(w http.ResponseWriter, status int, msg string) {

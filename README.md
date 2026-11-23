@@ -52,6 +52,10 @@ time=... msg=listening addr=:8080 graphiql=true
   LISTEN/NOTIFY on a WebSocket (`graphql-transport-ws`), each event resolved
   under the subscriber's RLS identity, see
   [docs/subscriptions.md](docs/subscriptions.md).
+- **Schema contracts** — named schemas per audience (`public`, `partner`,
+  `internal`) selected by `@contract` / `@behavior ±contract:<name>` smart
+  comments, each served at its own `/<name>/graphql`, see
+  [docs/contracts.md](docs/contracts.md).
 - **Pipe-friendly CLI** — `echo '{users {email}}' | pdbq query -` prints
   JSON and exits non-zero on GraphQL errors.
 
@@ -114,6 +118,7 @@ See [docs/quickstart.md](docs/quickstart.md) for the full tour.
 | [docs/plugins.md](docs/plugins.md) | Hook surfaces, writing a plugin, built-ins as worked examples |
 | [docs/caching.md](docs/caching.md) | Schema cache and CI/CD gates |
 | [docs/deployment.md](docs/deployment.md) | Docker image, health checks, production checklist |
+| [docs/contracts.md](docs/contracts.md) | Schema contracts: per-audience schemas from `@contract` tags, endpoints, security model |
 | [docs/metrics.md](docs/metrics.md) | Prometheus `/metrics`: enabling, separate listener, metric reference |
 | [docs/subscriptions.md](docs/subscriptions.md) | Opt-in `listen` subscriptions over LISTEN/NOTIFY and WebSocket: protocol, auth, topics, limits, cost |
 

@@ -101,6 +101,12 @@ type Builder struct {
 	TypeForComposite map[string]string
 	// InputForComposite maps "schema.type" to the generated input type name.
 	InputForComposite map[string]string
+	// Ext holds plugin-owned data about this schema, keyed by plugin name,
+	// and is carried to [Built.Ext]. A plugin that needs state at request
+	// time keeps it here rather than on itself, so the executors of
+	// several schemas (contracts, watch-mode rebuilds) never read each
+	// other's.
+	Ext map[string]any
 
 	// domainScalars maps a domain ref ("schema.name") to its custom scalar
 	// (see addDomains).
@@ -162,6 +168,8 @@ type Built struct {
 	// contrib type is missing here fell back to String because the name
 	// was taken; see ContribColumn.
 	ContribTypes map[string]bool
+	// Ext is the plugin-owned data of [Builder.Ext].
+	Ext map[string]any
 }
 
 type OrderSpec struct {
@@ -209,6 +217,7 @@ func New(cat *introspect.Catalog, inflector inflect.Next, opts Options) *Builder
 		TypeForTable:       map[string]string{},
 		TypeForComposite:   map[string]string{},
 		InputForComposite:  map[string]string{},
+		Ext:                map[string]any{},
 		contribTypes:       map[string]bool{},
 		log:                opts.Logger,
 		hidden:             hidden,
@@ -1821,6 +1830,7 @@ func (b *Builder) Build() (*Built, error) {
 		SDL:                 sdl,
 		Meta:                Meta{},
 		Catalog:             b.Catalog,
+		Ext:                 b.Ext,
 		TypeForTable:        b.TypeForTable,
 		TableForType:        map[string]*introspect.Table{},
 		OrderBy:             map[string]map[string]OrderSpec{},

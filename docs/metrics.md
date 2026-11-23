@@ -27,6 +27,10 @@ scrape_configs:
       - targets: ["pdbq:9090"]
 ```
 
+With [schema contracts](contracts.md) configured, every series below except
+`pdbq_db_pool_*` and the runtime series carries a `contract` label, and
+requests to `/healthz`, `/readyz` and the metrics endpoint are not counted.
+
 ## Metric reference
 
 All durations are in seconds, with the Prometheus default buckets

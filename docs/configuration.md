@@ -100,3 +100,4 @@ $ pdbq config example   # print the full annotated reference
 | `metrics.enabled` | `false` | serve Prometheus metrics; see [Metrics](metrics.md) |
 | `metrics.path` | `/metrics` | URL path of the metrics endpoint; must not be `/graphql`, `/healthz`, `/readyz` or `/schema.graphql` when served on the main listener |
 | `metrics.addr` | — | separate listen address (e.g. `:9090`) to keep metrics off the public listener; empty serves them on `server.addr` |
+| `contracts` | `[]` | schema contracts: `{name, default: include\|exclude, path}` entries (or bare names), each a subset of the schema served at `<path>/graphql`; when set only the contracts are served; see [Schema contracts](contracts.md) |

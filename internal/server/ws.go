@@ -134,19 +134,19 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 // reserveConnection counts a WebSocket connection against
 // server.subscriptions_max_connections; false when none is left.
 func (s *Server) reserveConnection() bool {
-	s.wsMu.Lock()
-	defer s.wsMu.Unlock()
-	if s.wsConns >= s.cfg.SubscriptionsMaxConnections {
+	s.ws.mu.Lock()
+	defer s.ws.mu.Unlock()
+	if s.ws.conns >= s.cfg.SubscriptionsMaxConnections {
 		return false
 	}
-	s.wsConns++
+	s.ws.conns++
 	return true
 }
 
 func (s *Server) releaseConnection() {
-	s.wsMu.Lock()
-	s.wsConns--
-	s.wsMu.Unlock()
+	s.ws.mu.Lock()
+	s.ws.conns--
+	s.ws.mu.Unlock()
 }
 
 // trackSession registers sess for CloseWebSockets; false once closing.
@@ -602,14 +602,14 @@ func (c *wsSession) throttle() {
 // reserveOperation counts an operation against
 // server.subscriptions_max_operations; false when none is left.
 func (s *Server) reserveOperation() bool {
-	if s.wsOps.Add(1) > int64(s.cfg.SubscriptionsMaxOperations) {
-		s.wsOps.Add(-1)
+	if s.ws.ops.Add(1) > int64(s.cfg.SubscriptionsMaxOperations) {
+		s.ws.ops.Add(-1)
 		return false
 	}
 	return true
 }
 
-func (s *Server) releaseOperation() { s.wsOps.Add(-1) }
+func (s *Server) releaseOperation() { s.ws.ops.Add(-1) }
 
 // stop cancels operation id; the client already considers it complete, so
 // nothing more is sent for it.

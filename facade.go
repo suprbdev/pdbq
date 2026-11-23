@@ -38,6 +38,7 @@ type (
 	PluginsConfig  = config.Plugins
 	LogConfig      = config.Log
 	MetricsConfig  = config.Metrics
+	ContractConfig = config.Contract
 )
 
 // DefaultConfig returns the documented defaults.
@@ -87,7 +88,8 @@ type (
 // internals (http.TimeoutHandler), but read/idle timeouts are the
 // embedder's job. With server.subscriptions on, the handler also serves
 // WebSocket subscriptions on /graphql; App.Close closes those connections
-// and the LISTEN connection.
+// and the LISTEN connection. With contracts configured, the handler serves
+// each contract's schema under its path instead (see docs/contracts.md).
 func (a *App) Handler(ctx context.Context) (http.Handler, error) {
 	srv, err := a.buildServer(ctx)
 	if err != nil {
@@ -96,8 +98,15 @@ func (a *App) Handler(ctx context.Context) (http.Handler, error) {
 	return srv.Handler(), nil
 }
 
+// httpServer is what Serve and Handler run: a Server, or a server.Group
+// with one Server per contract.
+type httpServer interface {
+	Handler() http.Handler
+	ListenAndServe(ctx context.Context) error
+}
+
 // buildServer is the shared boot pipeline behind Serve and Handler.
-func (a *App) buildServer(ctx context.Context) (*server.Server, error) {
+func (a *App) buildServer(ctx context.Context) (httpServer, error) {
 	if !a.Config.RLS.Enabled {
 		a.Log.Warn("RLS IS DISABLED — all requests run with the privileged connection role; do not use in production")
 	}
@@ -123,6 +132,9 @@ func (a *App) buildServer(ctx context.Context) (*server.Server, error) {
 		if catHash, err = cat.Hash(); err != nil {
 			return nil, fmt.Errorf("watch: catalog hash: %w", err)
 		}
+	}
+	if len(a.Config.Contracts) > 0 {
+		return a.buildContractServer(ctx, cat, catHash)
 	}
 	built, err := a.BuildSchema(ctx, cat)
 	if err != nil {
@@ -150,47 +162,106 @@ func (a *App) buildServer(ctx context.Context) (*server.Server, error) {
 		srv.SetMetrics(a.metrics, "")
 	}
 	if a.Config.Watch.Enabled {
-		wctx, cancel := context.WithCancel(ctx)
-		w := &watch.Watcher{
-			Pool:         a.pool,
-			Schemas:      a.Config.Schema.Schemas,
-			Channel:      a.Config.Watch.Channel,
-			TriggerName:  "pdbq_watch",
-			InitialHash:  catHash,
-			PollInterval: a.Config.Watch.PollInterval,
-			Log:          a.Log,
-			OnChange: func(cat *introspect.Catalog) {
-				// Atomic swap: in-flight requests keep the old executor.
-				nb, err := a.BuildSchema(wctx, cat)
-				a.metrics.SchemaRebuilt(err)
-				if err != nil {
-					a.Log.Error("watch: schema rebuild failed", "err", err)
-					return
-				}
-				srv.Swap(a.Executor(nb), nb.SDL)
-			},
-		}
-		done := make(chan struct{})
-		go func() {
-			defer close(done)
-			go func() {
-				select {
-				case <-w.Ready():
-					a.Log.Info("watch: ready")
-				case <-wctx.Done():
-				}
-			}()
-			if err := w.Run(wctx); err != nil {
-				a.Log.Error("watch: stopped", "err", err)
+		a.startWatch(ctx, catHash, func(wctx context.Context, cat *introspect.Catalog) {
+			// Atomic swap: in-flight requests keep the old executor.
+			nb, err := a.BuildSchema(wctx, cat)
+			a.metrics.SchemaRebuilt(err)
+			if err != nil {
+				a.Log.Error("watch: schema rebuild failed", "err", err)
+				return
 			}
-		}()
+			srv.Swap(a.Executor(nb), nb.SDL)
+		})
+	}
+	return srv, nil
+}
+
+// buildContractServer builds one schema, executor and Server per contract
+// from cat and mounts them on a server.Group; watch mode rebuilds every
+// contract.
+func (a *App) buildContractServer(ctx context.Context, cat *introspect.Catalog, catHash string) (*server.Group, error) {
+	authn := server.NewAuthenticator(a.Config.RLS, a.Log)
+	group := server.NewGroup(a.Config.Server, a.Log)
+	group.SetReadiness(a.pool.Ping)
+	if a.Config.Metrics.Addr == "" {
+		group.SetMetrics(a.metrics, a.Config.Metrics.Path)
+	}
+	servers := make([]*server.Server, len(a.Config.Contracts))
+	for i, ct := range a.Config.Contracts {
+		built, err := a.BuildContractSchema(ctx, cat, ct.Name)
+		if err != nil {
+			return nil, err
+		}
+		srv, err := server.New(a.Config.Server, authn, a.executor(built, a.instrumentsFor(ct.Name)), built.SDL, a.Log)
+		if err != nil {
+			return nil, err
+		}
+		srv.SetMetrics(a.metricsFor(ct.Name), "")
+		group.Add(ct.URLPath(""), srv)
+		servers[i] = srv
+		a.Log.Info("contract ready", "contract", ct.Name, "path", ct.URLPath(""))
+	}
+	if a.Config.Server.Subscriptions {
+		hub := subscribe.NewHub(subscribe.PoolDialer(a.pool), a.Log)
+		for _, srv := range servers {
+			srv.SetSubscriptions(hub)
+		}
 		a.watchMu.Lock()
-		a.watchReady = w.Ready()
 		a.stops = append(a.stops, func() {
-			cancel()
-			<-done
+			group.CloseWebSockets()
+			hub.Close()
 		})
 		a.watchMu.Unlock()
 	}
-	return srv, nil
+	if a.Config.Watch.Enabled {
+		a.startWatch(ctx, catHash, func(wctx context.Context, cat *introspect.Catalog) {
+			for i, ct := range a.Config.Contracts {
+				nb, err := a.BuildContractSchema(wctx, cat, ct.Name)
+				a.metricsFor(ct.Name).SchemaRebuilt(err)
+				if err != nil {
+					a.Log.Error("watch: schema rebuild failed", "contract", ct.Name, "err", err)
+					continue
+				}
+				servers[i].Swap(a.executor(nb, a.instrumentsFor(ct.Name)), nb.SDL)
+			}
+		})
+	}
+	return group, nil
+}
+
+// startWatch runs the schema watcher until ctx ends or the App closes,
+// calling rebuild with every changed catalog.
+func (a *App) startWatch(ctx context.Context, catHash string, rebuild func(context.Context, *introspect.Catalog)) {
+	wctx, cancel := context.WithCancel(ctx)
+	w := &watch.Watcher{
+		Pool:         a.pool,
+		Schemas:      a.Config.Schema.Schemas,
+		Channel:      a.Config.Watch.Channel,
+		TriggerName:  "pdbq_watch",
+		InitialHash:  catHash,
+		PollInterval: a.Config.Watch.PollInterval,
+		Log:          a.Log,
+		OnChange:     func(cat *introspect.Catalog) { rebuild(wctx, cat) },
+	}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		go func() {
+			select {
+			case <-w.Ready():
+				a.Log.Info("watch: ready")
+			case <-wctx.Done():
+			}
+		}()
+		if err := w.Run(wctx); err != nil {
+			a.Log.Error("watch: stopped", "err", err)
+		}
+	}()
+	a.watchMu.Lock()
+	a.watchReady = w.Ready()
+	a.stops = append(a.stops, func() {
+		cancel()
+		<-done
+	})
+	a.watchMu.Unlock()
 }

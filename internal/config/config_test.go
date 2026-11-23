@@ -79,7 +79,18 @@ func TestValidateRejects(t *testing.T) {
 			c.Server.Subscriptions = true
 			c.Server.SubscriptionsTopicPrefix = strings.Repeat("p", 63)
 		},
-		"subs topics": func(c *Config) { c.Server.Subscriptions = true; c.Server.SubscriptionsTopics = []string{"bad topic"} },
+		"subs topics":   func(c *Config) { c.Server.Subscriptions = true; c.Server.SubscriptionsTopics = []string{"bad topic"} },
+		"contract name": func(c *Config) { c.Contracts = []Contract{{Name: "Public"}} },
+		"contract metrics": func(c *Config) {
+			c.Contracts = []Contract{{Name: "public"}}
+			c.Metrics.Enabled = true
+			c.Metrics.Path = "/public/metrics"
+		},
+		"contract path": func(c *Config) { c.Contracts = []Contract{{Name: "a"}, {Name: "b", Path: "/a"}} },
+		"contract smart-comments": func(c *Config) {
+			c.Contracts = []Contract{{Name: "a"}}
+			c.Plugins.Disabled = []string{"smart-comments"}
+		},
 	}
 	for name, mutate := range cases {
 		if err := bad(mutate); err == nil {
@@ -224,5 +235,35 @@ func TestMetricsFromEnv(t *testing.T) {
 	}
 	if !cfg.Metrics.Enabled || cfg.Metrics.Addr != ":9090" || cfg.Metrics.Path != "/metrics" {
 		t.Fatalf("metrics = %+v", cfg.Metrics)
+	}
+}
+
+func TestContracts(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.RLS.Auth.JWTSecret = "s"
+	cfg.Contracts = []Contract{{Name: "internal", Path: "/"}, {Name: "public"}, {Name: "partner", Default: "exclude"}}
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if ct, err := cfg.Contract("partner"); err != nil || ct.Default != "exclude" {
+		t.Errorf("Contract(partner) = %+v, %v", ct, err)
+	}
+	if ct, err := cfg.Contract(""); err != nil || ct.Name != "" {
+		t.Errorf("Contract(\"\") = %+v, %v", ct, err)
+	}
+	if _, err := cfg.Contract("nope"); err == nil || err.Error() != `config: unknown contract "nope"` {
+		t.Errorf("Contract(nope) error = %v", err)
+	}
+}
+
+func TestContractsFromEnv(t *testing.T) {
+	t.Setenv("PDBQ_RLS_AUTH_JWT__SECRET", "s")
+	t.Setenv("PDBQ_CONTRACTS", "public,partner")
+	cfg, err := Load("", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Contracts) != 2 || cfg.Contracts[0].Name != "public" || cfg.Contracts[1].Name != "partner" {
+		t.Errorf("contracts = %+v", cfg.Contracts)
 	}
 }

@@ -129,6 +129,12 @@ otherwise surface as a `String` returning whole rows as JSON.
 |---|---|
 | `@name <new_name>` | Name the domain's custom scalar: `@name Percent` on `small_positive` yields `scalar Percent` (see [Domains](domains.md)). |
 
+### Contracts
+
+`@contract a, b` and `@behavior ±contract:<name>` on tables, columns,
+functions and foreign keys select which [schema contracts](contracts.md)
+an object belongs to. They have no effect unless `contracts` is configured.
+
 ## Enum tables
 
 `@enum` on a table turns its rows into a GraphQL enum — the PostGraphile

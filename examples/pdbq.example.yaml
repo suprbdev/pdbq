@@ -176,3 +176,5 @@ metrics:
   # Separate listen address for the metrics endpoint, e.g. :9090, keeping it off the public listener; empty serves it on the main server address.
   addr: ""
 
+# Schema contracts: named GraphQL schemas for different audiences, each a subset of the full schema selected by @contract / @behavior ±contract:<name> smart comments and served at <path>/graphql. Entries are {name, default: include|exclude, path (default /<name>)}, or bare names. When set, only the contracts are served (give one path: / to serve it at /graphql). Requires the smart-comments plugin.
+contracts: []

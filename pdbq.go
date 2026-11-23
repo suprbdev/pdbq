@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/suprbdev/pdbcore/cache"
 	"github.com/suprbdev/pdbcore/httpx"
@@ -53,6 +54,13 @@ type App struct {
 	metricsErr  error
 	metricsOnce sync.Once
 	instruments *exec.Metrics
+
+	// contractMetrics holds one Metrics per contract, labelled contract,
+	// on metricsReg, when the App created its own metrics with contracts
+	// configured; contractInstruments their executor counters.
+	contractMetrics     map[string]*metrics.Metrics
+	contractInstruments map[string]*exec.Metrics
+	metricsReg          prometheus.Registerer
 
 	// readOnly lives on the App (not in exec.Options as a value) so a single
 	// flag is shared by every executor the App builds — flipping it at
@@ -99,10 +107,59 @@ func New(cfg config.Config, opts ...Option) *App {
 		o(a)
 	}
 	if a.metrics == nil && cfg.Metrics.Enabled {
-		a.metrics, a.metricsErr = metrics.New(metrics.Options{Namespace: "pdbq"})
+		if len(cfg.Contracts) > 0 {
+			a.metricsErr = a.newContractMetrics()
+		} else {
+			a.metrics, a.metricsErr = metrics.New(metrics.Options{Namespace: "pdbq"})
+		}
 	}
 	a.readOnly.Store(cfg.Server.ReadOnly)
 	return a
+}
+
+// newContractMetrics creates one Metrics per contract on a shared registry,
+// told apart by a contract label; the App's own Metrics is the first
+// contract's, whose Handler serves them all.
+func (a *App) newContractMetrics() error {
+	reg, err := metrics.NewRegistry()
+	if err != nil {
+		return err
+	}
+	a.metricsReg = reg
+	a.contractMetrics = map[string]*metrics.Metrics{}
+	for _, ct := range a.Config.Contracts {
+		m, err := metrics.New(metrics.Options{
+			Namespace:   "pdbq",
+			Registerer:  reg,
+			ConstLabels: prometheus.Labels{"contract": ct.Name},
+		})
+		if err != nil {
+			return err
+		}
+		a.contractMetrics[ct.Name] = m
+		if a.metrics == nil {
+			a.metrics = m
+		}
+	}
+	return nil
+}
+
+// metricsFor returns the Metrics recording contract name: its own with
+// per-contract metrics, else the App's.
+func (a *App) metricsFor(name string) *metrics.Metrics {
+	if m, ok := a.contractMetrics[name]; ok {
+		return m
+	}
+	return a.metrics
+}
+
+// instrumentsFor returns the executor counters of contract name, as
+// metricsFor.
+func (a *App) instrumentsFor(name string) *exec.Metrics {
+	if m, ok := a.contractInstruments[name]; ok {
+		return m
+	}
+	return a.instruments
 }
 
 // Metrics returns the App's Prometheus instruments: the instance passed to
@@ -116,6 +173,18 @@ func (a *App) Metrics() *metrics.Metrics { return a.metrics }
 func (a *App) initMetrics() error {
 	a.metricsOnce.Do(func() {
 		if a.metricsErr != nil || a.metrics == nil {
+			return
+		}
+		if a.contractMetrics != nil {
+			if a.metricsErr = metrics.RegisterPoolOn(a.metricsReg, "pdbq", a.pool); a.metricsErr != nil {
+				return
+			}
+			a.contractInstruments = map[string]*exec.Metrics{}
+			for name, m := range a.contractMetrics {
+				if a.contractInstruments[name], a.metricsErr = exec.NewMetrics(m); a.metricsErr != nil {
+					return
+				}
+			}
 			return
 		}
 		if a.pool != nil {
@@ -277,8 +346,34 @@ func (a *App) BuildSchema(ctx context.Context, cat *introspect.Catalog) (*schema
 	return built, nil
 }
 
+// BuildContractSchema builds the schema of the configured contract name
+// from a filtered copy of cat, leaving cat unmodified so every contract
+// can be built from one catalog; "" builds the full schema exactly as
+// BuildSchema does (modifying cat).
+func (a *App) BuildContractSchema(ctx context.Context, cat *introspect.Catalog, name string) (*schema.Built, error) {
+	if name == "" {
+		return a.BuildSchema(ctx, cat)
+	}
+	ct, err := a.Config.Contract(name)
+	if err != nil {
+		return nil, err
+	}
+	view, sum := ct.Spec().View(cat)
+	a.Log.Debug("contract view", "contract", name, "hidden_tables", sum.Tables, "hidden_columns", sum.Columns,
+		"hidden_functions", sum.Functions, "hidden_foreign_keys", sum.ForeignKeys)
+	built, err := a.BuildSchema(ctx, view)
+	if err != nil {
+		return nil, fmt.Errorf("contract %s: %w", name, err)
+	}
+	return built, nil
+}
+
 // Executor assembles the request executor for a built schema.
 func (a *App) Executor(built *schema.Built) *exec.Executor {
+	return a.executor(built, a.instruments)
+}
+
+func (a *App) executor(built *schema.Built, instruments *exec.Metrics) *exec.Executor {
 	disabled := a.Config.DisabledPlugins()
 	compiler := compile.New(built)
 	compileFn := a.Registry.CompileChain(disabled, compiler.Compile)
@@ -320,7 +415,7 @@ func (a *App) Executor(built *schema.Built) *exec.Executor {
 		MaxSelections:              a.Config.Server.MaxSelections,
 		MaxIntrospectionBytes:      a.Config.Server.MaxIntrospectionBytes,
 		MaxFieldComparisons:        a.Config.Server.MaxFieldComparisons,
-		Metrics:                    a.instruments,
+		Metrics:                    instruments,
 		Logger:                     a.Log,
 		ReadOnly:                   &a.readOnly,
 	})
