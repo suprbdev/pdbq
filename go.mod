@@ -40,4 +40,7 @@ require (
 	google.golang.org/protobuf v1.36.12 // indirect
 )
 
-require github.com/suprbdev/pdbcore v0.6.0
+require (
+	github.com/coder/websocket v1.8.15
+	github.com/suprbdev/pdbcore v0.6.0
+)

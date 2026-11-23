@@ -19,6 +19,7 @@ import (
 	"github.com/suprbdev/pdbq/internal/plugin"
 	"github.com/suprbdev/pdbq/internal/schema"
 	"github.com/suprbdev/pdbq/internal/server"
+	"github.com/suprbdev/pdbq/internal/subscribe"
 )
 
 // Configuration. Section types carry a Config suffix to avoid clashing with
@@ -84,7 +85,9 @@ type (
 // embedder mounts App.Metrics().Handler() itself. The caller owns the
 // listener; server.addr and request timeouts still apply to the handler's
 // internals (http.TimeoutHandler), but read/idle timeouts are the
-// embedder's job.
+// embedder's job. With server.subscriptions on, the handler also serves
+// WebSocket subscriptions on /graphql; App.Close closes those connections
+// and the LISTEN connection.
 func (a *App) Handler(ctx context.Context) (http.Handler, error) {
 	srv, err := a.buildServer(ctx)
 	if err != nil {
@@ -131,6 +134,16 @@ func (a *App) buildServer(ctx context.Context) (*server.Server, error) {
 		return nil, err
 	}
 	srv.SetReadiness(a.pool.Ping)
+	if a.Config.Server.Subscriptions {
+		hub := subscribe.NewHub(subscribe.PoolDialer(a.pool), a.Log)
+		srv.SetSubscriptions(hub)
+		a.watchMu.Lock()
+		a.stops = append(a.stops, func() {
+			srv.CloseWebSockets()
+			hub.Close()
+		})
+		a.watchMu.Unlock()
+	}
 	if a.Config.Metrics.Addr == "" {
 		srv.SetMetrics(a.metrics, a.Config.Metrics.Path)
 	} else {

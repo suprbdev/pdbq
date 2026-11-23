@@ -48,6 +48,18 @@ server:
   read_only: false
   # Reject __schema / __type introspection queries (off by default). Enable in production to hide the schema shape; __typename keeps working.
   disable_introspection: false
+  # Serve PostGraphile-style simple subscriptions (Subscription.listen over LISTEN/NOTIFY) on /graphql over WebSocket, graphql-transport-ws or the legacy graphql-ws subprotocol. Off by default; while off the schema has no Subscription type.
+  subscriptions: false
+  # Maximum operations running at once on one WebSocket connection; a subscribe beyond it gets an error.
+  subscriptions_max_per_connection: 100
+  # Prefix put before the listen topic to form the PostgreSQL channel, as in pg_notify('postgraphile:' || topic, payload). The channel must fit in 63 bytes.
+  subscriptions_topic_prefix: "postgraphile:"
+  # Topics clients may listen to, without the prefix; an entry ending in * allows every topic starting with the rest. Empty allows any topic of letters, digits and _ . : / - characters.
+  subscriptions_topics: []
+  # Interval of the WebSocket ping (and legacy graphql-ws ka message) on subscription connections; a peer that does not answer within it is disconnected. 0 disables.
+  subscriptions_keepalive: "15s"
+  # Notifications queued per subscription while its events are being resolved; a subscriber that falls further behind gets an error and its subscription ends.
+  subscriptions_buffer: 32
 
 schema:
   # PostgreSQL schemas to expose.

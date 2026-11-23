@@ -374,3 +374,49 @@ func TestForwardRelationNameCollidesWithColumn(t *testing.T) {
 		check(t, schema.New(cat, reg.Inflector(nil), schema.Options{FilterIndexedOnly: true}))
 	})
 }
+
+func TestSubscriptionsSchema(t *testing.T) {
+	build := func(subs bool) *schema.Built {
+		t.Helper()
+		b := schema.New(testutil.FixtureCatalog(), inflect.Default, schema.Options{
+			FilterIndexedOnly: true,
+			Functions:         true,
+			Subscriptions:     subs,
+		})
+		built, err := b.Build()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return built
+	}
+	off, on := build(false), build(true)
+	if off.Schema.Subscription != nil || strings.Contains(off.SDL, "Subscription") || strings.Contains(off.SDL, "ListenPayload") {
+		t.Fatal("schema without subscriptions declares subscription types")
+	}
+	if on.Schema.Subscription == nil || on.Schema.Subscription.Name != "Subscription" {
+		t.Fatal("Subscription root missing")
+	}
+	sub := sdlType(on.SDL, "type Subscription")
+	payload := sdlType(on.SDL, "type ListenPayload")
+	for _, want := range []string{"listen(topic: String!, ", "initialEvent: Boolean! = false): ListenPayload!"} {
+		if !strings.Contains(sub, want) {
+			t.Errorf("Subscription missing %q:\n%s", want, sub)
+		}
+	}
+	for _, want := range []string{"query: Query\n", "relatedNode: Node\n", "relatedNodeId: ID\n"} {
+		if !strings.Contains(payload, want) {
+			t.Errorf("ListenPayload missing %q:\n%s", want, payload)
+		}
+	}
+	if m := on.Meta["Subscription"]["listen"]; m == nil || m.Kind != schema.KindListen {
+		t.Errorf("listen meta = %+v", m)
+	}
+	if m := on.Meta["ListenPayload"]["relatedNode"]; m == nil || m.Kind != schema.KindListenRelatedNode {
+		t.Errorf("relatedNode meta = %+v", m)
+	}
+	stripped := strings.Replace(on.SDL, sub+"\n\n", "", 1)
+	stripped = strings.Replace(stripped, `"""The payload of a listen subscription event."""`+"\n"+payload+"\n\n", "", 1)
+	if stripped != off.SDL {
+		t.Error("enabling subscriptions changed the rest of the schema")
+	}
+}

@@ -211,12 +211,35 @@ type Request struct {
 	Role          string
 }
 
-// Execute runs one GraphQL request end to end.
+// Execute runs one GraphQL request end to end. Subscription operations are
+// rejected: they need a long-lived transport (see Prepare).
 func (e *Executor) Execute(ctx context.Context, req Request) *Result {
 	ctx, op, err := e.prepare(ctx, req)
+	if err == nil && op.Type == ast.Subscription {
+		err = errSubscriptionTransport
+	}
 	if err != nil {
 		return errResult(err)
 	}
+	return e.ExecutePrepared(ctx, op)
+}
+
+// errSubscriptionTransport rejects a subscription sent over plain HTTP.
+var errSubscriptionTransport = gqlerror.Errorf("subscriptions are only served over WebSocket (graphql-transport-ws)")
+
+// Prepare runs the pre-execution pipeline of Execute: parse, validate,
+// operation selection, variable coercion, read-only and introspection
+// policy, depth and cost limits, and the BeforeOperation hooks. It accepts
+// subscription operations, which Execute rejects, so a subscription
+// transport can validate an operation once and resolve its events later.
+// The returned context carries the operation (see OperationFromContext).
+func (e *Executor) Prepare(ctx context.Context, req Request) (context.Context, *Operation, error) {
+	return e.prepare(ctx, req)
+}
+
+// ExecutePrepared executes a query or mutation operation returned by
+// Prepare and runs the AfterOperation hooks.
+func (e *Executor) ExecutePrepared(ctx context.Context, op *Operation) *Result {
 	res := &Result{Data: map[string]json.RawMessage{}}
 	e.executeOperation(ctx, op, res)
 	for _, h := range e.Hooks {
@@ -225,7 +248,32 @@ func (e *Executor) Execute(ctx context.Context, req Request) *Result {
 	return res
 }
 
-// prepare runs the pre-execution pipeline shared by Execute and
+// ExecuteFields runs fields, root fields of the Query type, as a query
+// operation under op's role, claims, variables and fragments, and returns
+// their values keyed by alias. All fields run in one round trip (one
+// statement each, in one transaction when RLS or the transaction policy
+// asks for it). The hooks do not run again: op already passed Prepare.
+// Subscriptions use it to resolve the Query selections of each event.
+func (e *Executor) ExecuteFields(ctx context.Context, op *Operation, fields []*ast.Field) *Result {
+	sel := make(ast.SelectionSet, len(fields))
+	for i, f := range fields {
+		sel[i] = f
+	}
+	q := *op
+	q.Type = ast.Query
+	q.Definition = &ast.OperationDefinition{
+		Operation:           ast.Query,
+		Name:                op.Definition.Name,
+		VariableDefinitions: op.Definition.VariableDefinitions,
+		SelectionSet:        sel,
+		Position:            op.Definition.Position,
+	}
+	res := &Result{Data: map[string]json.RawMessage{}}
+	e.executeOperation(WithOperation(ctx, &q), &q, res)
+	return res
+}
+
+// prepare runs the pre-execution pipeline shared by Execute, Prepare and
 // CompileRequest: parse, validate, operation selection, variable coercion,
 // limits, and BeforeOperation hooks.
 func (e *Executor) prepare(ctx context.Context, req Request) (context.Context, *Operation, error) {
@@ -245,7 +293,7 @@ func (e *Executor) prepare(ctx context.Context, req Request) (context.Context, *
 	if verr != nil {
 		return ctx, nil, verr
 	}
-	if opDef.Operation == ast.Subscription {
+	if opDef.Operation == ast.Subscription && e.Built.Schema.Subscription == nil {
 		return ctx, nil, gqlerror.Errorf("subscriptions are not supported")
 	}
 	if opDef.Operation == ast.Mutation && e.Opts.ReadOnly != nil && e.Opts.ReadOnly.Load() {
@@ -254,7 +302,7 @@ func (e *Executor) prepare(ctx context.Context, req Request) (context.Context, *
 	if e.Opts.DisableIntrospection {
 		// __typename stays allowed: it reveals only the root type name, and
 		// clients routinely send it as a liveness probe.
-		for _, f := range collectRootFields(opDef.SelectionSet, doc.Fragments, vars) {
+		for _, f := range e.queryRootFields(opDef, doc.Fragments, vars) {
 			if f.Name == "__schema" || f.Name == "__type" {
 				return ctx, nil, gqlerror.Errorf("introspection is disabled")
 			}
@@ -286,6 +334,29 @@ func (e *Executor) prepare(ctx context.Context, req Request) (context.Context, *
 	return ctx, op, nil
 }
 
+// queryRootFields returns an operation's root fields plus, for a
+// subscription, the selections of each listen payload's query field, which
+// resolve at the Query root.
+func (e *Executor) queryRootFields(opDef *ast.OperationDefinition, frags ast.FragmentDefinitionList, vars map[string]any) []*ast.Field {
+	roots := collectRootFields(opDef.SelectionSet, frags, vars)
+	if opDef.Operation != ast.Subscription {
+		return roots
+	}
+	out := slices.Clone(roots)
+	for _, f := range roots {
+		if f.Definition == nil {
+			continue
+		}
+		payload := e.Built.Meta[f.Definition.Type.Name()]
+		for _, pf := range collectRootFields(f.SelectionSet, frags, vars) {
+			if m := payload[pf.Name]; m != nil && m.Kind == schema.KindListenQuery {
+				out = append(out, collectRootFields(pf.SelectionSet, frags, vars)...)
+			}
+		}
+	}
+	return out
+}
+
 // CompiledField is one root field's compiled statement, as produced by
 // CompileRequest.
 type CompiledField struct {
@@ -301,6 +372,9 @@ type CompiledField struct {
 // are resolved in memory and produce no SQL, so they are omitted.
 func (e *Executor) CompileRequest(ctx context.Context, req Request) ([]CompiledField, error) {
 	ctx, op, err := e.prepare(ctx, req)
+	if err == nil && op.Type == ast.Subscription {
+		err = errSubscriptionTransport
+	}
 	if err != nil {
 		return nil, err
 	}

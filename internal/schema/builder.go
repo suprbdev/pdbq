@@ -69,6 +69,10 @@ type Options struct {
 	// scalar type (schema.domain_scalars), as PostGraphile does; otherwise
 	// domains take their base type's GraphQL type.
 	DomainScalars bool
+	// Subscriptions declares the Subscription root with PostGraphile's
+	// simple listen subscription (server.subscriptions). Without it the
+	// schema has no Subscription type.
+	Subscriptions bool
 	Logger        *slog.Logger
 }
 
@@ -87,6 +91,9 @@ type Builder struct {
 	// Query/Mutation are the root objects (also present in Objects).
 	Query    *Object
 	Mutation *Object
+	// Subscription is the subscription root (also present in Objects), nil
+	// unless Options.Subscriptions is set.
+	Subscription *Object
 
 	// TypeForTable maps "schema.table" to the generated object type name.
 	TypeForTable map[string]string
@@ -217,6 +224,10 @@ func New(cat *introspect.Catalog, inflector inflect.Next, opts Options) *Builder
 	b.Mutation = &Object{Name: "Mutation"}
 	b.Objects["Query"] = b.Query
 	b.Objects["Mutation"] = b.Mutation
+	if opts.Subscriptions {
+		b.Subscription = &Object{Name: "Subscription"}
+		b.Objects["Subscription"] = b.Subscription
+	}
 	b.addPageInfo()
 	b.addNode()
 	b.addEnums()
@@ -224,7 +235,52 @@ func New(cat *introspect.Catalog, inflector inflect.Next, opts Options) *Builder
 	b.addComposites()
 	b.addTables()
 	b.addFunctions()
+	if b.Subscription != nil {
+		b.addSubscriptions()
+	}
 	return b
+}
+
+// addSubscriptions declares PostGraphile's simple subscription on the
+// Subscription root: listen(topic:, initialEvent:) returning a
+// ListenPayload. relatedNode and relatedNodeId exist only when the schema
+// has the Node interface.
+func (b *Builder) addSubscriptions() {
+	payload := &Object{
+		Name:        b.uniqueTypeName("ListenPayload"),
+		Description: "The payload of a listen subscription event.",
+	}
+	payload.AddField(&Field{
+		Name:        "query",
+		Type:        "Query",
+		Description: "Our root query field type. Allows us to run any query from our subscription payload.",
+		Meta:        &FieldMeta{Kind: KindListenQuery},
+	})
+	if b.Objects["Node"] != nil {
+		payload.AddField(&Field{
+			Name:        "relatedNode",
+			Type:        "Node",
+			Description: "The node named by the notification payload's __node__, or null when it has none or it is not visible.",
+			Meta:        &FieldMeta{Kind: KindListenRelatedNode},
+		})
+		payload.AddField(&Field{
+			Name:        "relatedNodeId",
+			Type:        "ID",
+			Description: "The nodeId of the notification payload's __node__, or null when it has none.",
+			Meta:        &FieldMeta{Kind: KindListenRelatedNodeID},
+		})
+	}
+	b.Objects[payload.Name] = payload
+	b.addRootField(b.Subscription, &Field{
+		Name:        "listen",
+		Type:        payload.Name + "!",
+		Description: "Listens for notifications sent with pg_notify on the topic's channel (the topic with the configured prefix, postgraphile: by default).",
+		Args: []Arg{
+			{Name: "topic", Type: "String!"},
+			{Name: "initialEvent", Type: "Boolean!", Default: "false", Description: "If true, this subscription will trigger an event as soon as it initiates."},
+		},
+		Meta: &FieldMeta{Kind: KindListen},
+	})
 }
 
 // withoutPartitions returns cat without its partitions, plus the keys of the
@@ -1608,6 +1664,9 @@ func (b *Builder) Build() (*Built, error) {
 	if len(b.Mutation.Fields) == 0 {
 		delete(b.Objects, "Mutation")
 	}
+	if b.Subscription != nil && len(b.Subscription.Fields) == 0 {
+		delete(b.Objects, "Subscription")
+	}
 	if len(b.Query.Fields) == 0 {
 		b.Query.Fields = append(b.Query.Fields, &Field{
 			Name: "_empty", Type: "Boolean",
@@ -1752,7 +1811,7 @@ func (b *Builder) SDL() string {
 
 	objNames := sortedKeys(b.Objects)
 	for _, n := range objNames {
-		if n == "Query" || n == "Mutation" {
+		if n == "Query" || n == "Mutation" || n == "Subscription" {
 			continue
 		}
 		b.writeObject(&out, b.Objects[n])
@@ -1760,6 +1819,9 @@ func (b *Builder) SDL() string {
 	b.writeObject(&out, b.Query)
 	if m, ok := b.Objects["Mutation"]; ok {
 		b.writeObject(&out, m)
+	}
+	if s, ok := b.Objects["Subscription"]; ok {
+		b.writeObject(&out, s)
 	}
 	return out.String()
 }

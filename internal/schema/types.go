@@ -66,6 +66,20 @@ const (
 	// KindAggregateValue is one aggregated column; Meta.Aggregate binds the
 	// expression.
 	KindAggregateValue FieldKind = "aggregate_value"
+	// KindListen is Subscription.listen(topic:, initialEvent:), the
+	// PostGraphile simple subscription over LISTEN/NOTIFY; it is served by
+	// the subscription transport, never compiled.
+	KindListen FieldKind = "listen"
+	// KindListenQuery is ListenPayload.query: the Query root, resolved per
+	// event under the subscriber's identity.
+	KindListenQuery FieldKind = "listen_query"
+	// KindListenRelatedNode is ListenPayload.relatedNode: the node named by
+	// the notification payload's __node__, resolved per event like
+	// Query.node.
+	KindListenRelatedNode FieldKind = "listen_related_node"
+	// KindListenRelatedNodeID is ListenPayload.relatedNodeId: the nodeId
+	// encoded from the payload's __node__.
+	KindListenRelatedNodeID FieldKind = "listen_related_node_id"
 )
 
 // FieldMeta binds a GraphQL field to the catalog for SQL compilation.
