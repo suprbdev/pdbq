@@ -326,14 +326,15 @@ func (a *App) BuildSchema(ctx context.Context, cat *introspect.Catalog) (*schema
 		return nil, fmt.Errorf("catalog hooks: %w", err)
 	}
 	b := schema.New(cat, a.Registry.Inflector(disabled), schema.Options{
-		FilterIndexedOnly: a.Config.Filters.IndexedOnly,
-		AllowColumns:      a.Config.Filters.AllowColumns,
-		Functions:         a.Config.Schema.Functions,
-		ExposePartitions:  a.Config.Schema.ExposePartitions,
-		DomainScalars:     a.Config.Schema.DomainScalars,
-		JWTType:           a.Config.RLS.Auth.JWTType,
-		Subscriptions:     a.Config.Server.Subscriptions,
-		Logger:            a.Log,
+		FilterIndexedOnly:   a.Config.Filters.IndexedOnly,
+		AllowColumns:        a.Config.Filters.AllowColumns,
+		Functions:           a.Config.Schema.Functions,
+		ExposePartitions:    a.Config.Schema.ExposePartitions,
+		DomainScalars:       a.Config.Schema.DomainScalars,
+		JWTType:             a.Config.RLS.Auth.JWTType,
+		Subscriptions:       a.Config.Server.Subscriptions,
+		IncrementalDelivery: a.Config.Server.IncrementalDelivery,
+		Logger:              a.Log,
 	})
 	if err := a.Registry.TransformSchema(ctx, disabled, b); err != nil {
 		return nil, fmt.Errorf("schema hooks: %w", err)
@@ -418,6 +419,11 @@ func (a *App) executor(built *schema.Built, instruments *exec.Metrics) *exec.Exe
 		Metrics:                    instruments,
 		Logger:                     a.Log,
 		ReadOnly:                   &a.readOnly,
+		Incremental: exec.IncrementalOptions{
+			Enabled:         a.Config.Server.IncrementalDelivery,
+			MaxDeferred:     a.Config.Server.IncrementalMaxDeferred,
+			StreamBatchSize: a.Config.Server.IncrementalStreamBatchSize,
+		},
 	})
 }
 

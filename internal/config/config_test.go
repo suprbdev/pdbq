@@ -91,6 +91,8 @@ func TestValidateRejects(t *testing.T) {
 			c.Contracts = []Contract{{Name: "a"}}
 			c.Plugins.Disabled = []string{"smart-comments"}
 		},
+		"inc deferred": func(c *Config) { c.Server.IncrementalDelivery = true; c.Server.IncrementalMaxDeferred = 0 },
+		"inc batch":    func(c *Config) { c.Server.IncrementalDelivery = true; c.Server.IncrementalStreamBatchSize = 0 },
 	}
 	for name, mutate := range cases {
 		if err := bad(mutate); err == nil {

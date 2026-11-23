@@ -62,6 +62,12 @@ server:
   read_only: false
   # Reject __schema / __type introspection queries and leave the "Did you mean" suggestions out of validation errors (off by default). Enable in production to hide the schema shape; __typename keeps working.
   disable_introspection: false
+  # Serve the defer and stream directives of GraphQL incremental delivery: the schema declares them, a query using them is answered over HTTP as multipart/mixed (Accept: multipart/mixed) and over WebSocket as several next messages, every payload read from one repeatable read snapshot. Off by default; while off the schema declares neither directive, stream is rejected and defer is ignored (one result).
+  incremental_delivery: false
+  # Maximum deferred fragments and streamed fields in one operation; each one runs its own statements.
+  incremental_max_deferred: 16
+  # Items per payload of a streamed list after its initialCount items; each batch is one statement.
+  incremental_stream_batch_size: 10
   # Serve PostGraphile-style simple subscriptions (Subscription.listen over LISTEN/NOTIFY) on /graphql over WebSocket, graphql-transport-ws or the legacy graphql-ws subprotocol. Off by default; while off the schema has no Subscription type.
   subscriptions: false
   # Maximum operations running at once on one WebSocket connection, counted until each has fully stopped; a subscribe beyond it gets an error (or waits while completed operations are still stopping).

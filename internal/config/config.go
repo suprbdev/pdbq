@@ -73,6 +73,10 @@ type Server struct {
 	ReadOnly                   bool          `koanf:"read_only" doc:"Reject every mutation operation (read-only mode) for maintenance, demos or defense in depth. Also toggleable at runtime when embedding pdbq as a library (App.SetReadOnly)."`
 	DisableIntrospection       bool          `koanf:"disable_introspection" doc:"Reject __schema / __type introspection queries and leave the \"Did you mean\" suggestions out of validation errors (off by default). Enable in production to hide the schema shape; __typename keeps working."`
 
+	IncrementalDelivery        bool `koanf:"incremental_delivery" doc:"Serve the defer and stream directives of GraphQL incremental delivery: the schema declares them, a query using them is answered over HTTP as multipart/mixed (Accept: multipart/mixed) and over WebSocket as several next messages, every payload read from one repeatable read snapshot. Off by default; while off the schema declares neither directive, stream is rejected and defer is ignored (one result)."`
+	IncrementalMaxDeferred     int  `koanf:"incremental_max_deferred" doc:"Maximum deferred fragments and streamed fields in one operation; each one runs its own statements."`
+	IncrementalStreamBatchSize int  `koanf:"incremental_stream_batch_size" doc:"Items per payload of a streamed list after its initialCount items; each batch is one statement."`
+
 	Subscriptions                 bool          `koanf:"subscriptions" doc:"Serve PostGraphile-style simple subscriptions (Subscription.listen over LISTEN/NOTIFY) on /graphql over WebSocket, graphql-transport-ws or the legacy graphql-ws subprotocol. Off by default; while off the schema has no Subscription type."`
 	SubscriptionsMaxPerConnection int           `koanf:"subscriptions_max_per_connection" doc:"Maximum operations running at once on one WebSocket connection, counted until each has fully stopped; a subscribe beyond it gets an error (or waits while completed operations are still stopping)."`
 	SubscriptionsMaxConnections   int           `koanf:"subscriptions_max_connections" doc:"Maximum WebSocket connections at once; further upgrade requests are answered 503."`
@@ -131,6 +135,8 @@ func DefaultConfig() Config {
 			DocumentCacheSize:          1000,
 			DocumentCacheBytes:         64 << 20,
 			DocumentCacheMaxEntryBytes: 1 << 20,
+			IncrementalMaxDeferred:     16,
+			IncrementalStreamBatchSize: 10,
 
 			SubscriptionsMaxPerConnection: 100,
 			SubscriptionsMaxConnections:   1000,
@@ -218,6 +224,14 @@ func (c *Config) Validate() error {
 	} {
 		if l.v < 1 {
 			errs = append(errs, "server."+l.name+" must be >= 1")
+		}
+	}
+	if c.Server.IncrementalDelivery {
+		if c.Server.IncrementalMaxDeferred < 1 {
+			errs = append(errs, "server.incremental_max_deferred must be >= 1")
+		}
+		if c.Server.IncrementalStreamBatchSize < 1 {
+			errs = append(errs, "server.incremental_stream_batch_size must be >= 1")
 		}
 	}
 	if c.Server.Subscriptions {

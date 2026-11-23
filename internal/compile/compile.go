@@ -29,6 +29,9 @@ type Statement struct {
 	Args []any
 	// ReturnsRow is false when zero rows means null (single lookups).
 	Mutation bool
+	// Streamed lists the ids of the StreamWindow fields whose window the
+	// statement applied.
+	Streamed []int
 	// Then, when set, is a second statement to run after this one in the
 	// same transaction; its data is the field's value, and this
 	// statement's data is only its input. Then.SQL reads that data value
@@ -104,9 +107,10 @@ func (c *Compiler) Compile(ctx context.Context, req *Request) (*Statement, error
 		return nil, err
 	}
 	return &Statement{
-		SQL:  sql,
-		Args: s.args,
-		Then: s.then,
+		SQL:      sql,
+		Args:     s.args,
+		Then:     s.then,
+		Streamed: s.streamed,
 		Mutation: meta.Kind == schema.KindCreate || meta.Kind == schema.KindUpdate ||
 			meta.Kind == schema.KindDelete || meta.Kind == schema.KindUpsert ||
 			meta.Kind == schema.KindCreateMany || meta.Kind == schema.KindUpdateMany ||
@@ -174,6 +178,8 @@ type stmt struct {
 	rankRefs []rankRef
 	// then is the Then statement of the compiled field (functionMutation).
 	then *Statement
+	// streamed lists the StreamWindow ids applied so far.
+	streamed []int
 	// rankScope is set while compiling the conjunctive top level of a list
 	// field's filter (the root object and nested and lists), the only
 	// place a full-text match can rank rows: matches under or, not or a
@@ -316,6 +322,9 @@ func mergeFields(fields []*ast.Field) []*ast.Field {
 			copied[i] = true
 		}
 		out[i].SelectionSet = append(out[i].SelectionSet, f.SelectionSet...)
+		if d := f.Directives.ForName(windowDirective); d != nil && out[i].Directives.ForName(windowDirective) == nil {
+			out[i].Directives = append(ast.DirectiveList{d}, out[i].Directives...)
+		}
 	}
 	return out
 }

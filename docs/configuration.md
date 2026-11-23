@@ -55,6 +55,9 @@ $ pdbq config example   # print the full annotated reference
 | `server.persisted_only` | `false` | reject requests that don't reference a persisted query (requires `apq` or `persisted_queries_path`) |
 | `server.read_only` | `false` | reject every mutation (maintenance, demos, defense in depth) |
 | `server.disable_introspection` | `false` | reject `__schema`/`__type` queries and leave "Did you mean …" suggestions out of validation errors, so guessed names don't reveal real ones (`__typename` keeps working) |
+| `server.incremental_delivery` | `false` | serve `@defer` and `@stream`: declared in the schema, queries delivered as `multipart/mixed` over HTTP (`Accept: multipart/mixed`) and as several `next` messages over WebSocket, every payload read from one repeatable read snapshot; off leaves the SDL without directives, rejects `@stream` and delivers `@defer` inline — see [Incremental delivery](incremental.md) |
+| `server.incremental_max_deferred` | 16 | `@defer` fragments plus `@stream` fields one operation may apply; each runs its own statements |
+| `server.incremental_stream_batch_size` | 10 | items per payload of a streamed list after its `initialCount` items; each batch is one statement |
 | `server.subscriptions` | `false` | serve `Subscription.listen` over WebSocket on `/graphql` (`graphql-transport-ws`, legacy `graphql-ws`); off leaves the schema without a `Subscription` type — see [Subscriptions](subscriptions.md) |
 | `server.subscriptions_max_per_connection` | 100 | operations running at once per WebSocket, counted until each has stopped; one more gets an `error` message, or waits while completed operations are still stopping |
 | `server.subscriptions_max_connections` | 1000 | WebSocket connections at once; further upgrades get `503` |

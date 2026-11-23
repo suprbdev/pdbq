@@ -654,7 +654,14 @@ func (c *wsSession) execute(ctx context.Context, id string, req gqlHTTPRequest, 
 			pctx, cancel = context.WithTimeout(pctx, t)
 			defer cancel()
 		}
-		c.sendNext(ctx, id, ex.ExecutePrepared(pctx, op))
+		if c.s.cfg.IncrementalDelivery {
+			_ = ex.ExecuteIncremental(pctx, op, exec.IncrementalV02, func(body []byte, _ bool) error {
+				c.sendPayload(ctx, id, body)
+				return ctx.Err()
+			})
+		} else {
+			c.sendNext(ctx, id, ex.ExecutePrepared(pctx, op))
+		}
 		c.sendComplete(ctx, id)
 		return
 	}
@@ -704,6 +711,12 @@ func (c *wsSession) sendNext(ctx context.Context, id string, res *exec.Result) {
 		c.s.log.Error("websocket: encode result", "err", err)
 		body = []byte(`{"errors":[{"message":"internal error"}]}`)
 	}
+	c.sendPayload(ctx, id, body)
+}
+
+// sendPayload sends body, one execution result, as a next message (a data
+// message on the legacy protocol).
+func (c *wsSession) sendPayload(ctx context.Context, id string, body []byte) {
 	typ := "next"
 	if c.legacy {
 		typ = "data"

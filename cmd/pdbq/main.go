@@ -51,6 +51,7 @@ func configFlags(cmd *cobra.Command) {
 	fs.Int("server.document_cache_size", 1000, "parsed+validated GraphQL documents to cache (0 disables)")
 	fs.Int("server.document_cache_bytes", 64<<20, "estimated memory the document cache may retain")
 	fs.Int("server.document_cache_max_entry_bytes", 1<<20, "estimated size above which a document is not cached")
+	fs.Bool("server.incremental_delivery", false, "serve the defer and stream directives (multipart/mixed over HTTP, next messages over WebSocket)")
 	fs.Bool("server.subscriptions", false, "serve listen subscriptions (LISTEN/NOTIFY) over WebSocket on /graphql")
 	fs.Int("server.subscriptions_max_connections", 1000, "maximum WebSocket connections at once")
 	fs.Int("server.subscriptions_max_operations", 10000, "maximum operations running at once over all WebSocket connections")
