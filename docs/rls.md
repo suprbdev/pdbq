@@ -1,13 +1,15 @@
 # RLS & authentication
 
 RLS support is **on by default**. Each operation runs inside a transaction
-that:
+that first applies the identity, in one statement sent in the same pipelined
+batch as the operation's root field statements:
 
-1. `SET LOCAL ROLE <role>` — the role from the request's claims
-   (`rls.role_claim`, default claim `role`), falling back to
-   `rls.default_role`, then `rls.anonymous_role` for unauthenticated
+1. `SET LOCAL ROLE <role>` (as `set_config('role', $1, true)`, the same
+   operation with the role as a bind parameter) — the role from the
+   request's claims (`rls.role_claim`, default claim `role`), falling back
+   to `rls.default_role`, then `rls.anonymous_role` for unauthenticated
    requests.
-2. `SELECT set_config('pdbq.claims.<key>', <value>, true)` for every claim —
+2. `set_config('pdbq.claims.<key>', <value>, true)` for every claim —
    readable in policies via `current_setting('pdbq.claims.user_id', true)`.
 
 Only `SET LOCAL` / transaction-scoped `set_config` are ever used, so pooled

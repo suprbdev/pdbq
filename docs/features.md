@@ -149,6 +149,7 @@ Checklist of PostgreSQL and GraphQL features pdbq supports. Checked = implemente
 - [x] One transaction per operation; mutations abort remaining root fields on error
 - [x] Queries transaction-free unless RLS context requires one
 - [x] Plugins can force a transaction (`op.ForceTx`)
+- [x] Transactions sent as one pipelined batch (identity, root field statements, commit): one round trip for queries, two for single-statement mutations; multi-statement mutations run statement by statement
 - [x] Isolation level config (read_committed / repeatable_read / serializable)
 - [x] Statement timeout per connection (`database.statement_timeout`)
 - [x] PG error → GraphQL error mapping with `errors.detail: dev|prod` (constraint violations pass through in prod, internals sanitized)
