@@ -73,6 +73,11 @@ type Options struct {
 	// simple listen subscription (server.subscriptions). Without it the
 	// schema has no Subscription type.
 	Subscriptions bool
+	// Live adds live queries (server.live): every Query root field is
+	// repeated on the Subscription root, and the live directive is
+	// declared for query operations. It has no effect without
+	// Subscriptions.
+	Live bool
 	// IncrementalDelivery declares the defer and stream directives of the
 	// incremental delivery RFC (server.incremental_delivery). Without it
 	// the SDL declares no directive.
@@ -1838,10 +1843,35 @@ directive @stream(
 
 `
 
+// liveDirective is declared with server.live: a query operation carrying it
+// is served as a live query over WebSocket.
+const liveDirective = `"""Re-sends the query's result whenever the data it read changes (live query; WebSocket only, over HTTP the query runs once)."""
+directive @live on QUERY
+
+`
+
+// addLiveFields repeats the Query root fields on the Subscription root, as
+// PostGraphile's live queries do: a subscription selecting one of them is a
+// live query. A Query field whose name the Subscription root already has
+// (listen) is skipped with a warning.
+func (b *Builder) addLiveFields() {
+	for _, f := range b.Query.Fields {
+		if f.Meta != nil && f.Meta.Kind == KindSynthetic {
+			continue
+		}
+		cp := *f
+		cp.Args = slices.Clone(f.Args)
+		b.addRootField(b.Subscription, &cp)
+	}
+}
+
 // Build renders SDL, validates it, and returns the executable schema + meta.
 func (b *Builder) Build() (*Built, error) {
 	if len(b.Mutation.Fields) == 0 {
 		delete(b.Objects, "Mutation")
+	}
+	if b.Subscription != nil && b.Options.Live {
+		b.addLiveFields()
 	}
 	if b.Subscription != nil && len(b.Subscription.Fields) == 0 {
 		delete(b.Objects, "Subscription")
@@ -1957,6 +1987,9 @@ func (b *Builder) SDL() string {
 	var out strings.Builder
 	if b.Options.IncrementalDelivery {
 		out.WriteString(incrementalDirectives)
+	}
+	if b.Options.Live && b.Subscription != nil {
+		out.WriteString(liveDirective)
 	}
 	for _, s := range b.Scalars {
 		writeDesc(&out, b.ScalarDescriptions[s], "")

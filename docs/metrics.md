@@ -63,6 +63,9 @@ is a 503.
 | `pdbq_cost_limit_rejections_total` | counter | | operations rejected for exceeding `server.max_cost` |
 | `pdbq_field_errors_total` | counter | `class` | errors raised while executing root fields, by class: `user_input` (GraphQL and client-safe compile errors, bad-input SQLSTATEs), `permission`, `conflict`, `resource`, `timeout`, `internal` |
 | `pdbq_compile_duration_seconds` | histogram | | time to compile one root field into SQL |
+| `pdbq_live_changes_total` | counter | | table change notifications received for live queries (`server.live`) |
+| `pdbq_live_refreshes_total` | counter | `result` (`sent`, `unchanged`, `error`) | live query runs: new result sent, identical result not sent, result with errors sent |
+| `pdbq_live_operations_total` | counter | `event` (`started`, `stopped`, `rejected`) | live queries started, stopped and refused by a live cap; started minus stopped are running |
 
 ### Database
 

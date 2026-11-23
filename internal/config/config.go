@@ -13,6 +13,7 @@ import (
 
 	flag "github.com/spf13/pflag"
 	"github.com/suprbdev/pdbcore/confx"
+	"github.com/suprbdev/pdbq/internal/live"
 	"github.com/suprbdev/pdbq/internal/subscribe"
 )
 
@@ -86,6 +87,14 @@ type Server struct {
 	SubscriptionsTopics           []string      `koanf:"subscriptions_topics" doc:"Topics clients may listen to, without the prefix; an entry ending in * allows every topic starting with the rest. Empty allows any topic of letters, digits and _ . : / - characters."`
 	SubscriptionsKeepalive        time.Duration `koanf:"subscriptions_keepalive" doc:"Interval of the WebSocket ping (and legacy graphql-ws ka message) on subscription connections; a peer that does not answer within it is disconnected. 0 disables."`
 	SubscriptionsBuffer           int           `koanf:"subscriptions_buffer" doc:"Notifications queued per subscription while its events are being resolved; a subscriber that falls further behind gets an error and its subscription ends."`
+
+	Live                 bool          `koanf:"live" doc:"Serve live queries (requires subscriptions): every Query field is repeated on the Subscription root, and a query operation marked with the live directive is live too; the result is re-sent whenever a table it read changes, re-run under the subscriber's identity. Change detection uses per-table triggers notifying live_channel. Off by default; while off the schema is unchanged."`
+	LiveChannel          string        `koanf:"live_channel" doc:"LISTEN channel the change triggers notify with the changed table's OID; it also names the triggers (<channel>, <channel>_truncate) and their function (<channel>_notify). Letters, digits and underscores."`
+	LiveInstallTriggers  bool          `koanf:"live_install_triggers" doc:"Install the change triggers at startup (and after watch-mode rebuilds) on the tables of the exposed schemas and the tables their views read; needs table ownership. Disable to install them yourself (see docs/live.md)."`
+	LiveThrottle         time.Duration `koanf:"live_throttle" doc:"Shortest time between two runs of one live query; changes in between are coalesced into one run at the end of the interval."`
+	LiveConcurrency      int           `koanf:"live_concurrency" doc:"Live query runs in flight at once across the server; further runs wait, so a burst of changes cannot take every pool connection."`
+	LiveMaxPerConnection int           `koanf:"live_max_per_connection" doc:"Maximum live queries running at once on one WebSocket connection (they also count against subscriptions_max_per_connection)."`
+	LiveMaxOperations    int           `koanf:"live_max_operations" doc:"Maximum live queries running at once over all WebSocket connections (they also count against subscriptions_max_operations)."`
 }
 
 // Schema is confx.Schema plus expose_partitions and domain_scalars. It
@@ -145,6 +154,13 @@ func DefaultConfig() Config {
 			SubscriptionsTopicPrefix:      "postgraphile:",
 			SubscriptionsKeepalive:        15 * time.Second,
 			SubscriptionsBuffer:           32,
+
+			LiveChannel:          live.DefaultChannel,
+			LiveInstallTriggers:  true,
+			LiveThrottle:         500 * time.Millisecond,
+			LiveConcurrency:      4,
+			LiveMaxPerConnection: 10,
+			LiveMaxOperations:    1000,
 		},
 		Schema: Schema{
 			Schemas:       []string{"public"},
@@ -237,6 +253,9 @@ func (c *Config) Validate() error {
 	if c.Server.Subscriptions {
 		errs = append(errs, validateSubscriptions(c.Server)...)
 	}
+	if c.Server.Live {
+		errs = append(errs, validateLive(c.Server)...)
+	}
 	errs = append(errs, confx.ValidateLog(c.Log)...)
 	if c.Metrics.Enabled {
 		errs = append(errs, confx.ValidateMetrics(c.Metrics, c.Server.Addr)...)
@@ -277,6 +296,29 @@ var reservedPaths = map[string]bool{"/graphql": true, "/healthz": true, "/readyz
 
 // DisabledPlugins returns the disabled-plugin set for registry filtering.
 func (c *Config) DisabledPlugins() map[string]bool { return c.Plugins.DisabledSet() }
+
+func validateLive(s Server) []string {
+	var errs []string
+	if !s.Subscriptions {
+		errs = append(errs, "server.live requires server.subscriptions")
+	}
+	if !live.ValidChannel(s.LiveChannel) {
+		errs = append(errs, fmt.Sprintf("server.live_channel: %q must be letters, digits and underscores, not starting with a digit, at most %d bytes", s.LiveChannel, live.MaxChannelBytes))
+	}
+	if s.LiveThrottle < 0 {
+		errs = append(errs, "server.live_throttle must be >= 0")
+	}
+	if s.LiveConcurrency < 1 {
+		errs = append(errs, "server.live_concurrency must be >= 1")
+	}
+	if s.LiveMaxPerConnection < 1 {
+		errs = append(errs, "server.live_max_per_connection must be >= 1")
+	}
+	if s.LiveMaxOperations < 1 {
+		errs = append(errs, "server.live_max_operations must be >= 1")
+	}
+	return errs
+}
 
 func validateSubscriptions(s Server) []string {
 	var errs []string

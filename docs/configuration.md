@@ -67,6 +67,13 @@ $ pdbq config example   # print the full annotated reference
 | `server.subscriptions_topics` | `[]` | topic allowlist (without the prefix); `foo:*` allows every topic starting with `foo:`; empty allows any topic of `[A-Za-z0-9_.:/-]` |
 | `server.subscriptions_keepalive` | `15s` | WebSocket ping interval (plus `ka` messages on legacy `graphql-ws`); a peer silent for an interval is disconnected; `0` disables |
 | `server.subscriptions_buffer` | 32 | notifications queued per subscription; a subscriber further behind gets an `error` and its subscription ends |
+| `server.live` | `false` | serve live queries (requires `server.subscriptions`): every `Query` field repeated on `Subscription`, plus `query @live`; results re-sent when a table they read changes, re-run under the subscriber's identity; off leaves the schema unchanged — see [Live queries](live.md) |
+| `server.live_channel` | `pdbq_live` | LISTEN channel the change triggers notify (payload: table OID); also names the triggers (`<channel>`, `<channel>_truncate`) and their function (`<channel>_notify`); `[A-Za-z0-9_]`, at most 54 bytes |
+| `server.live_install_triggers` | `true` | install the change triggers at startup and after watch-mode rebuilds (needs table ownership); `false` to install them yourself |
+| `server.live_throttle` | `500ms` | shortest time between two runs of one live query; changes in between coalesce into one run |
+| `server.live_concurrency` | 4 | live query runs in flight at once across the server; further runs wait |
+| `server.live_max_per_connection` | 10 | live queries per WebSocket (also counted in `subscriptions_max_per_connection`); one more gets an `error` message |
+| `server.live_max_operations` | 1000 | live queries over all WebSocket connections (also counted in `subscriptions_max_operations`); one more gets an `error` message |
 | `schema.schemas` | `[public]` | schema allowlist |
 | `schema.cache_path` | — | boot from `pdbq schema dump` output |
 | `schema.functions` | `true` | expose PostgreSQL functions as custom queries/mutations |

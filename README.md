@@ -52,6 +52,9 @@ time=... msg=listening addr=:8080 graphiql=true
   LISTEN/NOTIFY on a WebSocket (`graphql-transport-ws`), each event resolved
   under the subscriber's RLS identity, see
   [docs/subscriptions.md](docs/subscriptions.md).
+- **Live queries (opt-in)** — PostGraphile-style `subscription { allPosts … }`
+  (or `query @live`) re-sent whenever a table it read changes, re-run under
+  each subscriber's RLS identity, see [docs/live.md](docs/live.md).
 - **Schema contracts** — named schemas per audience (`public`, `partner`,
   `internal`) selected by `@contract` / `@behavior ±contract:<name>` smart
   comments, each served at its own `/<name>/graphql`, see
@@ -124,6 +127,7 @@ See [docs/quickstart.md](docs/quickstart.md) for the full tour.
 | [docs/contracts.md](docs/contracts.md) | Schema contracts: per-audience schemas from `@contract` tags, endpoints, security model |
 | [docs/metrics.md](docs/metrics.md) | Prometheus `/metrics`: enabling, separate listener, metric reference |
 | [docs/subscriptions.md](docs/subscriptions.md) | Opt-in `listen` subscriptions over LISTEN/NOTIFY and WebSocket: protocol, auth, topics, limits, cost |
+| [docs/live.md](docs/live.md) | Opt-in live queries: schema, change triggers, throttle, dedupe, caps, metrics |
 | [docs/incremental.md](docs/incremental.md) | Opt-in `@defer` and `@stream`: transports, payload shapes, snapshot consistency, limits |
 
 ## Development

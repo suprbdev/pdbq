@@ -442,6 +442,70 @@ func TestSubscriptionsSchema(t *testing.T) {
 	}
 }
 
+// TestLiveSchema checks that live queries repeat every Query field on the
+// Subscription root and declare the live directive, and that the option
+// leaves the schema byte-for-byte unchanged when it is off or when
+// subscriptions are off.
+func TestLiveSchema(t *testing.T) {
+	build := func(subs, live bool) *schema.Built {
+		t.Helper()
+		built, err := schema.New(testutil.FixtureCatalog(), inflect.Default, schema.Options{
+			FilterIndexedOnly: true,
+			Functions:         true,
+			Subscriptions:     subs,
+			Live:              live,
+		}).Build()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return built
+	}
+	if off, liveOnly := build(false, false), build(false, true); liveOnly.SDL != off.SDL {
+		t.Error("live without subscriptions changed the schema")
+	}
+	subs, on := build(true, false), build(true, true)
+	if strings.Contains(subs.SDL, "@live") || subs.Schema.Directives["live"] != nil {
+		t.Fatal("schema without live declares the live directive")
+	}
+	if d := on.Schema.Directives["live"]; d == nil || len(d.Locations) != 1 || d.Locations[0] != "QUERY" || len(d.Arguments) != 0 {
+		t.Fatalf("live directive = %+v", on.Schema.Directives["live"])
+	}
+	query, sub := on.Schema.Query, on.Schema.Subscription
+	if sub.Fields.ForName("listen") == nil {
+		t.Error("listen missing from the live Subscription root")
+	}
+	n := 0
+	for _, f := range query.Fields {
+		if strings.HasPrefix(f.Name, "__") {
+			continue
+		}
+		n++
+		sf := sub.Fields.ForName(f.Name)
+		if sf == nil {
+			t.Errorf("Query.%s not repeated on Subscription", f.Name)
+			continue
+		}
+		if sf.Type.String() != f.Type.String() || len(sf.Arguments) != len(f.Arguments) {
+			t.Errorf("Subscription.%s = %s (%d args), want %s (%d args)", f.Name, sf.Type, len(sf.Arguments), f.Type, len(f.Arguments))
+		}
+		if on.Meta["Subscription"][f.Name] != on.Meta["Query"][f.Name] {
+			t.Errorf("Subscription.%s does not share Query.%s's metadata", f.Name, f.Name)
+		}
+	}
+	if n < 5 {
+		t.Fatalf("only %d Query fields", n)
+	}
+	if len(on.Meta["Subscription"]) != n+1 {
+		t.Errorf("Subscription has %d fields, want the %d Query fields and listen", len(on.Meta["Subscription"]), n)
+	}
+	onSub, subsSub := sdlType(on.SDL, "type Subscription"), sdlType(subs.SDL, "type Subscription")
+	stripped := strings.Replace(on.SDL, onSub, subsSub, 1)
+	stripped = strings.TrimPrefix(stripped, stripped[:strings.Index(stripped, "directive @live on QUERY\n\n")+len("directive @live on QUERY\n\n")])
+	if stripped != subs.SDL {
+		t.Error("live changed the schema outside the Subscription root and the directive")
+	}
+}
+
 // TestPayloadRelationFallsBackOnCollision covers a forward relation whose
 // name is taken on the payload (here by query): it takes the
 // <referencedTable>By<Columns> form there, keeping its name on the row type.

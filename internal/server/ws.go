@@ -214,6 +214,10 @@ type wsSession struct {
 	// those, not just the entries of ops.
 	slots chan struct{}
 
+	// live counts the live queries running on the connection
+	// (server.live_max_per_connection), guarded by mu.
+	live int
+
 	// tokens and last are the subscribe rate limiter's bucket, used only by
 	// the read loop.
 	tokens float64
@@ -646,6 +650,10 @@ func (c *wsSession) execute(ctx context.Context, id string, req gqlHTTPRequest, 
 	})
 	if err != nil {
 		c.sendErrors(ctx, id, errorList(err))
+		return
+	}
+	if fields, ok := c.s.liveFields(ex, op); ok {
+		c.executeLive(ctx, pctx, id, ex, op, fields)
 		return
 	}
 	if op.Type != ast.Subscription {

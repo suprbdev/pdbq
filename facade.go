@@ -16,6 +16,7 @@ import (
 	"github.com/suprbdev/pdbq/internal/config"
 	"github.com/suprbdev/pdbq/internal/exec"
 	"github.com/suprbdev/pdbq/internal/inflect"
+	"github.com/suprbdev/pdbq/internal/live"
 	"github.com/suprbdev/pdbq/internal/plugin"
 	"github.com/suprbdev/pdbq/internal/schema"
 	"github.com/suprbdev/pdbq/internal/server"
@@ -146,12 +147,23 @@ func (a *App) buildServer(ctx context.Context) (httpServer, error) {
 		return nil, err
 	}
 	srv.SetReadiness(a.pool.Ping)
+	var tracker *live.Tracker
 	if a.Config.Server.Subscriptions {
 		hub := subscribe.NewHub(subscribe.PoolDialer(a.pool), a.Log)
 		srv.SetSubscriptions(hub)
+		if tracker, err = a.liveTracker(ctx, hub); err != nil {
+			hub.Close()
+			return nil, err
+		}
+		if tracker != nil {
+			srv.SetLive(tracker)
+		}
 		a.watchMu.Lock()
 		a.stops = append(a.stops, func() {
 			srv.CloseWebSockets()
+			if tracker != nil {
+				tracker.Close()
+			}
 			hub.Close()
 		})
 		a.watchMu.Unlock()
@@ -171,6 +183,7 @@ func (a *App) buildServer(ctx context.Context) (httpServer, error) {
 				return
 			}
 			srv.Swap(a.Executor(nb), nb.SDL)
+			a.installLive(wctx, tracker)
 		})
 	}
 	return srv, nil
@@ -201,14 +214,26 @@ func (a *App) buildContractServer(ctx context.Context, cat *introspect.Catalog, 
 		servers[i] = srv
 		a.Log.Info("contract ready", "contract", ct.Name, "path", ct.URLPath(""))
 	}
+	var tracker *live.Tracker
 	if a.Config.Server.Subscriptions {
 		hub := subscribe.NewHub(subscribe.PoolDialer(a.pool), a.Log)
+		var err error
+		if tracker, err = a.liveTracker(ctx, hub); err != nil {
+			hub.Close()
+			return nil, err
+		}
 		for _, srv := range servers {
 			srv.SetSubscriptions(hub)
+			if tracker != nil {
+				srv.SetLive(tracker)
+			}
 		}
 		a.watchMu.Lock()
 		a.stops = append(a.stops, func() {
 			group.CloseWebSockets()
+			if tracker != nil {
+				tracker.Close()
+			}
 			hub.Close()
 		})
 		a.watchMu.Unlock()
@@ -224,9 +249,50 @@ func (a *App) buildContractServer(ctx context.Context, cat *introspect.Catalog, 
 				}
 				servers[i].Swap(a.executor(nb, a.instrumentsFor(ct.Name)), nb.SDL)
 			}
+			a.installLive(wctx, tracker)
 		})
 	}
 	return group, nil
+}
+
+// liveTracker returns the live query tracker listening through hub, with
+// the change triggers installed, or nil when server.live is off.
+func (a *App) liveTracker(ctx context.Context, hub *subscribe.Hub) (*live.Tracker, error) {
+	if !a.Config.Server.Live {
+		return nil, nil
+	}
+	m, err := live.NewMetrics(a.metrics)
+	if err != nil {
+		return nil, err
+	}
+	t := live.NewTracker(hub, live.Options{
+		Channel:     a.Config.Server.LiveChannel,
+		Throttle:    a.Config.Server.LiveThrottle,
+		Concurrency: a.Config.Server.LiveConcurrency,
+		Metrics:     m,
+		Log:         a.Log,
+	})
+	a.installLive(ctx, t)
+	return t, nil
+}
+
+// installLive installs the change triggers of live queries (or, with
+// server.live_install_triggers off, finds the tables that have them) and
+// hands the tracked tables to t. A nil t does nothing.
+func (a *App) installLive(ctx context.Context, t *live.Tracker) {
+	if t == nil {
+		return
+	}
+	tracked, err := live.Install(ctx, a.pool, live.InstallOptions{
+		Channel: a.Config.Server.LiveChannel,
+		Schemas: a.Config.Schema.Schemas,
+		Create:  a.Config.Server.LiveInstallTriggers,
+		Log:     a.Log,
+	})
+	if err != nil {
+		a.Log.Warn("live: cannot install the change triggers; live queries refresh only for tables that already have them", "err", err)
+	}
+	t.SetTracked(tracked)
 }
 
 // startWatch runs the schema watcher until ctx ends or the App closes,

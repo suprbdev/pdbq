@@ -58,6 +58,9 @@ func (s *Server) startListen(ctx context.Context, ex *exec.Executor, op *exec.Op
 	if err != nil {
 		return nil, gqlerror.Errorf("%s", err.Error())
 	}
+	if s.live != nil && channel == s.live.Channel() {
+		return nil, gqlerror.Errorf("topic %q is not allowed", topic)
+	}
 	l, err := s.hub.Subscribe(ctx, channel, s.cfg.SubscriptionsBuffer)
 	if err != nil {
 		if ctx.Err() != nil {
