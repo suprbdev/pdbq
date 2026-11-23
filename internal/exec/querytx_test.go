@@ -204,11 +204,11 @@ func TestBatchTxQueryFieldErrors(t *testing.T) {
 		d: userById(id: 5) { id }
 	}`})
 	want := `{"data":{"a":1,"b":null,"c":null,"t":"Query","bad":null,"d":null},"errors":[` +
-		`{"message":"division by zero","path":["b"],"extensions":{"code":"22012","constraint":"","detail":"","hint":"","table":""}},` +
-		`{"message":"current transaction is aborted, commands ignored until end of transaction block","path":["c"],"extensions":{"code":"25P02","constraint":"","detail":"","hint":"","table":""}},` +
-		`{"message":"bad field","path":["bad"]},` +
-		`{"message":"current transaction is aborted, commands ignored until end of transaction block","path":["d"],"extensions":{"code":"25P02","constraint":"","detail":"","hint":"","table":""}},` +
-		`{"message":"commit unexpectedly resulted in rollback"}]}`
+		`{"message":"division by zero","path":["b"],"extensions":{"code":"pg:22012","constraint":"","detail":"","hint":"","table":""}},` +
+		`{"message":"current transaction is aborted, commands ignored until end of transaction block","path":["c"],"extensions":{"code":"pg:25P02","constraint":"","detail":"","hint":"","table":""}},` +
+		`{"message":"bad field","path":["bad"],"extensions":{"code":"internal"}},` +
+		`{"message":"current transaction is aborted, commands ignored until end of transaction block","path":["d"],"extensions":{"code":"pg:25P02","constraint":"","detail":"","hint":"","table":""}},` +
+		`{"message":"commit unexpectedly resulted in rollback","extensions":{"code":"internal"}}]}`
 	if got := resultJSON(t, res); got != want {
 		t.Fatalf("response:\n got %s\nwant %s", got, want)
 	}
@@ -225,9 +225,9 @@ func TestBatchTxQueryReadError(t *testing.T) {
 	e := newBatchExecutor(t, Options{TxPerRequest: true, DevErrors: true}, f)
 	res := e.Execute(context.Background(), Request{Query: `{ a: userById(id: 1) { id } b: userById(id: 2) { id } }`})
 	want := `{"data":{"a":null,"b":null},"errors":[` +
-		`{"message":"conn closed","path":["a"]},` +
-		`{"message":"current transaction is aborted, commands ignored until end of transaction block","path":["b"],"extensions":{"code":"25P02","constraint":"","detail":"","hint":"","table":""}},` +
-		`{"message":"commit unexpectedly resulted in rollback"}]}`
+		`{"message":"conn closed","path":["a"],"extensions":{"code":"internal"}},` +
+		`{"message":"current transaction is aborted, commands ignored until end of transaction block","path":["b"],"extensions":{"code":"pg:25P02","constraint":"","detail":"","hint":"","table":""}},` +
+		`{"message":"commit unexpectedly resulted in rollback","extensions":{"code":"internal"}}]}`
 	if got := resultJSON(t, res); got != want {
 		t.Fatalf("response:\n got %s\nwant %s", got, want)
 	}
@@ -257,7 +257,7 @@ func TestBatchTxRetries(t *testing.T) {
 		e := newBatchExecutor(t, Options{TxPerRequest: true, TxRetries: 1, DevErrors: true}, f)
 		res := e.Execute(context.Background(), Request{Query: query})
 		want := `{"data":{"a":1,"b":null,"t":"Query"},"errors":[` +
-			`{"message":"could not serialize access","path":["b"],"extensions":{"code":"40001","constraint":"","detail":"","hint":"","table":""}}]}`
+			`{"message":"could not serialize access","path":["b"],"extensions":{"code":"pg:40001","constraint":"","detail":"","hint":"","table":""}}]}`
 		if got := resultJSON(t, res); got != want {
 			t.Fatalf("response:\n got %s\nwant %s", got, want)
 		}
@@ -269,7 +269,7 @@ func TestBatchTxRetries(t *testing.T) {
 		}}
 		e := newBatchExecutor(t, Options{TxPerRequest: true, TxRetries: 1, DevErrors: true}, f)
 		res := e.Execute(context.Background(), Request{Query: query})
-		want := `{"errors":[{"message":"role does not exist","extensions":{"code":"22023","constraint":"","detail":"","hint":"","table":""}}]}`
+		want := `{"errors":[{"message":"role does not exist","extensions":{"code":"pg:22023","constraint":"","detail":"","hint":"","table":""}}]}`
 		if got := resultJSON(t, res); got != want {
 			t.Fatalf("response:\n got %s\nwant %s", got, want)
 		}
@@ -291,7 +291,7 @@ func TestBatchTxCommitFailure(t *testing.T) {
 	}}}
 	e := newBatchExecutor(t, Options{TxPerRequest: true, DevErrors: true}, f)
 	res := e.Execute(context.Background(), Request{Query: `{ a: userById(id: 1) { id } }`})
-	want := `{"data":{"a":1},"errors":[{"message":"deferred constraint violated","extensions":{"code":"23503","constraint":"","detail":"","hint":"","table":""}}]}`
+	want := `{"data":{"a":1},"errors":[{"message":"deferred constraint violated","extensions":{"code":"pg:23503","constraint":"","detail":"","hint":"","table":""}}]}`
 	if got := resultJSON(t, res); got != want {
 		t.Fatalf("response:\n got %s\nwant %s", got, want)
 	}
@@ -340,7 +340,7 @@ func TestBatchTxMutationIdentityFailure(t *testing.T) {
 	f := &fakeBatch{attempts: []attempt{{before: errors.New("invalid role \"x y\"")}}}
 	e := newBatchExecutor(t, Options{DevErrors: true}, f)
 	res := e.Execute(context.Background(), Request{Query: `mutation { a: createUser(input: {user: {email: "a@b.c"}}) { user { id } } }`})
-	if got, want := resultJSON(t, res), `{"errors":[{"message":"invalid role \"x y\""}]}`; got != want {
+	if got, want := resultJSON(t, res), `{"errors":[{"message":"invalid role \"x y\"","extensions":{"code":"internal"}}]}`; got != want {
 		t.Fatalf("response = %s, want %s", got, want)
 	}
 }

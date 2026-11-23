@@ -53,7 +53,7 @@ GraphQL errors, including parse, validation and limit errors, are answered
 with 200, so `status_class` does not show them; execution errors show up in
 `pdbq_field_errors_total`. Malformed request bodies, missing queries and
 auth failures are 4xx, and a request that exceeds `server.request_timeout`
-is a 503.
+is a 504 ([errors.md](errors.md)).
 
 ### GraphQL execution
 

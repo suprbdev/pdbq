@@ -3,6 +3,8 @@ package exec
 import (
 	"github.com/vektah/gqlparser/v2/ast"
 	"github.com/vektah/gqlparser/v2/gqlerror"
+
+	"github.com/suprbdev/pdbq/internal/errcode"
 )
 
 // Defaults of the document limits, used when the corresponding Options field
@@ -153,7 +155,7 @@ func (s *docScanner) value(v *ast.Value, depth int) {
 	}
 	depth++
 	if depth > s.lim.inputDepth {
-		s.err = gqlerror.ErrorPosf(v.Position, "input value nesting exceeds limit %d", s.lim.inputDepth)
+		s.err = errcode.With(gqlerror.ErrorPosf(v.Position, "input value nesting exceeds limit %d", s.lim.inputDepth), errcode.DocumentLimitExceeded)
 		return
 	}
 	for _, c := range v.Children {
@@ -243,9 +245,9 @@ func (x *expander) walk(sel ast.SelectionSet, parent int32) bool {
 
 func (x *expander) err() error {
 	if x.overSel {
-		return gqlerror.Errorf("document exceeds %d selections with its fragments expanded", x.maxSel)
+		return errcode.Errorf(errcode.DocumentLimitExceeded, "document exceeds %d selections with its fragments expanded", x.maxSel)
 	}
-	return gqlerror.Errorf("document selects the same response keys too often: more than %d field comparisons", x.maxPairs)
+	return errcode.Errorf(errcode.DocumentLimitExceeded, "document selects the same response keys too often: more than %d field comparisons", x.maxPairs)
 }
 
 // checkVariableDepth rejects variable values whose list and input object
@@ -259,7 +261,7 @@ func (e *Executor) checkVariableDepth(op *ast.OperationDefinition, vars map[stri
 			continue
 		}
 		if inputDepthExceeds(e.Built.Schema, vd.Type, v, 0, limit) {
-			return gqlerror.ErrorPathf(ast.Path{ast.PathName("variable"), ast.PathName(vd.Variable)}, "input value nesting exceeds limit %d", limit)
+			return errcode.With(gqlerror.ErrorPathf(ast.Path{ast.PathName("variable"), ast.PathName(vd.Variable)}, "input value nesting exceeds limit %d", limit), errcode.DocumentLimitExceeded)
 		}
 	}
 	return nil

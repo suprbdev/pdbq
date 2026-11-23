@@ -163,7 +163,7 @@ func TestCardinalityViolationIsUserError(t *testing.T) {
 		t.Run(detail, func(t *testing.T) {
 			url := idtServer(t, func(c *config.Config) { c.Errors.Detail = detail })
 			got := postRaw(t, url, `{ idtMany }`, nil)
-			if !strings.Contains(got, `"message":"`+want+`"`) || !strings.Contains(got, `"code":"21000"`) {
+			if !strings.Contains(got, `"message":"`+want+`"`) || !strings.Contains(got, `"code":"pg:21000"`) {
 				t.Errorf("got %s, want message %q", got, want)
 			}
 		})

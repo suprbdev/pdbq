@@ -172,8 +172,8 @@ func TestPGErrorMessages(t *testing.T) {
 				if got := res.Errors[0].Message; !strings.Contains(got, mode.want) {
 					t.Errorf("strict=%v: error = %q, want %q", mode.strict, got, mode.want)
 				}
-				if got := res.Errors[0].Extensions["code"]; got != tc.err.Code {
-					t.Errorf("strict=%v: code = %v, want %s", mode.strict, got, tc.err.Code)
+				if got := res.Errors[0].Extensions["code"]; got != "pg:"+tc.err.Code {
+					t.Errorf("strict=%v: code = %v, want pg:%s", mode.strict, got, tc.err.Code)
 				}
 			}
 		})

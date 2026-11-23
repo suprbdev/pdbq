@@ -6,6 +6,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"mime"
@@ -21,10 +22,12 @@ import (
 	"github.com/suprbdev/pdbcore/metrics"
 	"github.com/suprbdev/pdbcore/pgexec"
 	"github.com/suprbdev/pdbq/internal/config"
+	"github.com/suprbdev/pdbq/internal/errcode"
 	"github.com/suprbdev/pdbq/internal/exec"
 	"github.com/suprbdev/pdbq/internal/live"
 	"github.com/suprbdev/pdbq/internal/subscribe"
 	"github.com/vektah/gqlparser/v2/ast"
+	"github.com/vektah/gqlparser/v2/gqlerror"
 )
 
 // Authenticator turns an HTTP request into (claims, role); see pdbcore/auth.
@@ -152,9 +155,7 @@ func (s *Server) handleReadyz(w http.ResponseWriter, r *http.Request) {
 		defer cancel()
 		if err := s.ping(ctx); err != nil {
 			s.log.Warn("readyz: database ping failed", "err", err)
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusServiceUnavailable)
-			w.Write([]byte(`{"errors":[{"message":"database unavailable","extensions":{"code":"unavailable"}}]}`)) //nolint:errcheck
+			writeError(w, http.StatusServiceUnavailable, errcode.Unavailable, "database unavailable")
 			return
 		}
 	}
@@ -211,9 +212,10 @@ func (s *Server) Handler() http.Handler {
 	if s.metrics != nil && s.metricsPath != "" {
 		mux.Handle("GET "+s.metricsPath, s.metrics.Handler())
 	}
-	var h http.Handler = mux
+	routes := jsonErrors(mux)
+	h := routes
 	if s.cfg.Server.RequestTimeout > 0 {
-		h = http.TimeoutHandler(h, s.cfg.Server.RequestTimeout, `{"errors":[{"message":"request timeout"}]}`)
+		h = withTimeout(h, s.cfg.Server.RequestTimeout)
 	}
 	if len(s.cfg.Server.CORSOrigins) > 0 {
 		h = httpx.CORS(s.corsPolicy(), h)
@@ -222,7 +224,7 @@ func (s *Server) Handler() http.Handler {
 		h = httpx.Gzip(h)
 	}
 	if s.cfg.Incremental.Enabled {
-		buffered, streaming := h, http.Handler(mux)
+		buffered, streaming := h, routes
 		if len(s.cfg.Server.CORSOrigins) > 0 {
 			streaming = httpx.CORS(s.corsPolicy(), streaming)
 		}
@@ -247,6 +249,43 @@ func (s *Server) Handler() http.Handler {
 		next.ServeHTTP(w, r)
 	})
 }
+
+// jsonErrors serves mux, answering the requests mux has no route for (404,
+// or 405 with Allow when another method has one) with a JSON error instead
+// of the mux's plain-text page.
+func jsonErrors(mux *http.ServeMux) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h, pattern := mux.Handler(r)
+		if pattern != "" {
+			mux.ServeHTTP(w, r)
+			return
+		}
+		rec := &statusRecorder{h: http.Header{}, code: http.StatusOK}
+		h.ServeHTTP(rec, r)
+		switch rec.code {
+		case http.StatusMethodNotAllowed:
+			if allow := rec.h.Get("Allow"); allow != "" {
+				w.Header().Set("Allow", allow)
+			}
+			writeError(w, http.StatusMethodNotAllowed, errcode.MethodNotAllowed, "method not allowed")
+		case http.StatusNotFound:
+			writeError(w, http.StatusNotFound, errcode.NotFound, "not found")
+		default:
+			mux.ServeHTTP(w, r)
+		}
+	})
+}
+
+// statusRecorder records the status and headers of a response and drops
+// its body.
+type statusRecorder struct {
+	h    http.Header
+	code int
+}
+
+func (r *statusRecorder) Header() http.Header         { return r.h }
+func (r *statusRecorder) WriteHeader(code int)        { r.code = code }
+func (r *statusRecorder) Write(p []byte) (int, error) { return len(p), nil }
 
 // ListenAndServe runs the server until ctx is cancelled, then closes its
 // WebSocket connections.
@@ -294,7 +333,7 @@ func (s *Server) handleGraphQL(w http.ResponseWriter, r *http.Request) {
 		req.OperationName = r.URL.Query().Get("operationName")
 		if vars := r.URL.Query().Get("variables"); vars != "" {
 			if err := json.Unmarshal([]byte(vars), &req.Variables); err != nil {
-				writeError(w, http.StatusBadRequest, "malformed variables")
+				writeError(w, http.StatusBadRequest, errcode.InvalidRequest, "malformed variables")
 				return
 			}
 		}
@@ -303,29 +342,31 @@ func (s *Server) handleGraphQL(w http.ResponseWriter, r *http.Request) {
 		}
 	default:
 		if !isJSONContentType(r.Header.Get("Content-Type")) {
-			writeError(w, http.StatusUnsupportedMediaType, "unsupported content type: POST requests must send Content-Type: application/json")
+			writeError(w, http.StatusUnsupportedMediaType, errcode.UnsupportedMediaType, "unsupported content type: POST requests must send Content-Type: application/json")
 			return
 		}
 		body := http.MaxBytesReader(w, r.Body, s.cfg.Limits.MaxBodyBytes)
 		if err := json.NewDecoder(body).Decode(&req); err != nil {
-			writeError(w, http.StatusBadRequest, "malformed request body")
+			if mbe := (*http.MaxBytesError)(nil); errors.As(err, &mbe) {
+				writeError(w, http.StatusRequestEntityTooLarge, errcode.BodyTooLarge, fmt.Sprintf("request body exceeds %d bytes", mbe.Limit))
+				return
+			}
+			writeError(w, http.StatusBadRequest, errcode.InvalidRequest, "malformed request body")
 			return
 		}
 	}
-	if s.pq != nil {
-		if handled := s.resolvePersisted(w, &req); handled {
-			return
-		}
+	if handled := s.resolvePersisted(w, &req); handled {
+		return
 	}
 	if req.Query == "" {
-		writeError(w, http.StatusBadRequest, "missing query")
+		writeError(w, http.StatusBadRequest, errcode.InvalidRequest, "missing query")
 		return
 	}
 	ex := s.executor.Load()
 	if r.Method != http.MethodPost {
 		if typ, err := ex.OperationType(req.Query, req.OperationName); err == nil && typ != ast.Query {
 			w.Header().Set("Allow", http.MethodPost)
-			writeError(w, http.StatusMethodNotAllowed, fmt.Sprintf("%s operations are not allowed over GET; use POST", typ))
+			writeError(w, http.StatusMethodNotAllowed, errcode.MethodNotAllowed, fmt.Sprintf("%s operations are not allowed over GET; use POST", typ))
 			return
 		}
 	}
@@ -337,7 +378,7 @@ func (s *Server) handleGraphQL(w http.ResponseWriter, r *http.Request) {
 	}
 	if role != "" && !pgexec.ValidRole(role) {
 		w.Header().Set("WWW-Authenticate", auth.Challenge(auth.ErrRoleNotAllowed))
-		writeError(w, http.StatusUnauthorized, fmt.Sprintf("role %q is not allowed", role))
+		writeError(w, http.StatusForbidden, errcode.RoleNotAllowed, fmt.Sprintf("role %q is not allowed", role))
 		return
 	}
 
@@ -381,7 +422,7 @@ func (s *Server) writeResult(w http.ResponseWriter, res *exec.Result) {
 	b, err := res.AppendJSON((*bp)[:0])
 	if err != nil {
 		s.log.Error("write response", "err", err)
-		writeError(w, http.StatusInternalServerError, "internal error")
+		writeError(w, http.StatusInternalServerError, errcode.Internal, "internal error")
 		return
 	}
 	b = append(b, '\n')
@@ -399,7 +440,7 @@ func (s *Server) handleSDL(w http.ResponseWriter, _ *http.Request) {
 
 func (s *Server) handleGraphiQL(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path != "/" {
-		http.NotFound(w, r)
+		writeError(w, http.StatusNotFound, errcode.NotFound, "not found")
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -410,20 +451,35 @@ func (s *Server) handleGraphiQL(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(page)) //nolint:errcheck
 }
 
-// writeAuthError answers a request whose credentials were refused: 401
-// with the error's WWW-Authenticate challenge.
+// writeAuthError answers a request whose credentials were refused, with
+// the error's WWW-Authenticate challenge: 403 role_not_allowed for
+// auth.ErrRoleNotAllowed, else 401 auth_required or invalid_token.
 func writeAuthError(w http.ResponseWriter, err error) {
 	if c := auth.Challenge(err); c != "" {
 		w.Header().Set("WWW-Authenticate", c)
 	}
-	writeError(w, http.StatusUnauthorized, err.Error())
+	status, code := authErrorCode(err)
+	writeError(w, status, code, err.Error())
 }
 
-func writeError(w http.ResponseWriter, status int, msg string) {
+// authErrorCode returns the HTTP status and code of an Authenticate error.
+func authErrorCode(err error) (int, errcode.Code) {
+	switch {
+	case errors.Is(err, auth.ErrRoleNotAllowed):
+		return http.StatusForbidden, errcode.RoleNotAllowed
+	case errors.Is(err, auth.ErrAuthRequired):
+		return http.StatusUnauthorized, errcode.AuthRequired
+	}
+	return http.StatusUnauthorized, errcode.InvalidToken
+}
+
+// writeError answers with status and a GraphQL-shaped JSON body holding
+// one error with message msg and extensions.code code.
+func writeError(w http.ResponseWriter, status int, code errcode.Code, msg string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(map[string]any{ //nolint:errcheck
-		"errors": []map[string]string{{"message": msg}},
+		"errors": gqlerror.List{errcode.Errorf(code, "%s", msg)},
 	})
 }
 

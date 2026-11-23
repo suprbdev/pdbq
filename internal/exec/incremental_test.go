@@ -283,7 +283,7 @@ func TestIncrementalErrors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ext := `"extensions":{"code":"22012","constraint":"","detail":"","hint":"","table":""}`
+	ext := `"extensions":{"code":"pg:22012","constraint":"","detail":"","hint":"","table":""}`
 	checkPayloads(t, got,
 		`{"data":{"userById":{"id":1},"allUsers":{"nodes":[]}},"pending":[{"id":"0","path":["userById"]},{"id":"1","path":["allUsers","nodes"]}],"hasNext":true}`,
 		`{"hasNext":true,"completed":[{"id":"0","errors":[{"message":"division by zero","path":["userById"],`+ext+`}]}]}`,
@@ -311,7 +311,7 @@ func TestIncrementalTimeout(t *testing.T) {
 	}
 	checkPayloads(t, got,
 		`{"data":{"allUsers":{"nodes":[{"id":1}]},"userById":{"id":1}},"pending":[{"id":"0","path":["allUsers","nodes"]},{"id":"1","path":["userById"]}],"hasNext":true}`,
-		`{"hasNext":false,"completed":[{"id":"0","errors":[{"message":"request timeout","path":["allUsers","nodes"]}]},{"id":"1","errors":[{"message":"request timeout","path":["userById"]}]}]}`,
+		`{"hasNext":false,"completed":[{"id":"0","errors":[{"message":"request timeout","path":["allUsers","nodes"],"extensions":{"code":"timeout"}}]},{"id":"1","errors":[{"message":"request timeout","path":["userById"],"extensions":{"code":"timeout"}}]}]}`,
 	)
 }
 

@@ -70,7 +70,7 @@ func TestPartialMutationsRunsEachFieldInASavepoint(t *testing.T) {
 	}}}
 	e := newPartialExecutor(t, Options{PartialMutations: true}, r)
 	res := e.Execute(context.Background(), Request{Query: partialQuery, PartialMutations: true})
-	if got, want := resultJSON(t, res), `{"data":{"a":{"user":{"id":1}},"b":null,"c":{"user":{"id":3}}},"errors":[{"message":"division by zero","path":["b"],"extensions":{"code":"22012"}}]}`; got != want {
+	if got, want := resultJSON(t, res), `{"data":{"a":{"user":{"id":1}},"b":null,"c":{"user":{"id":3}}},"errors":[{"message":"division by zero","path":["b"],"extensions":{"code":"pg:22012"}}]}`; got != want {
 		t.Fatalf("response = %s, want %s", got, want)
 	}
 	want := []string{
@@ -109,7 +109,7 @@ func TestPartialMutationsNoRowMatchedNamesTheAlias(t *testing.T) {
 	}}}
 	e := newPartialExecutor(t, Options{PartialMutations: true}, r)
 	res := e.Execute(context.Background(), Request{Query: partialQuery, PartialMutations: true})
-	if got, want := resultJSON(t, res), `{"data":{"a":{"user":{"id":1}},"b":null,"c":{"user":{"id":3}}},"errors":[{"message":"no row matched \"b\"","path":["b"]}]}`; got != want {
+	if got, want := resultJSON(t, res), `{"data":{"a":{"user":{"id":1}},"b":null,"c":{"user":{"id":3}}},"errors":[{"message":"no row matched \"b\"","path":["b"],"extensions":{"code":"not_found"}}]}`; got != want {
 		t.Fatalf("response = %s, want %s", got, want)
 	}
 }

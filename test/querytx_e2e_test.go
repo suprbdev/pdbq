@@ -133,14 +133,14 @@ func qtxSetSeq(t *testing.T, conn *pgx.Conn, last int) {
 }
 
 const (
-	qtxFailDev    = `{"message":"qtx failure","path":["b"],"extensions":{"code":"22012","constraint":"","detail":"","hint":"","table":""}}`
-	qtxCompileErr = `{"message":"compile: first must be \u003e= 0","path":["e"]}`
-	qtxCommitDev  = `{"message":"commit unexpectedly resulted in rollback"}`
+	qtxFailDev    = `{"message":"qtx failure","path":["b"],"extensions":{"code":"pg:22012","constraint":"","detail":"","hint":"","table":""}}`
+	qtxCompileErr = `{"message":"compile: first must be \u003e= 0","path":["e"],"extensions":{"code":"invalid_argument"}}`
+	qtxCommitDev  = `{"message":"commit unexpectedly resulted in rollback","extensions":{"code":"internal"}}`
 )
 
 func qtxAbortedDev(field string) string {
 	return `{"message":"current transaction is aborted, commands ignored until end of transaction block","path":["` + field +
-		`"],"extensions":{"code":"25P02","constraint":"","detail":"","hint":"","table":""}}`
+		`"],"extensions":{"code":"pg:25P02","constraint":"","detail":"","hint":"","table":""}}`
 }
 
 // TestTxQueryFieldErrors pins the response of a query document mixing
@@ -176,11 +176,11 @@ func TestTxQueryFieldErrors(t *testing.T) {
 			c.TX.PerRequest = true
 			c.Errors.Detail = "prod"
 		}, `{"data":{"a":1,"b":null,"c":null,"d":"Query","e":null,"f":null},"errors":[` +
-			`{"message":"qtx failure","path":["b"],"extensions":{"code":"22012"}},` +
-			`{"message":"database error","path":["c"],"extensions":{"code":"25P02"}},` +
-			`{"message":"compile: first must be \u003e= 0","path":["e"]},` +
-			`{"message":"database error","path":["f"],"extensions":{"code":"25P02"}},` +
-			`{"message":"internal error"}]}`},
+			`{"message":"qtx failure","path":["b"],"extensions":{"code":"pg:22012"}},` +
+			`{"message":"database error","path":["c"],"extensions":{"code":"pg:25P02"}},` +
+			`{"message":"compile: first must be \u003e= 0","path":["e"],"extensions":{"code":"invalid_argument"}},` +
+			`{"message":"database error","path":["f"],"extensions":{"code":"pg:25P02"}},` +
+			`{"message":"internal error","extensions":{"code":"internal"}}]}`},
 		{"per request without failure", func(c *config.Config) { c.TX.PerRequest = true }, ``},
 	}
 	for _, tc := range cases {
@@ -217,7 +217,7 @@ func TestTxQueryRetry(t *testing.T) {
 
 	qtxSetSeq(t, conn, 10)
 	want = `{"data":{"a":12,"b":null,"c":null,"d":"Query"},"errors":[` +
-		`{"message":"qtx serialization failure","path":["b"],"extensions":{"code":"40001","constraint":"","detail":"","hint":"","table":""}},` +
+		`{"message":"qtx serialization failure","path":["b"],"extensions":{"code":"pg:40001","constraint":"","detail":"","hint":"","table":""}},` +
 		qtxAbortedDev("c") + `]}`
 	if got := postRaw(t, url, `{ a: qtxSerial b: qtxSerial c: qtxOk(n: 3) d: __typename }`, nil); got != want {
 		t.Errorf("exhausted retries:\ngot  %s\nwant %s", got, want)
@@ -237,11 +237,11 @@ func TestTxMutationRollback(t *testing.T) {
 		name, second, want string
 	}{
 		{"sql error", `b: addNumbers(input: {a: 2147483647, b: 1}) { integer }`,
-			`{"data":{"a":{"integer":1},"b":null},"errors":[{"message":"integer out of range","path":["b"],"extensions":{"code":"22003","constraint":"","detail":"","hint":"","table":""}}]}`},
+			`{"data":{"a":{"integer":1},"b":null},"errors":[{"message":"integer out of range","path":["b"],"extensions":{"code":"pg:22003","constraint":"","detail":"","hint":"","table":""}}]}`},
 		{"no row matched", `b: updateUserById(input: {id: 999999, userPatch: {fullName: "x"}}) { user { id } }`,
-			`{"data":{"a":{"integer":2},"b":null},"errors":[{"message":"no row matched \"b\"","path":["b"]}]}`},
+			`{"data":{"a":{"integer":2},"b":null},"errors":[{"message":"no row matched \"b\"","path":["b"],"extensions":{"code":"not_found"}}]}`},
 		{"compile error", `b: createUser(input: {user: {email: "qtx@example.com"}}) { user { postsByAuthorId(first: -1) { totalCount } } }`,
-			`{"data":{"a":{"integer":3},"b":null},"errors":[{"message":"compile: first must be \u003e= 0","path":["b"]}]}`},
+			`{"data":{"a":{"integer":3},"b":null},"errors":[{"message":"compile: first must be \u003e= 0","path":["b"],"extensions":{"code":"invalid_argument"}}]}`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -259,7 +259,7 @@ func TestTxMutationRollback(t *testing.T) {
 		})
 	}
 
-	want := `{"data":{"b":null},"errors":[{"message":"integer out of range","path":["b"],"extensions":{"code":"22003","constraint":"","detail":"","hint":"","table":""}}]}`
+	want := `{"data":{"b":null},"errors":[{"message":"integer out of range","path":["b"],"extensions":{"code":"pg:22003","constraint":"","detail":"","hint":"","table":""}}]}`
 	if got := postRaw(t, url, `mutation { b: addNumbers(input: {a: 2147483647, b: 1}) { integer } d: __typename }`, nil); got != want {
 		t.Errorf("single failing mutation:\ngot  %s\nwant %s", got, want)
 	}
@@ -313,7 +313,7 @@ func TestTxRLSIdentity(t *testing.T) {
 				{`mutation { a: qtxWhoamiWrite(input: {}) { string } }`, nil,
 					`{"data":{"a":{"string":"anonymous::` + tc.level + `"}}}`},
 				{`{ __typename }`, map[string]string{"X-Pdbq-Claim-Role": "no_such_role"},
-					`{"errors":[{"message":"role \"no_such_role\" does not exist","extensions":{"code":"22023","constraint":"","detail":"","hint":"","table":""}}]}`},
+					`{"errors":[{"message":"role \"no_such_role\" does not exist","extensions":{"code":"pg:22023","constraint":"","detail":"","hint":"","table":""}}]}`},
 				{`{ a: qtxWhoami }`, nil, `{"data":{"a":"anonymous::` + tc.level + `"}}`},
 			}
 			for i, s := range steps {

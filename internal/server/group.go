@@ -10,6 +10,7 @@ import (
 	"github.com/suprbdev/pdbcore/httpx"
 	"github.com/suprbdev/pdbcore/metrics"
 	"github.com/suprbdev/pdbq/internal/config"
+	"github.com/suprbdev/pdbq/internal/errcode"
 )
 
 // Group serves several Servers, one per schema contract, each mounted
@@ -85,7 +86,7 @@ func (g *Group) Handler() http.Handler {
 	}
 	if !root {
 		mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
-			writeError(w, http.StatusNotFound, "not found")
+			writeError(w, http.StatusNotFound, errcode.NotFound, "not found")
 		})
 	}
 	return mux

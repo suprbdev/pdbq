@@ -97,10 +97,12 @@ both pdbq and pdbr can tell them apart (pdbr uses `X-Pdbr-Claim-`). Set
 - **`roles.anonymous`** (default empty) is the role of requests without
   credentials. Empty refuses them: a request without credentials is
   answered `401` with `WWW-Authenticate: Bearer`, an invalid one with
-  `WWW-Authenticate: Bearer error="invalid_token"`, and a role outside
-  `roles.allowed` with `Bearer error="insufficient_scope"` (pdbq answers
-  that one 401 too). The body keeps pdbq's error shape:
-  `{"errors":[{"message":"authentication required"}]}`. Set it (e.g.
+  `WWW-Authenticate: Bearer error="invalid_token"` (code `invalid_token`),
+  and a role outside `roles.allowed` with `403` and
+  `Bearer error="insufficient_scope"` (code `role_not_allowed`). The body
+  keeps pdbq's error shape:
+  `{"errors":[{"message":"authentication required","extensions":{"code":"auth_required"}}]}`
+  ([errors.md](errors.md)). Set it (e.g.
   `anonymous`) to serve unauthenticated requests under that role. In auth
   mode `none` it is required while `roles.switch` is on.
 - **`roles.default`** is the role of authenticated requests without a role
@@ -233,8 +235,9 @@ roles:
   allowed: [app_user, app_admin]
 ```
 
-A request whose role claim resolves to anything else is rejected with a 401
-(`WWW-Authenticate: Bearer error="insufficient_scope"`). `roles.default` and
+A request whose role claim resolves to anything else is rejected with a 403
+(`WWW-Authenticate: Bearer error="insufficient_scope"`, code
+`role_not_allowed`). `roles.default` and
 `roles.anonymous` are always allowed — the operator configured those
 deliberately.
 
@@ -247,7 +250,7 @@ Some names are never assumable, whatever the list says: `none` (in any
 letter case; assigning it to the role setting is `RESET ROLE`, which would
 run the request as the connection role and bypass RLS), `public`, and
 anything starting with `pg_` (the server's predefined roles). A role claim
-naming one is rejected with a 401 before the database is reached, and
+naming one is rejected with a 403 (`role_not_allowed`) before the database is reached, and
 configuring one as `roles.allowed`, `roles.default` or `roles.anonymous`
 fails config validation at startup. `claims.prefix` and
 `claims.json_setting` are validated too: dot-separated identifiers whose first component is not a

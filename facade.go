@@ -99,7 +99,7 @@ type (
 // instrumented and serves metrics.path, unless metrics.addr is set: then the
 // embedder mounts App.Metrics().Handler() itself. The caller owns the
 // listener; server.addr and request timeouts still apply to the handler's
-// internals (http.TimeoutHandler), but read/idle timeouts are the
+// internals (the 504 request timeout), but read/idle timeouts are the
 // embedder's job. With subscriptions.enabled on, the handler also serves
 // WebSocket subscriptions on /graphql; App.Close closes those connections
 // and the LISTEN connection. With contracts configured, the handler serves

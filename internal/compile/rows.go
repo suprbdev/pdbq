@@ -29,7 +29,7 @@ func (s *stmt) rowJSON(t *introspect.Table, sel ast.SelectionSet, alias string, 
 // row source like a table's.
 func (s *stmt) rowJSONAs(typeName string, sel ast.SelectionSet, alias string, depth int) (string, []string, error) {
 	if depth > s.maxDepth {
-		return "", nil, errUser("selection depth exceeds limit (%d)", s.maxDepth)
+		return "", nil, errDepth(s.maxDepth)
 	}
 	fields := s.expandFor(sel, typeName)
 	if len(fields) == 0 {
@@ -321,7 +321,7 @@ func (s *stmt) valueComposite(c *introspect.Column) *introspect.Composite {
 // for a row whose attributes are all NULL.
 func (s *stmt) compositeJSON(ref string, comp *introspect.Composite, isArray bool, sel ast.SelectionSet, depth int) (string, error) {
 	if depth > s.maxDepth {
-		return "", errUser("selection depth exceeds limit (%d)", s.maxDepth)
+		return "", errDepth(s.maxDepth)
 	}
 	typeName := s.c.Built.CompositeTypeForPG[comp.Schema+"."+comp.Name]
 	if isArray {

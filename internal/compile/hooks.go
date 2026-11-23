@@ -8,6 +8,7 @@ import (
 
 	"github.com/suprbdev/pdbcore/introspect"
 	"github.com/suprbdev/pdbcore/postgis"
+	"github.com/suprbdev/pdbq/internal/errcode"
 	"github.com/suprbdev/pdbq/internal/schema"
 )
 
@@ -95,10 +96,17 @@ func DecodeNodeID(nodeID string) (string, []any, error) {
 }
 
 // UserErrorf builds a compile error whose message is safe to return to API
-// clients (see UserError). The message must not name tables, columns or SQL
-// types; GraphQL field and argument names typed by the client are fine.
+// clients (see UserError), with code invalid_argument. The message must not
+// name tables, columns or SQL types; GraphQL field and argument names typed
+// by the client are fine.
 func UserErrorf(format string, args ...any) error {
 	return &UserError{msg: fmt.Sprintf(format, args...)}
+}
+
+// UserErrorCodef is UserErrorf with code as the error's extensions.code
+// instead of invalid_argument.
+func UserErrorCodef(code errcode.Code, format string, args ...any) error {
+	return &UserError{msg: fmt.Sprintf(format, args...), code: code}
 }
 
 // QuoteLiteral renders s as a SQL string literal.

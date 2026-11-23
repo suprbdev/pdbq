@@ -785,15 +785,15 @@ func encodeCursorSQL(rnExpr, offsetExpr string) string {
 func decodeCursor(cur string) (int, error) {
 	raw, err := base64.StdEncoding.DecodeString(cur)
 	if err != nil {
-		return 0, errUser("malformed cursor")
+		return 0, errCursor("malformed cursor")
 	}
 	str := string(raw)
 	if !strings.HasPrefix(str, "o:") {
-		return 0, errUser("malformed cursor")
+		return 0, errCursor("malformed cursor")
 	}
 	n, err := strconv.Atoi(str[2:])
 	if err != nil || n < 0 {
-		return 0, errUser("malformed cursor")
+		return 0, errCursor("malformed cursor")
 	}
 	return n, nil
 }

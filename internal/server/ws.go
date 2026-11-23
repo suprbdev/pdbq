@@ -19,7 +19,9 @@ import (
 	"github.com/vektah/gqlparser/v2/gqlerror"
 
 	"github.com/suprbdev/pdbcore/pgexec"
+	"github.com/suprbdev/pdbq/internal/errcode"
 	"github.com/suprbdev/pdbq/internal/exec"
+	"github.com/suprbdev/pdbq/internal/subscribe"
 )
 
 // WebSocket subprotocols: graphql-transport-ws is the graphql-ws library's
@@ -87,7 +89,7 @@ func (w hijackWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	if !s.reserveConnection() {
 		w.Header().Set("Retry-After", "5")
-		writeError(w, http.StatusServiceUnavailable, "too many WebSocket connections")
+		writeError(w, http.StatusServiceUnavailable, errcode.Unavailable, "too many WebSocket connections")
 		return
 	}
 	defer s.releaseConnection()
@@ -523,13 +525,13 @@ func (c *wsSession) start(id string, req gqlHTTPRequest) bool {
 	}
 	if !c.acquireSlot(live) {
 		if c.ctx.Err() == nil {
-			c.sendErrors(c.ctx, id, gqlerror.List{gqlerror.Errorf("too many operations on this connection (limit %d)", c.s.cfg.Subscriptions.MaxPerConnection)})
+			c.sendErrors(c.ctx, id, gqlerror.List{errcode.Errorf(errcode.SubscriptionLimitExceeded, "too many operations on this connection (limit %d)", c.s.cfg.Subscriptions.MaxPerConnection)})
 		}
 		return true
 	}
 	if !c.s.reserveOperation() {
 		<-c.slots
-		c.sendErrors(c.ctx, id, gqlerror.List{gqlerror.Errorf("too many operations on this server; try again later")})
+		c.sendErrors(c.ctx, id, gqlerror.List{errcode.Errorf(errcode.Unavailable, "too many operations on this server; try again later")})
 		return true
 	}
 	ctx, cancel := context.WithCancel(c.ctx)
@@ -637,7 +639,7 @@ func (c *wsSession) execute(ctx context.Context, id string, req gqlHTTPRequest, 
 		return
 	}
 	if req.Query == "" {
-		c.sendErrors(ctx, id, gqlerror.List{gqlerror.Errorf("missing query")})
+		c.sendErrors(ctx, id, gqlerror.List{errcode.Errorf(errcode.InvalidRequest, "missing query")})
 		return
 	}
 	ex := c.s.executor.Load()
@@ -692,7 +694,7 @@ func (c *wsSession) execute(ctx context.Context, id string, req gqlHTTPRequest, 
 			c.sendComplete(ctx, id)
 			return
 		case err != nil:
-			c.sendErrors(ctx, id, gqlerror.List{gqlerror.Errorf("%s", err.Error())})
+			c.sendErrors(ctx, id, gqlerror.List{streamError(err)})
 			return
 		}
 		if c.expired() {
@@ -703,23 +705,23 @@ func (c *wsSession) execute(ctx context.Context, id string, req gqlHTTPRequest, 
 	}
 }
 
-func errorList(err error) gqlerror.List {
-	var list gqlerror.List
-	if errors.As(err, &list) {
-		return list
+func errorList(err error) gqlerror.List { return exec.ErrorList(err) }
+
+// streamError is the error that ends a subscription or live query whose
+// event stream failed with err: subscription_limit_exceeded when the
+// subscriber fell too far behind, unavailable otherwise.
+func streamError(err error) *gqlerror.Error {
+	if errors.Is(err, subscribe.ErrOverflow) {
+		return errcode.Errorf(errcode.SubscriptionLimitExceeded, "%s", err.Error())
 	}
-	var gerr *gqlerror.Error
-	if errors.As(err, &gerr) {
-		return gqlerror.List{gerr}
-	}
-	return gqlerror.List{gqlerror.Errorf("%s", err.Error())}
+	return errcode.Errorf(errcode.Unavailable, "%s", err.Error())
 }
 
 func (c *wsSession) sendNext(ctx context.Context, id string, res *exec.Result) {
 	body, err := res.AppendJSON(nil)
 	if err != nil {
 		c.s.log.Error("websocket: encode result", "err", err)
-		body = []byte(`{"errors":[{"message":"internal error"}]}`)
+		body = []byte(`{"errors":[{"message":"internal error","extensions":{"code":"internal"}}]}`)
 	}
 	c.sendPayload(ctx, id, body)
 }
@@ -749,7 +751,7 @@ func (c *wsSession) sendErrors(ctx context.Context, id string, errs gqlerror.Lis
 	}
 	body, err := json.Marshal(errs)
 	if err != nil {
-		body = []byte(`[{"message":"internal error"}]`)
+		body = []byte(`[{"message":"internal error","extensions":{"code":"internal"}}]`)
 	}
 	c.send(ctx, frame("error", id, body))
 }

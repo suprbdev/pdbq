@@ -66,7 +66,7 @@ A query is delivered incrementally when its `Accept` header lists
 | `multipart/mixed;incrementalSpec=v0.2` (Apollo Client 4 `GraphQL17Alpha9Handler`) | `pending`/`incremental`/`completed` | `multipart/mixed; boundary="-"; incrementalSpec=v0.2` |
 | `multipart/mixed` | same | same |
 | `multipart/mixed;deferSpec=20220824` (Apollo Client 3, `Defer20220824Handler`) | `incremental` entries with `path` and `label` | `multipart/mixed; boundary="-"; deferSpec=20220824` |
-| `deferSpec` or `incrementalSpec` with any other value | — | `406 Not Acceptable` |
+| `deferSpec` or `incrementalSpec` with any other value | — | `406 Not Acceptable` (code `not_acceptable`) |
 
 The response uses the framing of GraphQL Yoga and Apollo Router. Each payload
 is a part with `Content-Type: application/json; charset=utf-8`, and pdbq
@@ -216,7 +216,7 @@ With the option on, these rules apply to every operation:
   statements.
 - `server.request_timeout` covers the whole response. When it expires, a last
   payload completes every pending fragment and stream with a
-  `request timeout` error and `hasNext: false`. A client that disconnects
+  `request timeout` error (code `timeout`) and `hasNext: false`. A client that disconnects
   cancels the transaction.
 - `incremental.write_timeout` (10s) bounds each payload of an HTTP
   response: a write the client has not taken in that time (it stopped

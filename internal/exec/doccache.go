@@ -8,6 +8,8 @@ import (
 
 	"github.com/vektah/gqlparser/v2/ast"
 	"github.com/vektah/gqlparser/v2/gqlerror"
+
+	"github.com/suprbdev/pdbq/internal/errcode"
 	"github.com/vektah/gqlparser/v2/parser"
 	"github.com/vektah/gqlparser/v2/validator"
 	"github.com/vektah/gqlparser/v2/validator/core"
@@ -129,14 +131,18 @@ func (c *docCache) len() int {
 func parseAndValidate(schema *ast.Schema, rs *rules.Rules, query string, maxTokens int, lim docLimits) (doc *ast.QueryDocument, size int, err error) {
 	doc, err = parser.ParseQueryWithTokenLimit(&ast.Source{Input: query}, maxTokens)
 	if err != nil {
-		return nil, estimateDocumentBytes(query, 0, err), err
+		code := errcode.GraphQLParseFailed
+		if gerr := (*gqlerror.Error)(nil); errors.As(err, &gerr) && strings.HasPrefix(gerr.Message, "exceeded token limit") {
+			code = errcode.DocumentLimitExceeded
+		}
+		return nil, estimateDocumentBytes(query, 0, err), errcode.WithAll(err, code)
 	}
 	astBytes, err := scanDocument(doc, lim)
 	if err != nil {
 		return nil, estimateDocumentBytes(query, 0, err), err
 	}
 	if listErr := validator.ValidateWithRules(schema, doc, rs); len(listErr) > 0 {
-		return nil, estimateDocumentBytes(query, 0, listErr), listErr
+		return nil, estimateDocumentBytes(query, 0, listErr), errcode.WithAll(listErr, errcode.GraphQLValidationFailed)
 	}
 	return doc, estimateDocumentBytes(query, astBytes, nil), nil
 }

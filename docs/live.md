@@ -220,7 +220,8 @@ Live queries count against the subscription caps
 addition, against `live.max_per_connection` and
 `live.max_operations`. A live query over a cap gets an `error`
 message (a `data` message with `errors` then `complete` on the legacy
-protocol). The live query's statements are bounded by `limits.max_cost`,
+protocol) with code `subscription_limit_exceeded` for a per-connection cap
+and `unavailable` for a server-wide one. The live query's statements are bounded by `limits.max_cost`,
 `limits.max_depth`, `limits.max_page_size` and `server.request_timeout` per
 run. Any client that may call `pg_notify` can make live queries re-run; the
 throttle and the concurrency bound cap what that costs.

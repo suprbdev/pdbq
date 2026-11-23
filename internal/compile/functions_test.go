@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/suprbdev/pdbq/internal/compile"
+	"github.com/suprbdev/pdbq/internal/errcode"
 )
 
 func TestFunctionMissingArgumentsAreUserErrors(t *testing.T) {
@@ -70,5 +71,30 @@ func TestRowArgumentSQLIsValueIndependent(t *testing.T) {
 		} else if stmt.SQL != first {
 			t.Errorf("SQL depends on the row's values:\n%s\n%s", first, stmt.SQL)
 		}
+	}
+}
+
+func TestMutationInputErrorsAreInvalidArgument(t *testing.T) {
+	cases := map[string]struct {
+		query, want string
+	}{
+		"empty patch":       {`mutation { updateUserById(input: {id: 1, userPatch: {}}) { clientMutationId } }`, "updateUserById: userPatch must set at least one column"},
+		"empty bulk patch":  {`mutation { updateManyUsers(input: {filter: {id: {equalTo: 1}}, userPatch: {}}) { affectedCount } }`, "updateManyUsers: userPatch must set at least one column"},
+		"empty bulk create": {`mutation { createManyUsers(input: {users: []}) { clientMutationId } }`, "createManyUsers: users must be a non-empty list"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			_, err := compileOne(t, tc.query, 100)
+			var uerr *compile.UserError
+			if !errors.As(err, &uerr) {
+				t.Fatalf("err = %v, want a *compile.UserError", err)
+			}
+			if uerr.Code() != errcode.InvalidArgument {
+				t.Errorf("code = %s, want %s", uerr.Code(), errcode.InvalidArgument)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("err = %q, want it to mention %q", err, tc.want)
+			}
+		})
 	}
 }

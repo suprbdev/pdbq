@@ -10,9 +10,9 @@ import (
 	"sync/atomic"
 
 	"github.com/vektah/gqlparser/v2/ast"
-	"github.com/vektah/gqlparser/v2/gqlerror"
 
 	"github.com/suprbdev/pdbq/internal/compile"
+	"github.com/suprbdev/pdbq/internal/errcode"
 )
 
 // IntrospectionQuery is the standard full introspection document (the shape
@@ -125,7 +125,7 @@ type introspector struct {
 // introspection output exceeds the limit, before the output is built.
 func (in *introspector) charge(n int) error {
 	if atomic.AddInt64(in.used, int64(n)) > in.limit {
-		return gqlerror.Errorf("introspection response exceeds %d bytes", in.limit)
+		return errcode.Errorf(errcode.IntrospectionLimitExceeded, "introspection response exceeds %d bytes", in.limit)
 	}
 	return nil
 }

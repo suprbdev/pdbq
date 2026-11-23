@@ -94,8 +94,8 @@ func TestRLSRejectsReservedRoles(t *testing.T) {
 				if got.data {
 					t.Errorf("role %q returned %d posts (login role sees %d): reserved role was not refused", role, got.posts, loginTotal)
 				}
-				if got.status != http.StatusUnauthorized || got.errors == 0 {
-					t.Errorf("role %q = %+v, want 401 with an error", role, got)
+				if got.status != http.StatusForbidden || got.errors == 0 {
+					t.Errorf("role %q = %+v, want 403 with an error", role, got)
 				}
 			}
 		})

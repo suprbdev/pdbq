@@ -127,7 +127,7 @@ contract does can add a field, a type, a privilege or a row:
   lookups.
 - Hiding a foreign key column does not hide the relation it backs: tag the
   constraint as well when the related row must not be reachable.
-- Integrity errors keep their SQLSTATE but not always PostgreSQL's message.
+- Integrity errors keep their code (`pg:<SQLSTATE>`) but not always PostgreSQL's message.
   With `errors.detail: prod`, a foreign key, not-null, unique, check or
   exclusion violation whose message names a table, column or foreign key
   the contract hides (or `@omit` hides, with or without contracts) is

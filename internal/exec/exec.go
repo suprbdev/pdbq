@@ -8,11 +8,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
+	"net"
 	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -24,6 +27,7 @@ import (
 
 	"github.com/suprbdev/pdbcore/pgexec"
 	"github.com/suprbdev/pdbq/internal/compile"
+	"github.com/suprbdev/pdbq/internal/errcode"
 	"github.com/suprbdev/pdbq/internal/schema"
 )
 
@@ -289,7 +293,7 @@ func (e *Executor) Execute(ctx context.Context, req Request) *Result {
 }
 
 // errSubscriptionTransport rejects a subscription sent over plain HTTP.
-var errSubscriptionTransport = gqlerror.Errorf("subscriptions are only served over WebSocket (graphql-transport-ws)")
+var errSubscriptionTransport = errcode.Errorf(errcode.OperationNotSupported, "subscriptions are only served over WebSocket (graphql-transport-ws)")
 
 // Prepare runs the pre-execution pipeline of Execute: parse, validate,
 // operation selection, variable coercion, read-only and introspection
@@ -360,20 +364,20 @@ func (e *Executor) prepare(ctx context.Context, req Request) (context.Context, *
 	}
 	vars, verr := validator.VariableValues(e.Built.Schema, opDef, req.Variables)
 	if verr != nil {
-		return ctx, nil, verr
+		return ctx, nil, errcode.WithAll(verr, errcode.GraphQLValidationFailed)
 	}
 	if opDef.Operation == ast.Subscription && e.Built.Schema.Subscription == nil {
-		return ctx, nil, gqlerror.Errorf("subscriptions are not supported")
+		return ctx, nil, errcode.Errorf(errcode.OperationNotSupported, "subscriptions are not supported")
 	}
 	if opDef.Operation == ast.Mutation && e.Opts.ReadOnly != nil && e.Opts.ReadOnly.Load() {
-		return ctx, nil, gqlerror.Errorf("server is in read-only mode: mutations are disabled")
+		return ctx, nil, errcode.Errorf(errcode.ReadOnly, "server is in read-only mode: mutations are disabled")
 	}
 	if req.PartialMutations && opDef.Operation == ast.Mutation && !e.Opts.PartialMutations {
-		return ctx, nil, gqlerror.Errorf("partial mutations are disabled: set transactions.partial.enabled")
+		return ctx, nil, errcode.Errorf(errcode.PartialMutationsDisabled, "partial mutations are disabled: set transactions.partial.enabled")
 	}
 	if req.PartialMutations && opDef.Operation == ast.Mutation && e.Opts.PartialMaxItems > 0 {
 		if n := len(collectRootFields(opDef.SelectionSet, doc.Fragments, vars)); n > e.Opts.PartialMaxItems {
-			return ctx, nil, gqlerror.Errorf("partial mutations: %d mutation fields exceed transactions.partial.max_items (%d)", n, e.Opts.PartialMaxItems)
+			return ctx, nil, errcode.Errorf(errcode.DocumentLimitExceeded, "partial mutations: %d mutation fields exceed transactions.partial.max_items (%d)", n, e.Opts.PartialMaxItems)
 		}
 	}
 	if e.Opts.DisableIntrospection {
@@ -381,7 +385,7 @@ func (e *Executor) prepare(ctx context.Context, req Request) (context.Context, *
 		// clients routinely send it as a liveness probe.
 		for _, f := range e.queryRootFields(opDef, doc.Fragments, vars) {
 			if f.Name == "__schema" || f.Name == "__type" {
-				return ctx, nil, gqlerror.Errorf("introspection is disabled")
+				return ctx, nil, errcode.Errorf(errcode.IntrospectionDisabled, "introspection is disabled")
 			}
 		}
 	}
@@ -413,7 +417,7 @@ func (e *Executor) prepare(ctx context.Context, req Request) (context.Context, *
 	for _, h := range e.Hooks {
 		ctx2, err := h.BeforeOperation(ctx, op)
 		if err != nil {
-			return ctx, nil, gqlerror.Errorf("%s", err.Error())
+			return ctx, nil, hookError(err)
 		}
 		ctx = ctx2
 	}
@@ -442,7 +446,7 @@ func selectOperation(doc *ast.QueryDocument, name string) (*ast.OperationDefinit
 	if opDef := doc.Operations.ForName(name); opDef != nil {
 		return opDef, nil
 	}
-	return nil, gqlerror.Errorf("operation %q not found", name)
+	return nil, errcode.Errorf(errcode.InvalidRequest, "operation %q not found", name)
 }
 
 // queryRootFields returns an operation's root fields plus, for a
@@ -877,7 +881,7 @@ func (e *Executor) queryStatement(ctx context.Context, q pgexec.Querier, op *Ope
 func (e *Executor) fieldResult(op *Operation, f *ast.Field, stmt *compile.Statement, raw []byte, err error) (json.RawMessage, error) {
 	if errors.Is(err, pgx.ErrNoRows) {
 		if stmt.Mutation {
-			return nil, &gqlerror.Error{Message: "no row matched " + strconv.Quote(f.Alias), Path: ast.Path{ast.PathName(f.Alias)}}
+			return nil, &gqlerror.Error{Message: "no row matched " + strconv.Quote(f.Alias), Path: ast.Path{ast.PathName(f.Alias)}, Extensions: map[string]any{"code": string(errcode.NotFound)}}
 		}
 		return json.RawMessage("null"), nil
 	}
@@ -937,11 +941,11 @@ func (e *Executor) checkLimits(doc *ast.QueryDocument, op *ast.OperationDefiniti
 	m := newMeasurer(doc.Fragments, vars, pageCap, e.Built, maxDepth, maxCost)
 	depth, cost := m.measure(sel)
 	if depth > maxDepth {
-		return gqlerror.Errorf("operation depth %d exceeds limit %d", depth, maxDepth)
+		return errcode.Errorf(errcode.DepthExceeded, "operation depth %d exceeds limit %d", depth, maxDepth)
 	}
 	if cost > maxCost {
 		e.Opts.Metrics.costRejected()
-		return gqlerror.Errorf("operation cost %d exceeds limit %d", cost, maxCost)
+		return errcode.Errorf(errcode.CostExceeded, "operation cost %d exceeds limit %d", cost, maxCost)
 	}
 	return nil
 }
@@ -1422,7 +1426,8 @@ func collectRootFields(sel ast.SelectionSet, frags ast.FragmentDefinitionList, v
 // gqlError maps any execution error to a GraphQL error honouring the
 // errors.detail policy: dev exposes PG details, prod sanitizes. An error of
 // root field f carries the path of its response key; a GraphQL error that
-// has no path yet gets that path too.
+// has no path yet gets that path too. Every error it returns carries an
+// extensions.code (see errcode): pg:<SQLSTATE> for a database error.
 func (e *Executor) gqlError(err error, f *ast.Field) *gqlerror.Error {
 	e.Opts.Metrics.fieldError(err)
 	path := ast.Path{}
@@ -1431,16 +1436,18 @@ func (e *Executor) gqlError(err error, f *ast.Field) *gqlerror.Error {
 	}
 	var gerr *gqlerror.Error
 	if errors.As(err, &gerr) {
-		if len(gerr.Path) == 0 && f != nil {
-			withPath := *gerr
-			withPath.Path = path
-			return &withPath
+		out := *gerr
+		if len(out.Path) == 0 && f != nil {
+			out.Path = path
 		}
-		return gerr
+		return errcode.With(&out, errcode.Internal)
 	}
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) {
-		ext := map[string]any{"code": pgErr.Code}
+		if msg, ok := nestedNotFound(pgErr); ok {
+			return &gqlerror.Error{Message: msg, Path: path, Extensions: map[string]any{"code": string(errcode.NotFound)}}
+		}
+		ext := map[string]any{"code": string(errcode.PG(pgErr.Code))}
 		msg := pgErr.Message
 		if e.Opts.DevErrors {
 			ext["detail"] = pgErr.Detail
@@ -1455,13 +1462,28 @@ func (e *Executor) gqlError(err error, f *ast.Field) *gqlerror.Error {
 		}
 		return &gqlerror.Error{Message: msg, Path: path, Extensions: ext}
 	}
-	msg := err.Error()
-	if !e.Opts.DevErrors {
-		// Only compile errors explicitly marked client-safe pass through in
-		// prod; other compile errors can carry schema internals (table,
-		// column, type names) and are reduced to a generic message.
-		var uerr *compile.UserError
-		if !errors.As(err, &uerr) {
+	var uerr *compile.UserError
+	if errors.As(err, &uerr) {
+		return &gqlerror.Error{Message: err.Error(), Path: path, Extensions: map[string]any{"code": string(uerr.Code())}}
+	}
+	code, msg := errcode.Internal, err.Error()
+	switch class := pgexec.Classify(err, pgexec.Prod).Class; {
+	case class == pgexec.Timeout:
+		code = errcode.Timeout
+		if !e.Opts.DevErrors {
+			msg = "request timeout"
+		}
+	case class == pgexec.Resource || connectionLost(err):
+		code = errcode.Unavailable
+		if !e.Opts.DevErrors {
+			e.Opts.Logger.Error("request failed", "err", err)
+			msg = "database unavailable"
+		}
+	default:
+		if !e.Opts.DevErrors {
+			// Only compile errors explicitly marked client-safe pass through in
+			// prod; other compile errors can carry schema internals (table,
+			// column, type names) and are reduced to a generic message.
 			e.Opts.Logger.Error("request failed", "err", err)
 			if strings.HasPrefix(msg, "compile:") {
 				msg = "compile: invalid query"
@@ -1470,20 +1492,77 @@ func (e *Executor) gqlError(err error, f *ast.Field) *gqlerror.Error {
 			}
 		}
 	}
-	return &gqlerror.Error{Message: msg, Path: path}
+	return &gqlerror.Error{Message: msg, Path: path, Extensions: map[string]any{"code": string(code)}}
 }
 
-func errResult(err error) *Result {
+// connectionLost reports whether err, an error without a SQLSTATE, is a
+// refused, reset or dropped database connection.
+func connectionLost(err error) bool {
+	var ne net.Error
+	return errors.As(err, &ne) || errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, io.EOF) ||
+		errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, syscall.ECONNRESET)
+}
+
+// nestedNotFound recognises the error a nested_mutations guard raises when
+// a keyed nested operation matches no row: SQLSTATE 22P02 from casting the
+// message "nested_mutations: <path> matched 0 rows" to boolean. It returns
+// that message.
+func nestedNotFound(pgErr *pgconn.PgError) (string, bool) {
+	const prefix, suffix = `invalid input syntax for type boolean: "nested_mutations: `, ` rows"`
+	m := pgErr.Message
+	if pgErr.Code != "22P02" || !strings.HasPrefix(m, prefix) || !strings.HasSuffix(m, suffix) {
+		return "", false
+	}
+	return m[len(prefix)-len("nested_mutations: ") : len(m)-1], true
+}
+
+// hookError is the error of an operation a RequestHook's BeforeOperation
+// refused with err: err itself when it is a GraphQL error carrying a code,
+// otherwise err's message with code operation_rejected (or the code of a
+// compile.UserError).
+func hookError(err error) *gqlerror.Error {
+	var gerr *gqlerror.Error
+	if errors.As(err, &gerr) {
+		out := *gerr
+		return errcode.With(&out, errcode.OperationRejected)
+	}
+	code := errcode.OperationRejected
+	var uerr *compile.UserError
+	if errors.As(err, &uerr) {
+		code = uerr.Code()
+	}
+	return errcode.Errorf(code, "%s", err.Error())
+}
+
+// ErrorList returns err, an error of Prepare or another request-level
+// failure, as the GraphQL errors of a response: the errors of a
+// gqlerror.List or *gqlerror.Error, or err's message otherwise. Every
+// error carries an extensions.code; one without gets timeout when err is a
+// context deadline and internal otherwise.
+func ErrorList(err error) gqlerror.List {
 	var list gqlerror.List
 	if !errors.As(err, &list) {
 		var gerr *gqlerror.Error
-		if errors.As(err, &gerr) {
+		switch {
+		case errors.As(err, &gerr):
 			list = gqlerror.List{gerr}
-		} else {
-			list = gqlerror.List{gqlerror.Errorf("%s", err.Error())}
+		case errors.Is(err, context.DeadlineExceeded):
+			list = gqlerror.List{errcode.Errorf(errcode.Timeout, "request timeout")}
+		default:
+			list = gqlerror.List{errcode.Errorf(errcode.Internal, "%s", err.Error())}
 		}
 	}
-	return &Result{Errors: list}
+	for i, gerr := range list {
+		if gerr != nil && errcode.Of(gerr) == "" {
+			cp := *gerr
+			list[i] = errcode.With(&cp, errcode.Internal)
+		}
+	}
+	return list
+}
+
+func errResult(err error) *Result {
+	return &Result{Errors: ErrorList(err)}
 }
 
 // MarshalJSON renders the result as a spec-shaped GraphQL response; see
