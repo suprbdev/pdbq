@@ -44,13 +44,29 @@
 //
 //   - pgvector ordering: <COLUMN>_L2_DISTANCE_ASC/_DESC (and
 //     _NEGATIVE_INNER_PRODUCT_, _COSINE_DISTANCE_, _L1_DISTANCE_) orderBy
-//     values on vector, halfvec and sparsevec columns plus a nearVector:
-//     <Type>NearVectorInput argument holding the reference vector per
-//     column, compiled to pgvector's distance operators (<->, <#>, <=>, <+>),
-//     which an HNSW or IVFFlat index answers nearest-first.
+//     values on vector, halfvec and sparsevec columns, and
+//     _HAMMING_DISTANCE_ / _JACCARD_DISTANCE_ on bit and varbit columns,
+//     plus a nearVector: <Type>NearVectorInput argument holding the
+//     reference vector per column, compiled to pgvector's distance operators
+//     (<->, <#>, <=>, <+>, <~>, <%>), which an HNSW or IVFFlat index answers
+//     nearest-first;
+//
+//   - score fields: <field>Similarity, <field>WordSimilarity and
+//     <field>StrictWordSimilarity on text columns with trigram surface,
+//     measured against similarTo:, and <field>L2Distance,
+//     <field>NegativeInnerProduct, <field>CosineDistance, <field>L1Distance
+//     (<field>HammingDistance, <field>JaccardDistance on bit columns)
+//     measured against nearVector:, null without the reference; they come
+//     with the ordering setting and ignore @omit order and index coverage;
+//
+//   - distance thresholds: VectorDistanceFilterOps,
+//     SparseVectorDistanceFilterOps and BitDistanceFilterOps add
+//     <distance>LessThan: {vector, distance} operators, which no index
+//     serves, on columns the indexed-only policy admits them for.
 //
 // Under filters.indexed_only, operators no index can serve (hstore
-// containedBy, the ltree *Any forms, the unaccent operators) are left out,
+// containedBy, the ltree *Any forms, the unaccent operators, the vector and
+// bit distance thresholds) are left out,
 // the trigram operators are offered only on columns with a GIN or GiST
 // index, trigram ordering only on columns with a GiST index, and each
 // vector distance ordering only on columns leading an index of a method
@@ -64,9 +80,9 @@
 // the plugin (plugins.disabled: [contrib]) removes the surface while plain
 // reads, writes and comparisons keep working. "@omit filter" / "@omit order"
 // on a column skips its filter / ordering surface; "@omit read" also skips
-// its rank field and its rank, similarity and vector distance orderings,
-// which read the value back against a client-chosen reference (package
-// omit).
+// its rank field, its score fields and its rank, similarity and vector
+// distance orderings, which read the value back against a client-chosen
+// reference (package omit).
 package contrib
 
 import (
@@ -85,11 +101,11 @@ import (
 
 // Plugin implements the SchemaHook adding the contrib surface.
 type Plugin struct {
-	// filters adds the vocabulary operators, pg_trgm and unaccent
-	// operators and rank fields.
+	// filters adds the vocabulary operators, pg_trgm, unaccent and
+	// distance-threshold operators and rank fields.
 	filters bool
 	// ordering adds the rank, similarity and vector distance orderBy values,
-	// similarTo: and nearVector:.
+	// the score fields, similarTo: and nearVector:.
 	ordering bool
 }
 
@@ -205,7 +221,71 @@ func (st *build) addFilters(t *introspect.Table, cols []column) {
 				f.Type = name
 			}
 		}
+		if dv, ok := cc.ci.Distances(); ok && len(dv.Ops) > 0 && st.served(t, cc.col, nil) {
+			if name := st.ensureDistanceOps(f.Type, cc.ci, dv); name != "" {
+				f.Type = name
+			}
+		}
 	}
+}
+
+// distanceInputs maps the operator inputs of vector and bit columns to the
+// inputs adding the distance-threshold operators to them, with their
+// operand input, the reference vector's GraphQL type and descriptions.
+var distanceInputs = map[string]struct{ name, operand, vecType, desc string }{
+	contribtype.VectorOps: {contribtype.VectorDistanceOps, contribtype.VectorDistanceInput, "[Float!]!",
+		"pgvector operators plus distance thresholds against a reference vector; no index serves the thresholds."},
+	"StringFilterOps": {contribtype.BitDistanceOps, contribtype.BitDistanceInput, "String!",
+		"String operators plus pgvector Hamming and Jaccard distance thresholds against a reference bit string; no index serves the thresholds."},
+}
+
+// ensureDistanceOps declares the input adding the distance-threshold
+// operators of dv to the operator input base of a vector or bit column (and
+// their operand input), returning its name, or "" when base takes none or
+// a name is taken.
+func (st *build) ensureDistanceOps(base string, ci contribtype.Column, dv pgcontrib.Vocabulary) string {
+	target, ok := distanceInputs[base]
+	if !ok || (ci.Kind == contribtype.Vector) != (base == contribtype.VectorOps) {
+		return ""
+	}
+	if ci.Kind == contribtype.Vector && !ci.List() {
+		target.name, target.operand, target.vecType = contribtype.SparseVectorDistanceOps, contribtype.SparseVectorDistanceInput, "String!"
+	}
+	if st.extended[target.name] {
+		return target.name
+	}
+	src := st.b.Inputs[base]
+	if src == nil {
+		return ""
+	}
+	for _, n := range []string{target.name, target.operand} {
+		_, in := st.b.Inputs[n]
+		_, obj := st.b.Objects[n]
+		_, en := st.b.Enums[n]
+		if in || obj || en {
+			st.b.Options.Logger.Warn("contrib: type name already taken, distance thresholds disabled", "type", n)
+			return ""
+		}
+	}
+	st.extended[target.name] = true
+	st.b.Inputs[target.operand] = &schema.Input{
+		Name:        target.operand,
+		Description: "A distance threshold against a reference: rows whose distance is less than distance match.",
+		Fields: []*schema.InputField{
+			{Name: "vector", Type: target.vecType, Description: "Reference value; it must have the column's dimensions."},
+			{Name: "distance", Type: "Float!", Description: "Exclusive upper bound of the distance."},
+		},
+	}
+	in := &schema.Input{Name: target.name, Description: target.desc}
+	for _, f := range src.Fields {
+		cp := *f
+		in.Fields = append(in.Fields, &cp)
+	}
+	for _, o := range dv.Ops {
+		in.AddField(&schema.InputField{Name: contribtype.OpName(dv, o), Type: target.operand, Description: o.Description})
+	}
+	st.b.Inputs[target.name] = in
+	return target.name
 }
 
 // unaccentInputs maps the operator inputs of text columns to the inputs
@@ -360,28 +440,36 @@ func (st *build) addOrdering(t *introspect.Table, cols []column) {
 		return
 	}
 	var similar []*introspect.Column
-	var vectors []column
+	var vectors []vectorColumn
 	var filterable map[string]bool
 	for _, cc := range cols {
-		if omit.Column(cc.col, omit.Order) || omit.Column(cc.col, omit.Read) {
+		if omit.Column(cc.col, omit.Read) {
 			continue
 		}
-		if cc.ci.Kind == contribtype.Vector {
+		ordered := !omit.Column(cc.col, omit.Order)
+		if dv, ok := cc.ci.Distances(); ok {
 			if filterable == nil {
 				filterable = map[string]bool{}
 				for _, c := range b.FilterableColumns(t) {
 					filterable[c.Name] = true
 				}
 			}
-			if filterable[cc.col.Name] {
-				vectors = append(vectors, cc)
+			var hints []pgcontrib.IndexHint
+			for _, e := range dv.Exprs {
+				hints = append(hints, e.Index...)
 			}
+			vectors = append(vectors, vectorColumn{
+				column: cc, vocab: dv,
+				ordered: ordered && filterable[cc.col.Name],
+				scored:  cc.ci.Kind == contribtype.Vector || st.served(t, cc.col, hints),
+			})
 			continue
 		}
-		if !orderable(en, cc.col.Name) {
-			continue
-		}
+		ordered = ordered && orderable(en, cc.col.Name)
 		if cc.ci.Kind == contribtype.FullText {
+			if !ordered {
+				continue
+			}
 			if f := st.filterField(t, cc.col); f != nil && f.Type == cc.ci.OpsInput && b.Inputs[f.Type].Field("matches") != nil {
 				addValue(en, coreinflect.EnumValue(cc.col.Name)+"_RANK_ASC", schema.EnumValue{
 					Column: cc.col.Name, Rank: true,
@@ -401,7 +489,7 @@ func (st *build) addOrdering(t *introspect.Table, cols []column) {
 		added := false
 		for _, so := range contribtype.SimilarityOrders {
 			e, ok := trgm.Expr(so.Expr)
-			if !ok || !st.served(t, cc.col, e.Index) {
+			if !ordered || !ok || !st.served(t, cc.col, e.Index) {
 				continue
 			}
 			base := coreinflect.EnumValue(cc.col.Name) + so.Infix
@@ -417,24 +505,87 @@ func (st *build) addOrdering(t *introspect.Table, cols []column) {
 			})
 			added = true
 		}
+		if len(trgm.Ops) > 0 && st.served(t, cc.col, trgm.Ops[0].Index) && st.addScores(t, cc.col, trgm, "similarTo") {
+			added = true
+		}
 		if added {
 			similar = append(similar, cc.col)
 		}
 	}
-	if len(similar) > 0 {
-		st.addSimilarToArg(t, enumName, similar)
+	if len(similar) > 0 && !st.addSimilarToArg(t, enumName, similar) {
+		st.dropScores(t, "similarTo")
 	}
 	if len(vectors) > 0 {
 		st.addVectorOrdering(t, enumName, en, vectors)
 	}
 }
 
+// vectorColumn is a vector or bit column with pgvector distances: its
+// distance vocabulary, whether the policy admits its ordering, and whether
+// it gets distance scores (every vector column; a bit column only where an
+// index or the policy admits pgvector's surface, so installing pgvector
+// leaves unrelated bit columns alone).
+type vectorColumn struct {
+	column
+	vocab   pgcontrib.Vocabulary
+	ordered bool
+	scored  bool
+}
+
+// addScores adds a score field per [pgcontrib.Expr.Score] expression of
+// vocab on column c (<field>Similarity, <field>CosineDistance, ...),
+// measured against the list's arg reference, reporting whether any was
+// added.
+func (st *build) addScores(t *introspect.Table, c *introspect.Column, vocab pgcontrib.Vocabulary, arg string) bool {
+	obj := st.b.Objects[st.b.TypeForTable[t.Schema+"."+t.Name]]
+	if obj == nil {
+		return false
+	}
+	field := st.b.Inflect(inflect.KindFieldName, inflect.Input{Schema: t.Schema, Table: t.Name, Column: c.Name})
+	added := false
+	for _, e := range vocab.Exprs {
+		if !e.Score {
+			continue
+		}
+		name := field + coreinflect.UpperCamel(e.Name)
+		if obj.Field(name) != nil {
+			continue
+		}
+		obj.AddField(&schema.Field{
+			Name: name,
+			Type: "Float",
+			Description: strings.TrimSuffix(e.Description, ".") + "; " + c.Name + " measured against the " + arg +
+				": reference of the list this row was read through, null without one.",
+			Meta: &schema.FieldMeta{Kind: schema.KindScore, Table: t, Column: c, Score: &schema.Score{Arg: arg, Expr: e.Name}},
+		})
+		added = true
+	}
+	return added
+}
+
+// dropScores removes the score fields reading arg from t's object type, for
+// a table whose reference input could not be declared.
+func (st *build) dropScores(t *introspect.Table, arg string) {
+	obj := st.b.Objects[st.b.TypeForTable[t.Schema+"."+t.Name]]
+	if obj == nil {
+		return
+	}
+	var keep []*schema.Field
+	for _, f := range obj.Fields {
+		if f.Meta == nil || f.Meta.Kind != schema.KindScore || f.Meta.Score == nil || f.Meta.Score.Arg != arg {
+			keep = append(keep, f)
+		}
+	}
+	obj.Fields = keep
+}
+
 // addVectorOrdering adds the pgvector distance orderBy values of the vector
-// columns the indexed-only policy admits them for, declares
-// <Type>NearVectorInput (one reference vector per such column) and adds
-// nearVector: to every field taking the table's orderBy enum. Nothing is
-// added when the input's name is taken.
-func (st *build) addVectorOrdering(t *introspect.Table, enumName string, en *schema.Enum, cols []column) {
+// and bit columns the indexed-only policy admits them for and the distance
+// score fields of every readable one, declares <Type>NearVectorInput (one
+// reference vector per such column) and adds nearVector: to every field
+// taking the table's orderBy enum. Nothing is added when the input's name
+// is taken.
+func (st *build) addVectorOrdering(t *introspect.Table, enumName string, en *schema.Enum, cols []vectorColumn) {
 	b := st.b
 	typeName := b.TypeForTable[t.Schema+"."+t.Name]
 	inputName := typeName + "NearVectorInput"
@@ -447,39 +598,38 @@ func (st *build) addVectorOrdering(t *introspect.Table, enumName string, en *sch
 	}
 	input := &schema.Input{
 		Name:        inputName,
-		Description: "Reference vectors for the pgvector distance orderBy values of " + typeName + ", per column.",
+		Description: "Reference vectors for the pgvector distance orderBy values and distance fields of " + typeName + ", per column.",
 	}
-	for _, cc := range cols {
+	for _, vc := range cols {
 		added := false
 		for _, vo := range contribtype.VectorOrders {
-			e, ok := cc.ci.Own.Expr(vo.Expr)
-			if !ok || !st.served(t, cc.col, e.Index) {
+			e, ok := vc.vocab.Expr(vo.Expr)
+			if !vc.ordered || !ok || !st.served(t, vc.col, e.Index) {
 				continue
 			}
-			base := coreinflect.EnumValue(cc.col.Name) + vo.Infix
+			base := coreinflect.EnumValue(vc.col.Name) + vo.Infix
 			desc := "Order by pgvector " + vo.Label + " from the nearVector: reference vector for this column"
 			addValue(en, base+"_ASC", schema.EnumValue{
-				Column: cc.col.Name, Vector: vo.Expr,
+				Column: vc.col.Name, Vector: vo.Expr,
 				Description: desc + " (nearest first; index-assisted with an HNSW or IVFFlat index built with the matching operator class). Requires nearVector:.",
 			})
 			addValue(en, base+"_DESC", schema.EnumValue{
-				Column: cc.col.Name, Vector: vo.Expr, Desc: true,
+				Column: vc.col.Name, Vector: vo.Expr, Desc: true,
 				Description: desc + " (farthest first). Requires nearVector:.",
 			})
+			added = true
+		}
+		if vc.scored && st.addScores(t, vc.col, vc.vocab, "nearVector") {
 			added = true
 		}
 		if !added {
 			continue
 		}
-		typ := "String"
-		if cc.ci.List() {
-			typ = "[" + cc.ci.Scalar + "!]"
-		}
 		input.AddField(&schema.InputField{
-			Name:        b.Inflect(inflect.KindFieldName, inflect.Input{Schema: t.Schema, Table: t.Name, Column: cc.col.Name}),
-			Type:        typ,
-			Description: "Reference vector for the " + cc.col.Name + " distance orderBy values; it must have the column's dimensions.",
-			Column:      cc.col.Name,
+			Name:        b.Inflect(inflect.KindFieldName, inflect.Input{Schema: t.Schema, Table: t.Name, Column: vc.col.Name}),
+			Type:        vc.ci.DistanceInput(),
+			Description: "Reference vector for the " + vc.col.Name + " distance orderBy values and distance fields; it must have the column's dimensions.",
+			Column:      vc.col.Name,
 		})
 	}
 	if len(input.Fields) == 0 {
@@ -513,9 +663,9 @@ func addValue(en *schema.Enum, name string, v schema.EnumValue) {
 }
 
 // addSimilarToArg declares <Type>SimilarToInput (one String per column with
-// similarity ordering) and adds similarTo: to every field taking the
-// table's orderBy enum.
-func (st *build) addSimilarToArg(t *introspect.Table, enumName string, cols []*introspect.Column) {
+// similarity ordering or scores) and adds similarTo: to every field taking
+// the table's orderBy enum, reporting false when the input's name is taken.
+func (st *build) addSimilarToArg(t *introspect.Table, enumName string, cols []*introspect.Column) bool {
 	b := st.b
 	typeName := b.TypeForTable[t.Schema+"."+t.Name]
 	inputName := typeName + "SimilarToInput"
@@ -524,17 +674,17 @@ func (st *build) addSimilarToArg(t *introspect.Table, enumName string, cols []*i
 	_, en := b.Enums[inputName]
 	if obj || in || en {
 		b.Options.Logger.Warn("contrib: type name already taken, similarTo: argument skipped", "type", inputName)
-		return
+		return false
 	}
 	input := &schema.Input{
 		Name:        inputName,
-		Description: "Reference texts for the pg_trgm similarity orderBy values of " + typeName + ", per column.",
+		Description: "Reference texts for the pg_trgm similarity orderBy values and similarity fields of " + typeName + ", per column.",
 	}
 	for _, c := range cols {
 		input.AddField(&schema.InputField{
 			Name:        b.Inflect(inflect.KindFieldName, inflect.Input{Schema: t.Schema, Table: t.Name, Column: c.Name}),
 			Type:        "String",
-			Description: "Reference text for the " + c.Name + " similarity orderBy values.",
+			Description: "Reference text for the " + c.Name + " similarity orderBy values and similarity fields.",
 			Column:      c.Name,
 		})
 	}
@@ -544,6 +694,7 @@ func (st *build) addSimilarToArg(t *introspect.Table, enumName string, cols []*i
 			f.Args = append(f.Args, schema.Arg{Name: "similarTo", Type: inputName})
 		}
 	}
+	return true
 }
 
 func hasArg(f *schema.Field, name string) bool {

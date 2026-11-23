@@ -443,3 +443,50 @@ func TestTypedGeometryNameClash(t *testing.T) {
 		t.Errorf("geography flavour should still be typed, got %q", got)
 	}
 }
+
+func TestDistanceFields(t *testing.T) {
+	b := buildWith(t, nil, nil)
+	place := b.Objects["Place"]
+	loc, area := place.Field("locationDistance"), place.Field("areaDistance")
+	if loc == nil || area == nil {
+		t.Fatalf("distance fields missing: location %v, area %v", loc != nil, area != nil)
+	}
+	for _, f := range []*schema.Field{loc, area} {
+		if f.Type != "Float" || f.Meta == nil || f.Meta.Kind != schema.KindScore || f.Meta.Score == nil || f.Meta.Score.Arg != "near" || f.Meta.Score.Expr != "" {
+			t.Errorf("%s: %+v / %+v", f.Name, f, f.Meta)
+		}
+	}
+	if len(loc.Args) != 1 || loc.Args[0].Name != "useSpheroid" || loc.Args[0].Type != "Boolean" || loc.Args[0].Default != "false" {
+		t.Errorf("geometry distance args = %+v", loc.Args)
+	}
+	if len(area.Args) != 0 {
+		t.Errorf("geography distance args = %+v", area.Args)
+	}
+
+	omitted := buildWith(t, nil, func(cat *introspect.Catalog) {
+		cat.Table("public", "places").Column("location").Comment = "@omit order"
+		cat.Table("public", "places").Column("area").Comment = "@omit read"
+	})
+	if omitted.Objects["Place"].Field("locationDistance") == nil {
+		t.Error("@omit order removed the distance field")
+	}
+	if omitted.Objects["Place"].Field("areaDistance") != nil {
+		t.Error("@omit read kept the distance field")
+	}
+	if !hasArg(omitted.Query.Field("allPlaces"), "near") {
+		t.Error("near: missing for the distance field")
+	}
+
+	noOrder := buildWith(t, map[string]any{"ordering": false}, nil)
+	if noOrder.Objects["Place"].Field("locationDistance") != nil || hasArg(noOrder.Query.Field("allPlaces"), "near") {
+		t.Error("ordering: false kept the distance field or near:")
+	}
+
+	taken := buildWith(t, nil, func(cat *introspect.Catalog) {
+		places := cat.Table("public", "places")
+		places.Columns = append(places.Columns, &introspect.Column{Name: "location_distance", Position: 99, PGType: "float8", TypeSchema: "pg_catalog"})
+	})
+	if f := taken.Objects["Place"].Field("locationDistance"); f == nil || f.Meta.Kind != schema.KindColumn {
+		t.Error("the distance field shadowed a real column")
+	}
+}

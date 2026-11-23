@@ -25,8 +25,9 @@ connection-filter operator names) wherever PostGraphile has one.
 | `inet` / `cidr` | `InternetAddress` / `CidrAddress` | same | `InternetAddressFilterOps` / `CidrAddressFilterOps` |
 | `text`, `varchar`, `char(n)`, `citext` with `pg_trgm` installed | `String` | `String` | `StringTrgmFilterOps` (see [Trigram](#trigram-similarity-pg_trgm)) |
 | the same with `unaccent` installed | `String` | `String` | `StringUnaccentFilterOps` / `StringTrgmUnaccentFilterOps` (see [Unaccent](#unaccent)) |
-| `vector`, `halfvec` (pgvector) | `[Float!]` | `[Float!]` | `VectorFilterOps` (`isNull` only; see [pgvector](#pgvector)) |
-| `sparsevec` (pgvector) | `String` (`"{1:1.5,3:2}/5"`) | `String` | `VectorFilterOps` |
+| `vector`, `halfvec` (pgvector) | `[Float!]` | `[Float!]` | `VectorFilterOps` (`isNull` only), `VectorDistanceFilterOps` with distance thresholds (see [pgvector](#pgvector)) |
+| `sparsevec` (pgvector) | `String` (`"{1:1.5,3:2}/5"`) | `String` | `VectorFilterOps`, `SparseVectorDistanceFilterOps` with distance thresholds |
+| `bit`, `varbit` with pgvector installed | `String` (`"101"`) | `String` | `StringFilterOps`, `BitDistanceFilterOps` with Hamming/Jaccard thresholds (see [Bit vectors](#bit-vectors)) |
 
 Ranges have PostGraphile's shape:
 
@@ -146,10 +147,12 @@ On top of that, with `indexed_only` on (the default):
   operators);
 - each vector distance ordering needs an index led by the column whose
   access method can serve that metric: HNSW for all of them, IVFFlat for
-  all but L1 and `sparsevec`.
+  all but L1 and `sparsevec` (and, on bit columns, Hamming only);
+- the vector and bit distance thresholds, which no index serves, are offered
+  only on columns listed in `filters.allow_columns`.
 
 Columns listed in `filters.allow_columns` get everything on their own inputs
-(trigram, unaccent and vector surface; the hstore and ltree operators above
+(trigram, unaccent, vector and bit surface; the hstore and ltree operators above
 live on shared inputs and stay out). Operator classes are not introspected:
 a GIN index on a text column is taken to be a trigram index, and an HNSW
 index on a vector column is taken to serve every metric, although pgvector
@@ -210,6 +213,36 @@ distance operators (`<->`, `<->>`, `<->>>`), which a GiST trigram index
 answers directly (nearest-first, like spatial `near:`). Ordering by
 similarity without a reference text for that column is an error. Combine
 with a `similarTo` filter to drop weak matches.
+
+### Similarity fields
+
+The scores themselves are fields: `<field>Similarity`,
+`<field>WordSimilarity` and `<field>StrictWordSimilarity: Float` (0 to 1,
+higher is more similar) evaluate `similarity`, `word_similarity` and
+`strict_word_similarity` against the `similarTo:` text for the same column
+of the list the row was read through:
+
+```graphql
+{
+  allAccounts(
+    filter: {fullName: {similarTo: "Ada Lovlace"}}
+    similarTo: {fullName: "Ada Lovlace"}
+    orderBy: [FULL_NAME_SIMILARITY_DESC]
+    first: 5
+  ) {
+    nodes { fullName fullNameSimilarity }
+  }
+}
+```
+
+A field is `null` when the list has no reference for its column, and for
+rows read outside such a list (single-row lookups, forward relations,
+mutation payloads). The fields exist on every column that takes the trigram
+operators (a GIN or GiST trigram index, or an allowlisted column, under
+`filters.indexed_only`), so `similarTo:` also names columns that have
+similarity fields but no similarity ordering (a GIN-indexed column). They
+are projections of the returned rows: `@omit order` keeps them, `@omit
+read` removes them, and the cost estimator prices each like a column.
 
 ## Unaccent
 
@@ -292,6 +325,106 @@ when an index led by the column has a method that serves it (see
 [above](#filtersindexed_only)). The `dims` and `norm` accessors of pdbcore's
 vocabulary are not exposed, like the other contrib accessors.
 
+### Distance fields
+
+Every readable vector column gets one `Float` field per metric, measured
+from the `nearVector:` reference for that column of the list the row was
+read through: `<field>L2Distance`, `<field>NegativeInnerProduct`,
+`<field>CosineDistance` and `<field>L1Distance` (pgvector 0.7 and later).
+They are `null` without a reference and for rows read outside such a list,
+and exist whether or not the metric's ordering is offered, so `nearVector:`
+names every vector column (a reference for a column without ordering only
+feeds its fields):
+
+```graphql
+{
+  allItems(nearVector: {embedding: [0.12, -0.4, 0.9]}, orderBy: [EMBEDDING_COSINE_DISTANCE_ASC], first: 10) {
+    nodes { id embeddingCosineDistance }
+  }
+}
+```
+
+### Distance thresholds
+
+"Similar enough" cut-offs are filters: on columns the policy admits them
+for, the filter takes `VectorDistanceFilterOps` (`vector`, `halfvec`) or
+`SparseVectorDistanceFilterOps` (`sparsevec`), `isNull` plus one
+`<distance>LessThan` operator per metric, each taking its own reference and
+an exclusive bound:
+
+```graphql
+{
+  allItems(
+    filter: {embedding: {cosineDistanceLessThan: {vector: [0.12, -0.4, 0.9], distance: 0.2}}}
+    nearVector: {embedding: [0.12, -0.4, 0.9]}
+    orderBy: [EMBEDDING_COSINE_DISTANCE_ASC]
+    first: 10
+  ) { nodes { id embeddingCosineDistance } }
+}
+```
+
+| Operator | SQL |
+|---|---|
+| `l2DistanceLessThan` | `(embedding <-> $1::vector) < $2` |
+| `negativeInnerProductLessThan` | `(embedding <#> $1::vector) < $2` |
+| `cosineDistanceLessThan` | `(embedding <=> $1::vector) < $2` |
+| `l1DistanceLessThan` | `(embedding <+> $1::vector) < $2` (pgvector 0.7 and later) |
+
+The operand is `VectorDistanceInput {vector: [Float!]!, distance: Float!}`
+(`SparseVectorDistanceInput` takes the `vector` as a `String`). pgvector
+indexes serve ordering, not these predicates, so on their own they scan;
+with `filters.indexed_only` on they are offered only on columns listed in
+`filters.allow_columns` (every vector column with it off), and other
+columns keep `VectorFilterOps`. Combined with nearest-first ordering by the
+same distance and `first:`, an approximate index scan feeds the filter.
+
+### Bit vectors
+
+With pgvector 0.7 or later installed, `bit` and `varbit` columns (binary
+embeddings) take pgvector's Hamming (`<~>`) and Jaccard (`<%>`) distances:
+`<COLUMN>_HAMMING_DISTANCE_ASC/_DESC` and `<COLUMN>_JACCARD_DISTANCE_ASC/_DESC`
+orderings, `<field>HammingDistance` / `<field>JaccardDistance` fields and
+`hammingDistanceLessThan` / `jaccardDistanceLessThan` thresholds (on
+`BitDistanceFilterOps`, `StringFilterOps` plus the two). References are bit
+strings (`"1010"`), sent as `$1::varbit`; one of another length is rejected
+by pgvector. A bit column gets this surface only where an index serves a
+metric (HNSW with `bit_hamming_ops` / `bit_jaccard_ops`, IVFFlat with
+`bit_hamming_ops`) or the policy admits it (allowlisted, or
+`indexed_only` off), so installing pgvector leaves other bit columns alone.
+
+Binary quantization keeps such a column next to the full vector and
+re-ranks a coarse Hamming search by the exact distance:
+
+```sql
+ALTER TABLE items ADD COLUMN code bit(1536)
+  GENERATED ALWAYS AS (binary_quantize(embedding)::bit(1536)) STORED;
+CREATE INDEX ON items USING hnsw (code bit_hamming_ops);
+```
+
+```graphql
+{
+  allItems(nearVector: {code: "0110…", embedding: [0.12, …]}, orderBy: [CODE_HAMMING_DISTANCE_ASC], first: 100) {
+    nodes { id codeHammingDistance embeddingCosineDistance }
+  }
+}
+```
+
+Here the index answers the 100 nearest codes and the client re-ranks them
+by `embeddingCosineDistance`; the reference code is the sign bits of the
+query vector (`binary_quantize` of it). To re-rank inside the database in
+one statement, wrap both stages in a function, exposed as a root field
+(`searchItems(q: [...], n: 10)`):
+
+```sql
+CREATE FUNCTION search_items(q vector(1536), n int DEFAULT 10) RETURNS SETOF items
+  STABLE LANGUAGE sql AS $$
+  SELECT * FROM (
+    SELECT * FROM items ORDER BY code <~> binary_quantize(q)::bit(1536) LIMIT n * 10
+  ) AS candidates
+  ORDER BY embedding <=> q LIMIT n
+$$;
+```
+
 ## Mutations
 
 Inputs go through each type's constructor or cast: `hstore($1::text[])` from
@@ -312,12 +445,13 @@ plugin's surface.
 
 | Key | Default | Effect |
 |---|---|---|
-| `plugins.settings.contrib.filters` | `true` | vocabulary operators, `StringTrgmFilterOps`, the unaccent inputs, `<field>Rank` fields (and so rank ordering) |
-| `plugins.settings.contrib.ordering` | `true` | `_RANK_`, `_SIMILARITY_` and vector `_DISTANCE_`/`_INNER_PRODUCT_` orderBy values and the `similarTo:` and `nearVector:` arguments |
+| `plugins.settings.contrib.filters` | `true` | vocabulary operators, `StringTrgmFilterOps`, the unaccent inputs, the distance-threshold inputs, `<field>Rank` fields (and so rank ordering) |
+| `plugins.settings.contrib.ordering` | `true` | `_RANK_`, `_SIMILARITY_` and vector `_DISTANCE_`/`_INNER_PRODUCT_` orderBy values, the similarity and distance fields and the `similarTo:` and `nearVector:` arguments |
 
 `@omit filter` / `@omit order` on a column removes its filter / ordering
-surface; `@omit read` also removes its rank field and its rank, similarity
-and vector distance orderings, which sort against a reference of the
-client's choosing. If a table's `<Type>NearVectorInput` name is already
+surface (the similarity and distance fields stay); `@omit read` also
+removes its rank, similarity and distance fields and its rank, similarity
+and vector distance orderings, which measure the value against a reference
+of the client's choosing. Schema contracts hide columns the same way. If a table's `<Type>NearVectorInput` name is already
 taken, its vector ordering is skipped and the builder logs a warning; the
 same goes for the unaccent inputs.

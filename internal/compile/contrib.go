@@ -370,29 +370,15 @@ func (s *stmt) exprTerm(t *introspect.Table, f *ast.Field, value string, spec sc
 	if col == nil {
 		return orderTerm{}, fmt.Errorf("compile: order column %q not found", spec.Column)
 	}
-	ci := s.contrib(col)
-	vocab, ok := ci.Trgm()
 	name, arg := spec.Similarity, "similarTo"
 	if spec.Vector != "" {
-		vocab, ok = ci.Own, ci.Kind == contribtype.Vector
 		name, arg = spec.Vector, "nearVector"
 	}
-	if !ok {
-		return orderTerm{}, fmt.Errorf("compile: column %q has no vocabulary for %s", spec.Column, value)
+	expr, err := s.referenceExpr(col, arg, name)
+	if err != nil {
+		return orderTerm{}, err
 	}
-	expr, ok := vocab.Expr(name)
-	if !ok {
-		return orderTerm{}, fmt.Errorf("compile: unknown %s expression %q", vocab.Name, name)
-	}
-	var ref any
-	if v, ok := s.argValue(f, arg); ok {
-		m, _ := v.(map[string]any)
-		for field, colName := range s.c.Built.InputColumns[argTypeName(f, arg)] {
-			if colName == spec.Column {
-				ref = m[field]
-			}
-		}
-	}
+	ref := s.referenceValue(f, arg, spec.Column)
 	if ref == nil {
 		return orderTerm{}, errUser("orderBy %s requires a %s: reference for the same column", value, arg)
 	}
@@ -401,6 +387,41 @@ func (s *stmt) exprTerm(t *introspect.Table, f *ast.Field, value string, spec sc
 		return orderTerm{}, errUser("%s: %s", arg, err.Error())
 	}
 	return orderTerm{col: spec.Column, expr: &expr, exprArgs: s.params(params), desc: spec.Desc}, nil
+}
+
+// referenceExpr resolves the contrib expression name measured against the
+// list argument arg: a pg_trgm expression for similarTo:, a pgvector
+// (vector or bit) distance for nearVector:.
+func (s *stmt) referenceExpr(col *introspect.Column, arg, name string) (pgcontrib.Expr, error) {
+	ci := s.contrib(col)
+	vocab, ok := ci.Trgm()
+	if arg == "nearVector" {
+		vocab, ok = ci.Distances()
+	}
+	if !ok {
+		return pgcontrib.Expr{}, fmt.Errorf("compile: column %q has no vocabulary for %s", col.Name, name)
+	}
+	expr, ok := vocab.Expr(name)
+	if !ok {
+		return pgcontrib.Expr{}, fmt.Errorf("compile: unknown %s expression %q", vocab.Name, name)
+	}
+	return expr, nil
+}
+
+// referenceValue returns the reference the list field f's argument arg
+// (similarTo:, nearVector:) holds for column col; nil when absent.
+func (s *stmt) referenceValue(f *ast.Field, arg, col string) any {
+	v, ok := s.argValue(f, arg)
+	if !ok {
+		return nil
+	}
+	m, _ := v.(map[string]any)
+	for field, colName := range s.c.Built.InputColumns[argTypeName(f, arg)] {
+		if colName == col {
+			return m[field]
+		}
+	}
+	return nil
 }
 
 // contribLiteral renders an input value of a contrib-owned type as the text

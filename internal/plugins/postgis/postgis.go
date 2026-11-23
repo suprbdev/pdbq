@@ -33,7 +33,9 @@
 //
 //   - distance ordering: <COLUMN>_DISTANCE_ASC/_DESC orderBy values plus a
 //     `near:` argument on list and connection fields, compiled to the
-//     index-assisted KNN operator (<->).
+//     index-assisted KNN operator (<->), and a <field>Distance: Float score
+//     selecting the distance itself (ST_Distance; metres on geography, SRID
+//     units on geometry unless useSpheroid: true).
 //
 //   - typed geometry (opt-in, typed_geometry: true): spatial column fields
 //     return `@graphile/postgis`-style objects (GeometryInterface,
@@ -54,8 +56,8 @@
 // Per-object control follows the same smart-comment conventions as the rest of
 // the codebase (package omit): "@omit filter" on a spatial column skips its
 // filter surface, "@omit order" its distance ordering, and "@omit read" its
-// derived accessors and distance ordering (ordering by distance from a
-// client-chosen point reads the value back).
+// derived accessors, distance field and distance ordering (measuring the
+// distance from a client-chosen point reads the value back).
 package postgis
 
 import (
@@ -77,7 +79,8 @@ type Plugin struct {
 	filters bool
 	// derived generates the <field>Area/<field>Centroid/... accessors.
 	derived bool
-	// ordering generates distance orderBy values and the `near:` argument.
+	// ordering generates distance orderBy values, the <field>Distance
+	// fields and the `near:` argument.
 	ordering bool
 	// projection generates the transform:/simplify: field arguments.
 	projection bool
@@ -202,7 +205,7 @@ func (p *Plugin) addSharedInputs(b *schema.Builder) {
 	if _, ok := b.Inputs[nearInput]; !ok {
 		b.Inputs[nearInput] = &schema.Input{
 			Name:        nearInput,
-			Description: "Reference geometry for distance ordering (<COLUMN>_DISTANCE_ASC/_DESC).",
+			Description: "Reference geometry for distance ordering (<COLUMN>_DISTANCE_ASC/_DESC) and the <field>Distance fields.",
 			Fields: []*schema.InputField{
 				{Name: "geometry", Type: postgis.TypeName + "!", Description: "Reference geometry, as GeoJSON or WKT."},
 			},
@@ -431,10 +434,13 @@ func (p *Plugin) addProjectionArgs(b *schema.Builder, t *introspect.Table, cols 
 }
 
 // addDistanceOrdering adds <COLUMN>_DISTANCE_ASC/_DESC values to the table's
-// orderBy enum and a `near:` argument to the fields that accept orderBy.
+// orderBy enum, a <field>Distance score field per readable spatial column,
+// and a `near:` argument to the fields that accept orderBy.
 //
-// The enum value carries the column binding; the reference geometry comes from
-// `near:` at query time, which is why the two are generated together.
+// The enum values and score fields carry the column binding; the reference
+// geometry comes from `near:` at query time, which is why they are generated
+// together. Scores are projections of the returned rows, so unlike the
+// ordering they ignore the indexed-only policy and @omit order.
 func (p *Plugin) addDistanceOrdering(b *schema.Builder, t *introspect.Table, cols []*introspect.Column, orderBy map[string][]*schema.Field) {
 	enumName := b.Inflect(inflect.KindOrderByTypeName, inflect.Input{Schema: t.Schema, Table: t.Name})
 	en, ok := b.Enums[enumName]
@@ -444,10 +450,13 @@ func (p *Plugin) addDistanceOrdering(b *schema.Builder, t *introspect.Table, col
 	allowed := filterableSet(b, t)
 	added := false
 	for _, c := range cols {
-		if omit.Column(c, omit.Order) || omit.Column(c, omit.Read) {
+		if omit.Column(c, omit.Read) {
 			continue
 		}
-		if !allowed[c.Name] {
+		if addDistanceField(b, t, c) {
+			added = true
+		}
+		if omit.Column(c, omit.Order) || !allowed[c.Name] {
 			continue
 		}
 		base := coreinflect.EnumValue(c.Name)
@@ -473,6 +482,42 @@ func (p *Plugin) addDistanceOrdering(b *schema.Builder, t *introspect.Table, col
 	if added {
 		addNearArg(orderBy[enumName])
 	}
+}
+
+// addDistanceField adds <field>Distance: Float, the distance of column c
+// from the list's near: geometry, reporting whether it was added (a real
+// column or another field may own the name). Geometry columns take
+// useSpheroid: to measure in metres.
+func addDistanceField(b *schema.Builder, t *introspect.Table, c *introspect.Column) bool {
+	obj := b.Objects[b.TypeForTable[t.Schema+"."+t.Name]]
+	if obj == nil {
+		return false
+	}
+	name := b.Inflect(inflect.KindFieldName, inflect.Input{Schema: t.Schema, Table: t.Name, Column: c.Name}) + "Distance"
+	if obj.Field(name) != nil {
+		return false
+	}
+	desc := "Distance of " + c.Name + " from the geometry in the near: argument of the list this row was read " +
+		"through; null without one. "
+	var args []schema.Arg
+	if postgis.FlavourOf(c.PGType) == postgis.Geography {
+		desc += "In metres."
+	} else {
+		desc += "In the units of the column's SRID, or in metres on the spheroid with useSpheroid: true " +
+			"(lon/lat SRIDs only)."
+		args = []schema.Arg{{
+			Name: "useSpheroid", Type: "Boolean", Default: "false",
+			Description: "Measure in metres on the WGS 84 spheroid by casting both geometries to geography.",
+		}}
+	}
+	obj.AddField(&schema.Field{
+		Name:        name,
+		Type:        "Float",
+		Args:        args,
+		Description: desc,
+		Meta:        &schema.FieldMeta{Kind: schema.KindScore, Table: t, Column: c, Score: &schema.Score{Arg: "near"}},
+	})
+	return true
 }
 
 // addNearArg adds `near: NearInput` to every field that already takes the

@@ -1,0 +1,31 @@
+# <field>Distance selects ST_Distance from the list's near: geometry: SRID
+# units on geometry, metres on geography (the reference is cast to the
+# column's flavour) and on geometry with useSpheroid. Without near:, and on
+# rows not read through a list taking it, the field is null.
+{
+  nearest: allPlaces(near: {geometry: "SRID=4326;POINT(-0.12 51.5)"}, orderBy: [LOCATION_DISTANCE_ASC], first: 3) {
+    nodes {
+      id
+      locationDistance
+      metres: locationDistance(useSpheroid: true)
+      areaDistance
+    }
+  }
+  unordered: allPlaces(near: {geometry: {type: "Point", coordinates: [-0.12, 51.5]}}) {
+    nodes { locationDistance }
+  }
+  noNear: allPlaces(first: 1) {
+    nodes { locationDistance }
+  }
+  edges: allPlaces(near: {geometry: "POINT(-0.12 51.5)"}, first: 2) {
+    edges { node { locationDistance } }
+  }
+  nested: userById(id: 1) {
+    placesByOwnerId(near: {geometry: "POINT(0 0)"}, orderBy: [AREA_DISTANCE_ASC], first: 2) {
+      nodes { name areaDistance }
+    }
+  }
+  single: placeById(id: 1) {
+    locationDistance
+  }
+}

@@ -163,7 +163,9 @@ const (
 	sFilter    = "filter"     // a filter or condition field
 	sAggFilter = "agg-filter" // a having or relation-aggregate filter field
 	sOrder     = "order"      // a plain or relational orderBy value
-	sRefOrder  = "ref-order"  // a distance or similarity orderBy value or its reference input
+	sRefOrder  = "ref-order"  // a distance or similarity orderBy value
+	sRef       = "ref"        // a reference input field (similarTo:, nearVector:), read by ref-orders and scores
+	sScore     = "score"      // a similarity or distance field, scored against a reference input
 	sRank      = "rank"       // a full-text rank field, scored against the column's filter
 	sRankOrder = "rank-order" // a full-text rank orderBy value
 	sAggOrder  = "agg-order"  // a relational aggregate orderBy value
@@ -203,6 +205,8 @@ func occurrences(t *testing.T, s *ast.Schema, column string) map[string]bool {
 					add(sKey, loc)
 				case has(f.Name) && strings.HasSuffix(f.Name, "Rank"):
 					add(sRank, loc)
+				case has(f.Name) && (strings.HasSuffix(f.Name, "Similarity") || strings.HasSuffix(f.Name, "Distance")):
+					add(sScore, loc)
 				case has(f.Name):
 					add(sOutput, loc)
 				}
@@ -226,8 +230,8 @@ func occurrences(t *testing.T, s *ast.Schema, column string) map[string]bool {
 					add(sAggFilter, loc)
 				case strings.HasSuffix(name, "Filter") || strings.HasSuffix(name, "Condition"):
 					add(sFilter, loc)
-				case strings.HasSuffix(name, "SimilarToInput"):
-					add(sRefOrder, loc)
+				case strings.HasSuffix(name, "SimilarToInput") || strings.HasSuffix(name, "NearVectorInput"):
+					add(sRef, loc)
 				case strings.HasSuffix(name, "CreateInput"):
 					add(sCreate, loc)
 				case strings.HasSuffix(name, "UpdateInput"):
@@ -286,8 +290,8 @@ func surfacesOf(occ map[string]bool) []string {
 // column's name the untagged schema has must survive exactly when its
 // surface is not one the variant hides, and no new occurrence may appear.
 func TestOmitColumnEverywhere(t *testing.T) {
-	everything := []string{sOutput, sKey, sUpsert, sFilter, sAggFilter, sOrder, sRefOrder, sAggOrder, sRank, sRankOrder, sDistinct, sGroupBy, sCreate, sUpdate}
-	read := []string{sOutput, sKey, sUpsert, sFilter, sAggFilter, sOrder, sRefOrder, sAggOrder, sRank, sRankOrder, sDistinct, sGroupBy}
+	everything := []string{sOutput, sKey, sUpsert, sFilter, sAggFilter, sOrder, sRefOrder, sRef, sScore, sAggOrder, sRank, sRankOrder, sDistinct, sGroupBy, sCreate, sUpdate}
+	read := []string{sOutput, sKey, sUpsert, sFilter, sAggFilter, sOrder, sRefOrder, sRef, sScore, sAggOrder, sRank, sRankOrder, sDistinct, sGroupBy}
 	variants := []struct {
 		tag    string
 		hidden []string
@@ -302,8 +306,8 @@ func TestOmitColumnEverywhere(t *testing.T) {
 		{"@omit filter,order", []string{sFilter, sAggFilter, sOrder, sRefOrder, sAggOrder, sRank, sRankOrder, sDistinct, sGroupBy}},
 	}
 	columns := map[string][]string{
-		"secret_code":   {sOutput, sKey, sUpsert, sFilter, sAggFilter, sOrder, sRefOrder, sAggOrder, sDistinct, sCreate, sUpdate},
-		"secret_spot":   {sOutput, sFilter, sAggFilter, sRefOrder, sCreate, sUpdate},
+		"secret_code":   {sOutput, sKey, sUpsert, sFilter, sAggFilter, sOrder, sRefOrder, sRef, sScore, sAggOrder, sDistinct, sCreate, sUpdate},
+		"secret_spot":   {sOutput, sFilter, sAggFilter, sRefOrder, sScore, sCreate, sUpdate},
 		"secret_doc":    {sOutput, sFilter, sAggFilter, sOrder, sAggOrder, sRank, sRankOrder, sDistinct, sGroupBy, sCreate, sUpdate},
 		"secret_amount": {sOutput, sFilter, sAggFilter, sOrder, sAggOrder, sDistinct, sGroupBy, sCreate, sUpdate},
 	}

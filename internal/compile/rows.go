@@ -77,6 +77,12 @@ func (s *stmt) rowJSONAs(typeName string, sel ast.SelectionSet, alias string, de
 		case schema.KindFullTextRank:
 			ref := alias + "." + quoteIdent(meta.Column.Name)
 			pairs = append(pairs, key, s.rankMarker(rankRef{key: ref, render: ref}))
+		case schema.KindScore:
+			expr, err := s.scoreSQL(meta, f, alias)
+			if err != nil {
+				return "", nil, err
+			}
+			pairs = append(pairs, key, expr)
 		case schema.KindSpatialDerived:
 			suffix, _ := meta.Nested["suffix"].(string)
 			expr, err := s.spatialDerivedSQL(alias, meta.Column, suffix)
@@ -527,6 +533,7 @@ func (s *stmt) connectionJSON(t *introspect.Table, f *ast.Field, extraCond strin
 
 	// ---- inner paginated scan ----
 	alias := s.alias("t")
+	s.scoreList(alias, f)
 	selectCols := []string{}
 	var innerLaterals []string
 	for _, rf := range append(append([]*ast.Field{}, nodesFields...), edgeNodeFields...) {
