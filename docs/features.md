@@ -1,6 +1,6 @@
 # Feature support
 
-Checklist of PostgreSQL and GraphQL features pdbq supports. Checked = implemented and tested today; unchecked = planned or explicitly deferred (tier noted where one applies: v1.x = next minor releases, v2 = major-version track, stretch = nice-to-have). Use this as the reference when adding features: tick the box in the same PR that ships it.
+Checklist of PostgreSQL and GraphQL features pdbq supports. Checked = implemented and tested today; unchecked = planned or explicitly deferred. Use this as the reference when adding features: tick the box in the same PR that ships it.
 
 ## Introspection (pg_catalog)
 
@@ -21,7 +21,7 @@ Checklist of PostgreSQL and GraphQL features pdbq supports. Checked = implemente
 - [x] Schema allowlist (`schema.schemas`)
 - [x] Composite types read into the catalog
 - [x] Composite-type columns mapped to GraphQL object types (matching `<Type>Input` on mutations; composite arrays included)
-- [ ] Domains surfaced as named scalars (currently resolved to base type, through domains over domains) (v1.x)
+- [ ] Domains surfaced as named scalars (currently resolved to base type, through domains over domains)
 - [x] Function argument default values (omitted arguments take the `DEFAULT`; shown in the argument description) and `VARIADIC` arguments (a list)
 - [x] Functions with `OUT`/`INOUT`/`RETURNS TABLE` parameters (generated `<Function>Record` object types)
 - [ ] Functions returning an anonymous `record` without output parameters (skipped)
@@ -42,7 +42,7 @@ Checklist of PostgreSQL and GraphQL features pdbq supports. Checked = implemente
 - [x] Arrays of any mapped type → GraphQL lists
 - [x] Enums → GraphQL enum types (labels mapped to spec-valid names, round-tripped on input and output)
 - [x] `macaddr`, `interval`, custom range types → `String` fallback
-- [ ] `interval` as structured scalar (v1.x)
+- [ ] `interval` as structured scalar
 - [x] Range and multirange types with structured bounds: `IntRange { start { value inclusive } end { … } }` (PostGraphile shape; `BigIntRange`, `BigFloatRange`, `DateRange`, `DatetimeRange`), multiranges as lists — see [Contrib types](contrib.md)
 - [x] `hstore` → `KeyValueHash` JSON object, with `containsKey containsAllKeys containsAnyKeys contains containedBy`
 - [x] `ltree` / `ltree[]` with `ancestorOf descendantOf matchesLquery matchesAnyLquery matchesLtxtquery` (+ `*Any` forms)
@@ -70,7 +70,7 @@ Checklist of PostgreSQL and GraphQL features pdbq supports. Checked = implemente
 - [x] Multiple root fields per operation
 - [x] Depth limit and cost limit per operation
 - [x] Aggregate fields — built-in `aggregates` plugin (opt-in, `@graphile/pg-aggregates` shape): connection `aggregates` (`sum distinctCount min max average stddevSample stddevPopulation varianceSample variancePopulation`), `groupedAggregates(groupBy:, having:)` with `_TRUNCATED_TO_HOUR`/`_DAY` timestamp derivatives, `<REL>_COUNT_*`/`<REL>_<AGGREGATE>_<COLUMN>_*` ordering, `aggregates` in to-many relation filters, PostGIS `stExtent stCentroid` (plus opt-in `stUnion stCollect`); one statement, RLS and cost limits apply — see [Aggregates](aggregates.md)
-- [ ] GraphQL subscriptions / live queries — non-goal for v1 (hook surfaces designed with this in mind; ship later)
+- [ ] GraphQL subscriptions / live queries (hook surfaces designed with this in mind)
 
 ## Filtering & ordering
 
@@ -108,7 +108,7 @@ Checklist of PostgreSQL and GraphQL features pdbq supports. Checked = implemente
 - [x] Upsert (`ON CONFLICT`) — `upsert<Type>By<Unique>(input:)` per non-generated key target; provided non-key columns update from `EXCLUDED`
 - [x] Bulk mutations (`createUsers(input: [...])`, `updateUsers(filter:, patch:)`, `deleteUsers(filter:)`; payload = mutated rows + `affectedCount`)
 - [x] `clientMutationId` passthrough (Relay classic)
-- [ ] Nested `connect` on reverse relations and nested update/delete/disconnect (v1.x)
+- [ ] Nested `connect` on reverse relations and nested update/delete/disconnect
 
 ## Functions as fields
 
@@ -126,8 +126,8 @@ Checklist of PostgreSQL and GraphQL features pdbq supports. Checked = implemente
 - [x] EXECUTE-privilege gating
 - [x] Computed columns (stable/immutable functions whose first argument is a row type → fields on that type; extra scalar args become field args; set-returning/volatile deferred)
 - [x] Set-returning computed columns (`SETOF <scalar>`/`SETOF <table>` row-type functions → list fields with full selection support)
-- [ ] Functions with table-valued arguments or polymorphic types (v1.x)
-- [ ] Custom mutations returning payload types with relations (v1.x)
+- [ ] Functions with table-valued arguments or polymorphic types
+- [ ] Custom mutations returning payload types with relations
 
 ## RLS & auth
 
@@ -155,7 +155,7 @@ Checklist of PostgreSQL and GraphQL features pdbq supports. Checked = implemente
 - [x] PG error → GraphQL error mapping with `errors.detail: dev|prod` (constraint violations pass through in prod, internals sanitized)
 - [x] One transaction per request spanning operations (`transactions.per_request`)
 - [x] Automatic retry on serialization failures (`transactions.max_retries`; SQLSTATE 40001/40P01, whole-operation re-run)
-- [ ] Savepoints for partial mutation recovery (v1.x)
+- [ ] Savepoints for partial mutation recovery
 
 ## Server & protocol
 
@@ -166,10 +166,10 @@ Checklist of PostgreSQL and GraphQL features pdbq supports. Checked = implemente
 - [x] `GET /schema.graphql` (SDL export; opt-in, off by default)
 - [x] Request timeout, max body size
 - [x] Atomic schema hot-swap (in-flight requests finish on the old schema)
-- [ ] `/metrics` (Prometheus) endpoint (v1.x)
+- [ ] `/metrics` (Prometheus) endpoint
 - [x] Persisted queries / APQ (`server.apq` Apollo protocol, `server.persisted_queries_path` allowlist file, `server.persisted_only` lockdown)
-- [ ] `@defer` / `@stream` (v2)
-- [ ] Schema contracts — named schema variants that hide tagged types/fields per audience (e.g. `public`/`partner`/`internal`), each with its own SDL export and served endpoint; builds on the `@omit`/tag machinery in smart-comments (v2)
+- [ ] `@defer` / `@stream`
+- [ ] Schema contracts — named schema variants that hide tagged types/fields per audience (e.g. `public`/`partner`/`internal`), each with its own SDL export and served endpoint; builds on the `@omit`/tag machinery in smart-comments
 - [x] CORS configuration (`server.cors_origins`: exact-match allowlist or `*`)
 - [x] Response compression (gzip, opt-in via `server.compression`)
 
@@ -211,7 +211,7 @@ Checklist of PostgreSQL and GraphQL features pdbq supports. Checked = implemente
 - [x] Built-in: `contrib` (full-text, pg_trgm, hstore, ltree, range and inet operators; rank and similarity ordering; `plugins.settings.contrib.{filters,ordering}`)
 - [x] Built-in: `advanced-filters` (relation filters + computed-column filtering/ordering; halves toggle via `plugins.settings.advanced-filters.{relations,computed}`)
 - [x] Built-in: `aggregates` (connection, grouped, relational-order and relational-filter aggregates; off unless `plugins.settings.aggregates.enabled` or an `@aggregates` table tag; see [Aggregates](aggregates.md))
-- [ ] Out-of-process plugins (go-plugin gRPC or wasm) — v2 track; the existing hook interfaces are the contract either way
+- [ ] Out-of-process plugins (go-plugin gRPC or wasm) — the existing hook interfaces are the contract either way
 - [x] Built-in: smart-comments plugin (`docs/smart-comments.md`) — `@omit` (per-action on tables, columns, FKs, unique constraints, functions), `@name`, `@fieldName`/`@foreignFieldName`, `@deprecated`, `@notNull`/`@nullable`, `@filterable`/`@sortable`, and logical `@primaryKey`/`@unique`/`@foreignKey` on views; `advanced-filters` honors the tags per object (`@omit filter,order` on relations/computed functions) and gains `relations_opt_in`/`computed_opt_in` for explicit `@filterable` opt-in
 
 ## Ops & delivery
@@ -224,6 +224,6 @@ Checklist of PostgreSQL and GraphQL features pdbq supports. Checked = implemente
 - [x] E2E suite incl. RLS matrix and nested-mutation rollback atomicity
 - [x] Fuzz: filter-input → SQL invariance (SQL text independent of values)
 - [x] Benchmarks: schema build, compile per query shape
-- [ ] Load benchmarks (k6/vegeta) for RPS/latency against the compose stack, tracked over time (v1.x)
-- [ ] Published container image / release automation (v1.x)
-- [ ] golangci-lint config committed (Makefile falls back to `go vet`) (v1.x)
+- [ ] Load benchmarks (k6/vegeta) for RPS/latency against the compose stack, tracked over time
+- [x] Published container image / release automation (tag-driven release workflow: binaries, checksums, multi-arch images)
+- [ ] golangci-lint config committed (Makefile falls back to `go vet`)
