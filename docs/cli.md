@@ -20,8 +20,9 @@ config, set `auth.mode: none` and `roles.switch: false` whatever the file
 says, and then validate it. They therefore run as the **connection role**,
 with no claims set, and work on a default config that has no JWT secret.
 Point `--database.url` at a role whose privileges fit what you run; row-level
-security policies for request roles do not apply. `pdbq serve` and `pdbq
-config validate` use the configuration as written.
+security policies for request roles do not apply unless `pdbq query` is
+given `--role` (below). `pdbq serve` and `pdbq config validate` use the
+configuration as written.
 
 ## pdbq query
 
@@ -37,7 +38,31 @@ $ jq '.data.allUsers.nodes[].email' < <(pdbq query '{allUsers {nodes {email}}}')
 
 Exit codes: `0` success, `1` transport/config error, `2` the response
 contained GraphQL errors — so scripts can distinguish "down" from "bad
-query".
+query". The pool and the other resources are closed before the process
+exits in every case.
+
+### --role and --claims
+
+By default `pdbq query` runs as the connection role without claims. Two
+flags give it a request's identity, so you can check what a role sees under
+row-level security:
+
+- `--role <name>` runs the operation as that role (`SET LOCAL ROLE`, in a
+  transaction). The name must be an assumable role name, the same rule as for
+  requests: `[A-Za-z0-9_]+`, not `none`, `public` or `pg_*`. `roles.allowed`
+  does not apply, because the person running the CLI already holds the
+  connection credentials. The connection role must be a member of the role.
+- `--claims '<json object>'` sets claims exactly like a request's verified
+  claims: one `claims.prefix` setting per claim
+  (`current_setting('jwt.claims.user_id', true)` by default) and, with
+  `claims.json_setting`, the whole object as one JSON setting.
+
+```console
+$ pdbq query '{allPosts {totalCount}}' --role app_user --claims '{"user_id": 1}'
+```
+
+Neither flag changes the `--print-sql` output: identity is applied by
+separate transaction-local statements, not by the compiled SQL.
 
 ### --print-sql
 

@@ -494,8 +494,18 @@ func (a *App) CompileQuery(ctx context.Context, query string, vars map[string]an
 	return ex.CompileRequest(ctx, exec.Request{Query: query, OperationName: operation, Variables: vars})
 }
 
-// Query executes a one-off GraphQL request (the `pdbq query` path).
+// Query executes a one-off GraphQL request as the connection role, without
+// claims.
 func (a *App) Query(ctx context.Context, query string, vars map[string]any, operation string) (*exec.Result, error) {
+	return a.Execute(ctx, exec.Request{Query: query, OperationName: operation, Variables: vars})
+}
+
+// Execute executes a one-off GraphQL request (the `pdbq query` path) under
+// req's identity: req.Role ("" keeps the connection role) is set with SET
+// LOCAL ROLE and req.Claims are applied through claims.prefix and
+// claims.json_setting, as for an HTTP request; roles.allowed does not
+// apply. The role must pass pgexec.ValidRole.
+func (a *App) Execute(ctx context.Context, req exec.Request) (*exec.Result, error) {
 	if a.mintErr != nil {
 		return nil, a.mintErr
 	}
@@ -511,5 +521,5 @@ func (a *App) Query(ctx context.Context, query string, vars map[string]any, oper
 		return nil, err
 	}
 	ex := a.Executor(built)
-	return ex.Execute(ctx, exec.Request{Query: query, OperationName: operation, Variables: vars}), nil
+	return ex.Execute(ctx, req), nil
 }

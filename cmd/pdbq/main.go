@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -19,6 +20,7 @@ import (
 	"github.com/suprbdev/pdbcore/cache"
 	"github.com/suprbdev/pdbcore/confx"
 	pgcontrib "github.com/suprbdev/pdbcore/contrib"
+	"github.com/suprbdev/pdbcore/pgexec"
 	"github.com/suprbdev/pdbq"
 	"github.com/suprbdev/pdbq/internal/config"
 	"github.com/suprbdev/pdbq/internal/exec"
@@ -29,10 +31,22 @@ var version = "dev"
 
 func main() {
 	if err := rootCmd().Execute(); err != nil {
+		var ee *exitError
+		if errors.As(err, &ee) {
+			os.Exit(ee.code)
+		}
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
 	}
 }
+
+// exitError carries a process exit code without a message (the output was
+// already written): pdbq query exits 2 when the response has GraphQL
+// errors. Commands return it so their deferred cleanup runs before main
+// exits.
+type exitError struct{ code int }
+
+func (e *exitError) Error() string { return fmt.Sprintf("exit %d", e.code) }
 
 // configFlags defines flags that mirror config keys; their names are the
 // koanf paths so precedence (flags > env > file) needs no mapping table.
@@ -176,7 +190,7 @@ func serveCmd() *cobra.Command {
 
 func queryCmd() *cobra.Command {
 	var vars []string
-	var varsFile, operation string
+	var varsFile, operation, role, claimsJSON string
 	var printSQL bool
 	cmd := &cobra.Command{
 		Use:   "query [QUERY|-]",
@@ -190,6 +204,13 @@ func queryCmd() *cobra.Command {
 			variables, err := collectVars(vars, varsFile)
 			if err != nil {
 				return err
+			}
+			claims, err := parseClaims(claimsJSON)
+			if err != nil {
+				return err
+			}
+			if role != "" && !pgexec.ValidRole(role) {
+				return fmt.Errorf("--role %q is not an assumable role name ([A-Za-z0-9_]+, not none, public or pg_*)", role)
 			}
 			cfg, err := loadCLIConfig(cmd)
 			if err != nil {
@@ -219,17 +240,23 @@ func queryCmd() *cobra.Command {
 				}
 				return nil
 			}
-			res, err := app.Query(signalContext(), query, variables, operation)
+			res, err := app.Execute(signalContext(), pdbq.ExecRequest{
+				Query:         query,
+				OperationName: operation,
+				Variables:     variables,
+				Role:          role,
+				Claims:        claims,
+			})
 			if err != nil {
 				return err
 			}
-			enc := json.NewEncoder(os.Stdout)
+			enc := json.NewEncoder(cmd.OutOrStdout())
 			enc.SetIndent("", "  ")
 			if err := enc.Encode(res); err != nil {
 				return err
 			}
 			if len(res.Errors) > 0 {
-				os.Exit(2) // GraphQL errors -> distinct exit code for scripts
+				return &exitError{code: 2}
 			}
 			return nil
 		},
@@ -238,6 +265,8 @@ func queryCmd() *cobra.Command {
 	cmd.Flags().StringVar(&varsFile, "vars-file", "", "JSON file with variables ('-' for stdin)")
 	cmd.Flags().StringVar(&operation, "operation", "", "operation name to execute")
 	cmd.Flags().BoolVar(&printSQL, "print-sql", false, "print the compiled SQL and parameters instead of executing")
+	cmd.Flags().StringVar(&role, "role", "", "run as this database role (SET LOCAL ROLE; default: the connection role)")
+	cmd.Flags().StringVar(&claimsJSON, "claims", "", "claims as a JSON object, applied through claims.prefix and claims.json_setting like a request's")
 	configFlags(cmd)
 	return cmd
 }
@@ -254,6 +283,18 @@ func readQuery(args []string) (string, error) {
 		return "", fmt.Errorf("no query given (pass as argument or on stdin)")
 	}
 	return string(b), nil
+}
+
+// parseClaims decodes the --claims value, a JSON object; "" is no claims.
+func parseClaims(s string) (map[string]any, error) {
+	if s == "" {
+		return nil, nil
+	}
+	var claims map[string]any
+	if err := json.Unmarshal([]byte(s), &claims); err != nil || claims == nil {
+		return nil, fmt.Errorf("--claims: want a JSON object, e.g. '{\"user_id\": 1}'")
+	}
+	return claims, nil
 }
 
 func collectVars(pairs []string, varsFile string) (map[string]any, error) {

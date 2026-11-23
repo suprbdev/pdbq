@@ -218,6 +218,7 @@ These shipped features are outside the 1.0 compatibility promise: they may chang
 
 - [x] `pdbq serve|query|schema|config|plugins` subcommands
 - [x] `pdbq query` pipe-friendly: stdin queries, `--var k=v` (JSON-parsed), `--vars-file -`, `--operation`, distinct exit code for GraphQL errors
+- [x] `pdbq query --role` / `--claims`: run one operation under a request's role and claims (default: the connection role, no claims) — see [CLI](cli.md#--role-and---claims)
 - [x] Config layering: flags > env (`PDBQ_*`, `__` escapes underscores) > YAML
 - [x] `pdbq config example` — annotated reference generated from struct tags (committed at `examples/pdbq.example.yaml`, can't drift)
 - [x] `pdbq config init|validate`

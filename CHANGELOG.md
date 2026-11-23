@@ -20,6 +20,9 @@ becomes the release notes of the next tag.
   signature of the checksums and GitHub build provenance attestations.
 - Migration guide from PostGraphile v4 and v5
   ([docs/migrating-from-postgraphile.md](docs/migrating-from-postgraphile.md)).
+- `pdbq query --role <name>` and `--claims '<json object>'` run an operation
+  under a request's role and claims (default: the connection role without
+  claims); `App.Execute` is the matching Go API.
 
 ### Changed
 
@@ -36,6 +39,8 @@ becomes the release notes of the next tag.
   [docs/upgrading.md](docs/upgrading.md#default-naming).
 - `go install github.com/suprbdev/pdbq/cmd/pdbq@vX.Y.Z` builds report the
   module version in `pdbq --version`.
+- `pdbq query` exits 2 on GraphQL errors only after closing the pool
+  (it used to call `os.Exit` and skip the cleanup).
 - The quickstarts use the current `auth`/`roles` config shape and a first
   command that passes validation on defaults.
 - Live queries, incremental delivery, contracts, nested mutations, partial
