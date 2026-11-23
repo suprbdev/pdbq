@@ -1,10 +1,10 @@
 mutation {
-  createComment(input: {body: "First!", post: {create: {title: "Hello", author: {create: {email: "new@example.com"}}}}}) {
+  createComment(input: {body: "First!", postByPostId: {create: {title: "Hello", userByAuthorId: {create: {email: "new@example.com"}}}}}) {
     comment {
       body
-      post {
+      postByPostId {
         title
-        author { email postsByAuthorId { totalCount nodes { title } } }
+        userByAuthorId { email postsByAuthorId { totalCount nodes { title } } }
         commentsByPostId(filter: {parentId: {isNull: true}}) { totalCount nodes { body } }
       }
     }
@@ -14,15 +14,15 @@ mutation {
       email
       postsByAuthorId(filter: {commentsByPostId: {some: {parentId: {isNull: true}}}}) {
         totalCount
-        nodes { title author { email } commentsByPostId { totalCount nodes { body } } }
+        nodes { title userByAuthorId { email } commentsByPostId { totalCount nodes { body } } }
       }
     }
   }
-  createPost(input: {title: "Connected", author: {connectById: {id: 1}}, commentsByPostId: {create: [{body: "c"}]}}) {
-    post { title author { email postsByAuthorId { totalCount } } commentsByPostId { nodes { body } } }
+  createPost(input: {title: "Connected", userByAuthorId: {connectById: {id: 1}}, commentsByPostId: {create: [{body: "c"}]}}) {
+    post { title userByAuthorId { email postsByAuthorId { totalCount } } commentsByPostId { nodes { body } } }
   }
-  withPayloadFields: createComment(input: {body: "Hi", post: {create: {title: "Fresh", author: {connectById: {id: 1}}}}}) {
-    post { title }
+  withPayloadFields: createComment(input: {body: "Hi", postByPostId: {create: {title: "Fresh", userByAuthorId: {connectById: {id: 1}}}}}) {
+    postByPostId { title }
     query { allPosts(filter: {title: {equalTo: "Fresh"}}) { totalCount } allComments { totalCount } }
   }
 }

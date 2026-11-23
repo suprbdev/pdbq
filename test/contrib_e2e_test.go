@@ -612,30 +612,30 @@ func TestContrib(t *testing.T) {
 	})
 
 	t.Run("citext foreign key and nested connect", func(t *testing.T) {
-		res := post(t, url, `{slugRefById(id: 1) { handleId handle { name } }}`, nil)
+		res := post(t, url, `{slugRefById(id: 1) { handleId handleByHandleId { name } }}`, nil)
 		requireNoErrors(t, res)
-		if got, want := normalize(t, res.Data["slugRefById"]), normalizeStr(t, `{"handleId":"ADA","handle":{"name":"Ada"}}`); got != want {
+		if got, want := normalize(t, res.Data["slugRefById"]), normalizeStr(t, `{"handleId":"ADA","handleByHandleId":{"name":"Ada"}}`); got != want {
 			t.Errorf("relation over citext FK: %s", got)
 		}
-		res = post(t, url, `mutation { createSlugRef(input: {id: 2, handle: {connectByName: {name: "gRACE"}}}) {
-			slugRef { handleId handle { name } } } }`, nil)
+		res = post(t, url, `mutation { createSlugRef(input: {id: 2, handleByHandleId: {connectByName: {name: "gRACE"}}}) {
+			slugRef { handleId handleByHandleId { name } } } }`, nil)
 		requireNoErrors(t, res)
-		if got, want := normalize(t, res.Data["createSlugRef"]), normalizeStr(t, `{"slugRef":{"handleId":"Grace","handle":{"name":"Grace"}}}`); got != want {
+		if got, want := normalize(t, res.Data["createSlugRef"]), normalizeStr(t, `{"slugRef":{"handleId":"Grace","handleByHandleId":{"name":"Grace"}}}`); got != want {
 			t.Errorf("nested connect by citext key: %s", got)
 		}
 	})
 
 	t.Run("nested connect per referenced key", func(t *testing.T) {
-		res := post(t, url, `mutation { createDocNote(input: {document: {connectById: {id: 1}}}) {
+		res := post(t, url, `mutation { createDocNote(input: {documentByDocumentId: {connectById: {id: 1}}}) {
 			docNote { documentId } } }`, nil)
 		requireNoErrors(t, res)
 		if got, want := normalize(t, res.Data["createDocNote"]), normalizeStr(t, `{"docNote":{"documentId":1}}`); got != want {
 			t.Errorf("connect by primary key: %s", got)
 		}
-		res = post(t, url, `mutation { createDocRef(input: {id: 1, doc: {connectBySlug: {slug: "hELLO"}}}) {
-			docRef { docId doc { id } } } }`, nil)
+		res = post(t, url, `mutation { createDocRef(input: {id: 1, documentByDocId: {connectBySlug: {slug: "hELLO"}}}) {
+			docRef { docId documentByDocId { id } } } }`, nil)
 		requireNoErrors(t, res)
-		if got, want := normalize(t, res.Data["createDocRef"]), normalizeStr(t, `{"docRef":{"docId":"Hello","doc":{"id":1}}}`); got != want {
+		if got, want := normalize(t, res.Data["createDocRef"]), normalizeStr(t, `{"docRef":{"docId":"Hello","documentByDocId":{"id":1}}}`); got != want {
 			t.Errorf("connect by citext unique key: %s", got)
 		}
 		res = post(t, url, `{__type(name: "DocumentConnectBySlugInput") { inputFields { name } }}`, nil)

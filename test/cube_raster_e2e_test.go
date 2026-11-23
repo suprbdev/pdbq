@@ -302,7 +302,6 @@ func TestCubeEarthKNNIndex(t *testing.T) {
 	)
 	cfg := config.DefaultConfig()
 	cfg.Database.URL = os.Getenv("PDBQ_TEST_DATABASE_URL")
-	cfg.Plugins.Disabled = []string{"simple_names"}
 	cfg.Schema.Schemas = []string{cubeSchema}
 	app := pdbq.New(cfg)
 	t.Cleanup(app.Close)

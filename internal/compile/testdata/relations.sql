@@ -12,7 +12,7 @@ FROM (
     SELECT json_build_object('totalCount', (SELECT count(*) FROM "public"."posts" AS __c_6
     WHERE __c_6."author_id" = __t_1."id")::int, 'nodes', coalesce(json_agg(__s_5.ndata ORDER BY __s_5.__rn ASC) FILTER (WHERE __s_5.__rn <= $1), '[]'::json)) AS data
     FROM (
-      SELECT json_build_object('id', __t_2."id", 'title', __t_2."title", 'author', __l_4.data) AS ndata, __t_2.__rn
+      SELECT json_build_object('id', __t_2."id", 'title', __t_2."title", 'userByAuthorId', __l_4.data) AS ndata, __t_2.__rn
       FROM (
         SELECT __t_2."id", __t_2."author_id", __t_2."title", row_number() OVER (ORDER BY __t_2."id" DESC) AS __rn
         FROM "public"."posts" AS __t_2

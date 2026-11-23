@@ -280,7 +280,7 @@ func TestColumnPolicies(t *testing.T) {
 		"fee: BigFloat!",
 		"enum UserGroupBy {\n  MOOD\n  SETTINGS\n  TAGS\n  CREATED_AT\n  CREATED_AT_TRUNCATED_TO_HOUR\n  MOODS\n  FEE\n  CREATED_AT_TRUNCATED_TO_DAY\n}",
 	}, []string{
-		"POSTS_BY_AUTHOR_ID_DISTINCT_COUNT_TITLE", "AUTHOR__TITLE_ASC",
+		"POSTS_BY_AUTHOR_ID_DISTINCT_COUNT_TITLE", "USER_BY_AUTHOR_ID__TITLE_ASC",
 		"Distinct count of doc",
 	})
 	if gb := built.GroupBy["UserGroupBy"]["CREATED_AT_TRUNCATED_TO_DAY"]; gb == nil || gb.SQL != nil {

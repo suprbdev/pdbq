@@ -73,7 +73,6 @@ func contractsServerWith(t *testing.T, watch bool, configure func(*config.Config
 	cfg.Database.URL = url
 	noIdentity(&cfg)
 	cfg.Errors.Detail = "dev"
-	cfg.Plugins.Disabled = []string{"simple_names"}
 	cfg.Schema.Schemas = []string{contractsSchema}
 	cfg.Filters.IndexedOnly = false
 	cfg.Metrics.Enabled = true
@@ -180,7 +179,7 @@ func TestContracts(t *testing.T) {
 		if got := normalize(t, res.Data["customerByEmail"]); got != `{"name":"acme"}` {
 			t.Errorf("internal customerByEmail = %s", got)
 		}
-		res = post(t, partner, `{ allInvoices(orderBy: ID_ASC) { nodes { amount customer { email } } } goldCustomers { name } }`, nil)
+		res = post(t, partner, `{ allInvoices(orderBy: ID_ASC) { nodes { amount customerByCustomerId { email } } } goldCustomers { name } }`, nil)
 		requireNoErrors(t, res)
 		if got := normalize(t, res.Data["goldCustomers"]); got != `[{"name":"acme"}]` {
 			t.Errorf("partner goldCustomers = %s", got)
@@ -274,7 +273,6 @@ func TestContractsKeepRLS(t *testing.T) {
 	}
 	cfg := config.DefaultConfig()
 	cfg.Database.URL = url
-	cfg.Plugins.Disabled = []string{"simple_names"}
 	headersIdentity(&cfg)
 	cfg.Contracts = []config.Contract{{Name: "public"}}
 	if err := cfg.Validate(); err != nil {

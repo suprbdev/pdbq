@@ -139,8 +139,8 @@ func TestNameTable(t *testing.T) {
 	wantSDL(t, sdl,
 		"type Customer implements Node", "allCustomers(", "customerById(", "customerByEmail(",
 		"CustomerFilter", "CustomersOrderBy", "createCustomer(", "CustomerCreateInput",
-		"author: Customer",  // forward relation retargets the renamed type
-		`"""A customer."""`, // tag line stripped from the description
+		"customerByAuthorId: Customer", // forward relation retargets the renamed type
+		`"""A customer."""`,            // tag line stripped from the description
 	)
 	rejectSDL(t, sdl, "type User ", "allUsers(", "@name")
 }
@@ -233,14 +233,14 @@ func TestFieldNameOnForeignKey(t *testing.T) {
 	}, advancedfilters.New(advancedfilters.DefaultSettings()))
 	sdl := built.SDL
 	wantSDL(t, sdl, "writer: User", "authored(", "writer: UserFilter", "authored: PostToManyFilter")
-	rejectSDL(t, sdl, "author: User", "postsByAuthorId")
+	rejectSDL(t, sdl, "userByAuthorId: User", "postsByAuthorId")
 }
 
 func TestOmitManyOnForeignKey(t *testing.T) {
 	built := build(t, func(c *introspect.Catalog) {
 		c.Table("public", "posts").ForeignKeys[0].Comment = "@omit many"
 	})
-	wantSDL(t, built.SDL, "author: User")
+	wantSDL(t, built.SDL, "userByAuthorId: User")
 	rejectSDL(t, built.SDL, "postsByAuthorId(")
 }
 
@@ -248,7 +248,7 @@ func TestOmitForeignKey(t *testing.T) {
 	built := build(t, func(c *introspect.Catalog) {
 		c.Table("public", "posts").ForeignKeys[0].Comment = "@omit"
 	}, advancedfilters.New(advancedfilters.DefaultSettings()))
-	rejectSDL(t, built.SDL, "author: User", "postsByAuthorId", "PostToManyFilter")
+	rejectSDL(t, built.SDL, "userByAuthorId: User", "postsByAuthorId", "PostToManyFilter")
 }
 
 func TestOmitUniqueConstraint(t *testing.T) {
@@ -282,8 +282,8 @@ func TestAdvancedFilterOmits(t *testing.T) {
 	}, advancedfilters.New(advancedfilters.DefaultSettings()))
 	sdl := built.SDL
 	// Selection fields stay; only the filter surface goes.
-	wantSDL(t, sdl, "author: User", "postsByAuthorId(", "postCount: BigIntFilterOps")
-	rejectSDL(t, sdl, "author: UserFilter", "postsByAuthorId: PostToManyFilter", "POST_COUNT_ASC")
+	wantSDL(t, sdl, "userByAuthorId: User", "postsByAuthorId(", "postCount: BigIntFilterOps")
+	rejectSDL(t, sdl, "userByAuthorId: UserFilter", "postsByAuthorId: PostToManyFilter", "POST_COUNT_ASC")
 }
 
 func TestAdvancedFilterOptIn(t *testing.T) {
@@ -297,14 +297,14 @@ func TestAdvancedFilterOptIn(t *testing.T) {
 	sdl := built.SDL
 	// Only the tagged computed column gets filter surface; untagged FKs none.
 	wantSDL(t, sdl, "postCount: BigIntFilterOps", "POST_COUNT_ASC")
-	rejectSDL(t, sdl, "author: UserFilter", "PostToManyFilter")
+	rejectSDL(t, sdl, "userByAuthorId: UserFilter", "PostToManyFilter")
 }
 
 func TestComposesWithOtherBuiltins(t *testing.T) {
 	built := build(t, func(c *introspect.Catalog) {
 		c.Table("public", "users").Comment = "@name customers"
 		c.Table("public", "posts").ForeignKeys[0].Comment = "@fieldName writer\n@foreignFieldName authored"
-	}, simplenames.New(), nestedmutations.New(nestedmutations.DefaultSettings()))
+	}, simplenames.New(simplenames.Settings{Enabled: true}), nestedmutations.New(nestedmutations.DefaultSettings()))
 	sdl := built.SDL
 	// @name feeds simple_names: short root fields derive from the new name.
 	wantSDL(t, sdl, "customers(", "customer(", "updateCustomer(")
@@ -365,23 +365,23 @@ func TestNestedMutationsHonorOmittedForeignKeyColumns(t *testing.T) {
 		}, nestedmutations.New(nestedmutations.DefaultSettings()))
 	}
 	sdl := omit("create").SDL
-	if strings.Contains(sdlBlock(t, sdl, "input PostCreateInput {"), "author:") {
-		t.Error("PostCreateInput must not set an omitted FK column through author")
+	if strings.Contains(sdlBlock(t, sdl, "input PostCreateInput {"), "userByAuthorId:") {
+		t.Error("PostCreateInput must not set an omitted FK column through userByAuthorId")
 	}
 	if strings.Contains(sdlBlock(t, sdl, "input UserPostsByAuthorIdNestedInput {"), "create:") {
 		t.Error("backward create must not fill an FK column omitted from the child create input")
 	}
 	wantSDL(t, sdlBlock(t, sdl, "input UserPostsByAuthorIdNestedInput {"), "connectById: [PostConnectByIdInput!]")
-	wantSDL(t, sdlBlock(t, sdl, "input PostAuthorNestedPatchInput {"), "connectById:", "updateById:")
+	wantSDL(t, sdlBlock(t, sdl, "input PostUserByAuthorIdNestedPatchInput {"), "connectById:", "updateById:")
 
 	sdl = omit("update").SDL
-	patch := sdlBlock(t, sdl, "input PostAuthorNestedPatchInput {")
+	patch := sdlBlock(t, sdl, "input PostUserByAuthorIdNestedPatchInput {")
 	rejectSDL(t, patch, "connectById:", "create:")
 	wantSDL(t, patch, "updateById:", "deleteById:")
 	bwd := sdlBlock(t, sdl, "input UserPostsByAuthorIdNestedPatchInput {")
 	rejectSDL(t, bwd, "connectById:")
 	wantSDL(t, bwd, "create:", "updateById:")
-	wantSDL(t, sdlBlock(t, sdl, "input PostCreateInput {"), "author: PostAuthorNestedInput")
+	wantSDL(t, sdlBlock(t, sdl, "input PostCreateInput {"), "userByAuthorId: PostUserByAuthorIdNestedInput")
 }
 
 func TestOmitReadColumnLeavesRowInput(t *testing.T) {

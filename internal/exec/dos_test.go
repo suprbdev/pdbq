@@ -158,7 +158,7 @@ func TestOverlappingFieldsBlowupRejected(t *testing.T) {
 			return "id"
 		}
 		s := tree(d - 1)
-		return "a: postsByAuthorId { nodes { author { " + s + " } } } a: postsByAuthorId { nodes { author { " + s + " } } }"
+		return "a: postsByAuthorId { nodes { userByAuthorId { " + s + " } } } a: postsByAuthorId { nodes { userByAuthorId { " + s + " } } }"
 	}
 	rejectQuickly(t, e, "{ allUsers { nodes { "+tree(9)+" } } }", nil, scanRejection)
 
@@ -235,7 +235,7 @@ func TestDocumentSizeEstimateCoversHeap(t *testing.T) {
 		"objects":  "{ allPosts(filter: {or: [" + strings.Repeat("{id: {equalTo: 1}},", 1500) + "{id: {equalTo: 1}}]}) { totalCount } }",
 		"typename": "{" + aliases(4000, "__typename") + "}",
 		"fields":   "{ allUsers { nodes {" + aliases(3000, "id") + " } } }",
-		"nested":   "{ allUsers { nodes { " + strings.Repeat("postsByAuthorId { nodes { id title author { id ", 300) + strings.Repeat(" } } }", 300) + " } } }",
+		"nested":   "{ allUsers { nodes { " + strings.Repeat("postsByAuthorId { nodes { id title userByAuthorId { id ", 300) + strings.Repeat(" } } }", 300) + " } } }",
 	} {
 		const n = 8
 		docs := make([]*ast.QueryDocument, n)
@@ -265,7 +265,7 @@ func TestLegitimateDocumentsWithinLimits(t *testing.T) {
 	for _, q := range []string{
 		IntrospectionQuery,
 		`{ allUsers(first: 10) { nodes { id ...U ...V postsByAuthorId(first: 5) { nodes { id ...P } } } } }
-		 fragment U on User { id email } fragment V on User { id fullName } fragment P on Post { id title author { id ...U } }`,
+		 fragment U on User { id email } fragment V on User { id fullName } fragment P on Post { id title userByAuthorId { id ...U } }`,
 	} {
 		if _, _, err := e.prepare(context.Background(), Request{Query: q}); err != nil {
 			t.Errorf("%.40q: %v", q, err)

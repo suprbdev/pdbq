@@ -3,7 +3,7 @@
 mutation {
   createPost(input: {authorId: 1, title: "Hi", clientMutationId: "cm-1"}) {
     clientMutationId
-    author {
+    userByAuthorId {
       email
     }
     postEdge {

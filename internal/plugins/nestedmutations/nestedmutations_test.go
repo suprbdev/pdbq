@@ -48,7 +48,7 @@ func compileRoot(t *testing.T, reg *plugin.Registry, built *schema.Built, query 
 func TestNestedCreateParent(t *testing.T) {
 	reg, built := setupWith(t, plugin.NewRegistry(nestedmutations.New(nestedmutations.DefaultSettings())))
 	stmt := compileRoot(t, reg, built, `mutation {
-		createPost(input: {title: "Hi", author: {create: {email: "x@y.z"}}}) {
+		createPost(input: {title: "Hi", userByAuthorId: {create: {email: "x@y.z"}}}) {
 			post { id title }
 		}
 	}`)
@@ -89,7 +89,7 @@ func TestNestedConnectAndChildren(t *testing.T) {
 	}
 
 	stmt = compileRoot(t, reg, built, `mutation {
-		createPost(input: {title: "Hi", author: {connectById: {id: 7}}}) {
+		createPost(input: {title: "Hi", userByAuthorId: {connectById: {id: 7}}}) {
 			post { id }
 		}
 	}`)
@@ -123,7 +123,7 @@ func TestConnectInputPerReferencedKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		"input MemoOwnerNestedInput {\n  connectById: UserConnectByIdInput\n  connectByEmail: UserConnectByEmailInput\n",
+		"input MemoUserByOwnerIdNestedInput {\n  connectById: UserConnectByIdInput\n  connectByEmail: UserConnectByEmailInput\n",
 		"input UserConnectByIdInput {\n  id: Int!\n}",
 		"input UserConnectByEmailInput {\n  email: String!\n}",
 	} {
@@ -133,13 +133,13 @@ func TestConnectInputPerReferencedKey(t *testing.T) {
 	}
 
 	stmt := compileRoot(t, reg, built, `mutation {
-		createMemo(input: {id: 1, owner: {connectByEmail: {email: "a@b.c"}}}) { memo { id } }
+		createMemo(input: {id: 1, userByOwnerId: {connectByEmail: {email: "a@b.c"}}}) { memo { id } }
 	}`)
 	if !strings.Contains(stmt.SQL, `SELECT "email" FROM "public"."users" WHERE "public"."users"."email" = $`) {
 		t.Errorf("connect must match on email:\n%s", stmt.SQL)
 	}
 	stmt = compileRoot(t, reg, built, `mutation {
-		createMemo(input: {id: 1, owner: {connectById: {id: 7}}}) { memo { id } }
+		createMemo(input: {id: 1, userByOwnerId: {connectById: {id: 7}}}) { memo { id } }
 	}`)
 	if !strings.Contains(stmt.SQL, `SELECT "email" FROM "public"."users" WHERE "public"."users"."id" = $`) {
 		t.Errorf("connect by another key must project the referenced key:\n%s", stmt.SQL)
@@ -151,7 +151,7 @@ func TestNestedCreateMapsEnumLabels(t *testing.T) {
 
 	// Forward nested create: enum on the parent row.
 	stmt := compileRoot(t, reg, built, `mutation {
-		createPost(input: {title: "Hi", author: {create: {email: "x@y.z", mood: HAPPY}}}) {
+		createPost(input: {title: "Hi", userByAuthorId: {create: {email: "x@y.z", mood: HAPPY}}}) {
 			post { id }
 		}
 	}`)
@@ -261,7 +261,7 @@ func TestPayloadReadsVisibilityCTEs(t *testing.T) {
 			placesByOwnerId: {create: [{name: "Home"}]}
 		}) {
 			user {
-				postsByAuthorId { totalCount nodes { author { id } commentsByPostId { nodes { body } } } }
+				postsByAuthorId { totalCount nodes { userByAuthorId { id } commentsByPostId { nodes { body } } } }
 				placesByOwnerId { nodes { name } }
 			}
 		}
@@ -293,8 +293,8 @@ func TestPayloadReadsVisibilityCTEs(t *testing.T) {
 func TestConnectGetsNoVisibilityCTE(t *testing.T) {
 	reg, built := setupWith(t, plugin.NewRegistry(nestedmutations.New(nestedmutations.DefaultSettings())))
 	sql := compileRoot(t, reg, built, `mutation {
-		createPost(input: {title: "Hi", author: {connectById: {id: 7}}}) {
-			post { author { email } }
+		createPost(input: {title: "Hi", userByAuthorId: {connectById: {id: 7}}}) {
+			post { userByAuthorId { email } }
 		}
 	}`).SQL
 	if strings.Contains(sql, `SELECT * FROM "public"."users"`+"\n  UNION ALL") {

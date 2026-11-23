@@ -31,21 +31,21 @@ Try:
 
 ```graphql
 {
-  users(first: 2, orderBy: [EMAIL_ASC]) {
+  allUsers(first: 2, orderBy: [EMAIL_ASC]) {
     totalCount
     nodes {
       email
       mood
-      posts { nodes { title published } }
+      postsByAuthorId { nodes { title published } }
     }
     pageInfo { hasNextPage endCursor }
   }
 }
 ```
 
-(The `simple_names` plugin is on by default; with `plugins.disabled:
-[simple_names]` the same query is `allUsers` / `postsByAuthorId`, as in
-PostGraphile.)
+(The names are PostGraphile v4's. With
+`plugins.settings.simple_names.enabled: true` the same query is `users` /
+`posts`; see [plugins.md](plugins.md#worked-example-1-simple_names).)
 
 Because watch mode is on, `ALTER TABLE`/`CREATE TABLE` in the database is
 picked up automatically: pdbq re-introspects and swaps the schema without a
@@ -167,11 +167,11 @@ For each table/view the connection role can `SELECT`:
 | Postgres | GraphQL |
 |---|---|
 | table `users` | type `User implements Node` (global `nodeId`) |
-| rows | `users(first, last, offset, before, after, orderBy, filter): UserConnection!` |
-| primary key | `user(id)`, `node(nodeId)` |
+| rows | `allUsers(first, last, offset, before, after, orderBy, filter): UserConnection!` |
+| primary key | `userById(id)`, `node(nodeId)` |
 | unique constraints | `userByEmail(email)` |
-| foreign keys | `post.author`, `user.posts` (child connection) |
-| `INSERT`/`UPDATE`/`DELETE` privileges | `createUser`, `updateUser`, `deleteUser` |
+| foreign keys | `post.userByAuthorId`, `user.postsByAuthorId` (child connection) |
+| `INSERT`/`UPDATE`/`DELETE` privileges | `createUser`, `updateUserById`, `deleteUserById` |
 | enums | GraphQL enums (`HAPPY`, `SAD`, ...) |
 | composite types | object types with per-field selection (`address { street city }`), plus `AddressInput` on mutations; arrays too |
 | rows inside other values (`posts[]`, composite attributes, `RETURNS TABLE` columns) | `PostRow` object types holding the columns `Post` exposes |
@@ -180,8 +180,8 @@ For each table/view the connection role can `SELECT`:
 One-off queries from the shell:
 
 ```console
-$ echo '{users {nodes {email}}}' | pdbq query -
-$ pdbq query '{user(id: 1) {email}}'
+$ echo '{allUsers {nodes {email}}}' | pdbq query -
+$ pdbq query '{userById(id: 1) {email}}'
 ```
 
 Next: [configuration.md](configuration.md), [rls.md](rls.md), [migrating-from-postgraphile.md](migrating-from-postgraphile.md).

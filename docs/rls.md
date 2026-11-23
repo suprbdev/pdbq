@@ -194,7 +194,7 @@ Two consequences for generated mutations:
   is selecting a **computed column**: the underlying function takes the whole
   row type, so the statement must return every column and the role needs
   `SELECT` on all of them. A payload relation that leads back to the mutated
-  table (`createPost { post { author { postsByAuthorId { … } } } }`) reads a
+  table (`createPost { post { userByAuthorId { postsByAuthorId { … } } } }`) reads a
   visibility CTE merging the table with the mutation's own rows; it projects
   the columns those relations read, plus, for bulk updates and deletes, the
   primary-key (or other `NOT NULL` unique key) columns that identify the

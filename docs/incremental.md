@@ -39,7 +39,7 @@ directive @stream(initialCount: Int! = 0, if: Boolean! = true, label: String) on
     nodes @stream(initialCount: 5) {
       id
       title
-      ... @defer(label: "author") { author { fullName } }
+      ... @defer(label: "author") { userByAuthorId { fullName } }
     }
   }
   userById(id: 1) {

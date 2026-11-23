@@ -1,5 +1,5 @@
 -- field: postById
-SELECT json_build_object('author', __l_3.data) AS data
+SELECT json_build_object('userByAuthorId', __l_3.data) AS data
 FROM "public"."posts" AS __t_1
 LEFT JOIN LATERAL (
   SELECT json_build_object('email', __t_2."email", 'id', __t_2."id", 'fullName', __t_2."full_name") AS data

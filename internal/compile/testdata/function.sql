@@ -1,7 +1,7 @@
 -- field: searchPosts
 SELECT coalesce(json_agg(__s_4.data), '[]'::json) AS data
 FROM (
-  SELECT json_build_object('id', __t_1."id", 'title', __t_1."title", 'author', __l_3.data) AS data
+  SELECT json_build_object('id', __t_1."id", 'title', __t_1."title", 'userByAuthorId', __l_3.data) AS data
   FROM "public"."search_posts"("term" => $1::"pg_catalog"."text") AS __t_1
   LEFT JOIN LATERAL (
     SELECT json_build_object('email', __t_2."email") AS data

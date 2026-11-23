@@ -46,7 +46,6 @@ func incServer(t *testing.T, mutate func(*config.Config)) *incFixture {
 	jwtIdentity(&cfg, incSecret)
 	cfg.Roles.Allowed = []string{"anonymous", "app_user"}
 	cfg.Errors.Detail = "dev"
-	cfg.Plugins.Disabled = []string{"simple_names"}
 	cfg.Subscriptions.Enabled = true
 	cfg.Subscriptions.Keepalive = 0
 	cfg.Incremental.Enabled = true
@@ -317,7 +316,7 @@ const incQuery = `{
 		}
 	}
 	byAuthor: allPosts(orderBy: [AUTHOR_ID_ASC, ID_ASC]) {
-		nodes { id ... @defer { title author { email } } }
+		nodes { id ... @defer { title userByAuthorId { email } } }
 	}
 }`
 

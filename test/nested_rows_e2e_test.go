@@ -84,7 +84,6 @@ func nestedRowsContracts(t *testing.T) string {
 	cfg.Database.URL = url
 	noIdentity(&cfg)
 	cfg.Errors.Detail = "dev"
-	cfg.Plugins.Disabled = []string{"simple_names"}
 	nestedRowsConfig(&cfg)
 	cfg.Contracts = []config.Contract{{Name: "internal", Path: "/"}, {Name: "public"}}
 	if err := cfg.Validate(); err != nil {

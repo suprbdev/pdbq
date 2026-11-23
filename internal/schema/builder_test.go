@@ -30,7 +30,7 @@ func TestDefaultSchema(t *testing.T) {
 		"allUsers(", "userById(", "userByEmail(",
 		"createUser(", "updateUserById(", "deleteUserById(",
 		"input UserFilter ", "enum UsersOrderBy ", "enum Mood ",
-		"postsByAuthorId(", "author: User",
+		"postsByAuthorId(", "userByAuthorId: User",
 		"searchPosts(", "scalar BigInt", "type PageInfo ",
 		"): UserConnection!", "): PostConnection!",
 		"first: Int, last: Int, offset: Int, before: Cursor, after: Cursor",
@@ -244,7 +244,7 @@ func TestFunctionMutationShape(t *testing.T) {
 	// after its type, with the row's forward relations and edge.
 	pay = sdlType(built.SDL, "type PublishPostPayload")
 	for _, want := range []string{
-		"post: Post", "clientMutationId: String", "query: Query", "author: User",
+		"post: Post", "clientMutationId: String", "query: Query", "userByAuthorId: User",
 		"postEdge(orderBy: [PostsOrderBy!]): PostEdge",
 	} {
 		if !strings.Contains(pay, want) {
@@ -253,13 +253,13 @@ func TestFunctionMutationShape(t *testing.T) {
 	}
 	// Table mutation payloads get the same fields; bulk ones only query.
 	pay = sdlType(built.SDL, "type CreatePostPayload")
-	for _, want := range []string{"post: Post", "query: Query", "author: User", "postEdge(orderBy: [PostsOrderBy!]): PostEdge"} {
+	for _, want := range []string{"post: Post", "query: Query", "userByAuthorId: User", "postEdge(orderBy: [PostsOrderBy!]): PostEdge"} {
 		if !strings.Contains(pay, want) {
 			t.Errorf("CreatePostPayload missing %q:\n%s", want, pay)
 		}
 	}
 	pay = sdlType(built.SDL, "type CreateManyPostPayload")
-	if !strings.Contains(pay, "query: Query") || strings.Contains(pay, "postEdge") || strings.Contains(pay, "author") {
+	if !strings.Contains(pay, "query: Query") || strings.Contains(pay, "postEdge") || strings.Contains(pay, "userByAuthorId") {
 		t.Errorf("CreateManyPostPayload should carry query only:\n%s", pay)
 	}
 	// Stable functions keep flat args on Query.
@@ -278,7 +278,7 @@ func TestFunctionMutationShape(t *testing.T) {
 }
 
 func TestSimpleNamesPlugin(t *testing.T) {
-	reg := plugin.NewRegistry(simplenames.New())
+	reg := plugin.NewRegistry(simplenames.New(simplenames.Settings{Enabled: true}))
 	cat := testutil.FixtureCatalog()
 	if err := reg.TransformCatalog(context.Background(), nil, cat); err != nil {
 		t.Fatal(err)
@@ -290,12 +290,13 @@ func TestSimpleNamesPlugin(t *testing.T) {
 	}
 	for _, want := range []string{
 		"users(", "user(", "updateUser(", "deleteUser(", "posts(",
+		"author: User", "post: Post", "parent: Comment", "owner: User", "comments(",
 	} {
 		if !strings.Contains(built.SDL, "  "+want) {
 			t.Errorf("simple_names SDL missing %q", want)
 		}
 	}
-	for _, reject := range []string{"allUsers(", "userById(", "postsByAuthorId("} {
+	for _, reject := range []string{"allUsers(", "userById(", "postsByAuthorId(", "userByAuthorId", "commentsByPostId("} {
 		if strings.Contains(built.SDL, reject) {
 			t.Errorf("simple_names SDL still contains verbose %q", reject)
 		}
@@ -313,8 +314,8 @@ func TestNestedMutationsSchema(t *testing.T) {
 		t.Fatal(err)
 	}
 	postCreate := sdlType(built.SDL, "input PostCreateInput")
-	if !strings.Contains(postCreate, "author: PostAuthorNestedInput") {
-		t.Errorf("PostCreateInput missing nested author field:\n%s", postCreate)
+	if !strings.Contains(postCreate, "userByAuthorId: PostUserByAuthorIdNestedInput") {
+		t.Errorf("PostCreateInput missing nested userByAuthorId field:\n%s", postCreate)
 	}
 	// FK column must have become optional (nested input can supply it).
 	if strings.Contains(postCreate, "authorId: Int!") {
@@ -393,54 +394,6 @@ func TestPartitionsHiddenByDefault(t *testing.T) {
 			t.Errorf("expose_partitions: SDL missing %q", want)
 		}
 	}
-}
-
-func relnameCatalog() *introspect.Catalog {
-	cat := testutil.FixtureCatalog()
-	cat.Tables = append(cat.Tables, &introspect.Table{
-		Schema: "public", Name: "memos", Kind: introspect.RelTable,
-		Privileges: introspect.Privileges{Select: true, Insert: true},
-		Columns: []*introspect.Column{
-			{Name: "id", Position: 1, PGType: "int4", TypeSchema: "pg_catalog", NotNull: true},
-			{Name: "user_email", Position: 2, PGType: "text", TypeSchema: "pg_catalog", NotNull: true},
-		},
-		PrimaryKey: &introspect.Constraint{Name: "memos_pkey", Columns: []string{"id"}},
-		ForeignKeys: []*introspect.ForeignKey{{
-			Name: "memos_user_email_fkey", Columns: []string{"user_email"},
-			RefSchema: "public", RefTable: "users", RefColumns: []string{"email"},
-		}},
-	})
-	return cat
-}
-
-func TestForwardRelationNameCollidesWithColumn(t *testing.T) {
-	check := func(t *testing.T, b *schema.Builder) {
-		t.Helper()
-		built, err := b.Build()
-		if err != nil {
-			t.Fatal(err)
-		}
-		memo := sdlType(built.SDL, "type Memo ")
-		for _, want := range []string{"userEmail: String!", "userByUserEmail: User"} {
-			if !strings.Contains(memo, want) {
-				t.Errorf("Memo missing %q:\n%s", want, memo)
-			}
-		}
-		if f := built.Meta["Memo"]["userByUserEmail"]; f == nil || f.Kind != schema.KindRelationForward {
-			t.Error("missing forward relation metadata on Memo.userByUserEmail")
-		}
-	}
-	t.Run("default", func(t *testing.T) {
-		check(t, schema.New(relnameCatalog(), inflect.Default, schema.Options{FilterIndexedOnly: true}))
-	})
-	t.Run("simple_names", func(t *testing.T) {
-		reg := plugin.NewRegistry(simplenames.New())
-		cat := relnameCatalog()
-		if err := reg.TransformCatalog(context.Background(), nil, cat); err != nil {
-			t.Fatal(err)
-		}
-		check(t, schema.New(cat, reg.Inflector(nil), schema.Options{FilterIndexedOnly: true}))
-	})
 }
 
 func TestSubscriptionsSchema(t *testing.T) {
@@ -550,44 +503,6 @@ func TestLiveSchema(t *testing.T) {
 	stripped = strings.TrimPrefix(stripped, stripped[:strings.Index(stripped, "directive @live on QUERY\n\n")+len("directive @live on QUERY\n\n")])
 	if stripped != subs.SDL {
 		t.Error("live changed the schema outside the Subscription root and the directive")
-	}
-}
-
-// TestPayloadRelationFallsBackOnCollision covers a forward relation whose
-// name is taken on the payload (here by query): it takes the
-// <referencedTable>By<Columns> form there, keeping its name on the row type.
-func TestPayloadRelationFallsBackOnCollision(t *testing.T) {
-	cat := testutil.FixtureCatalog()
-	privs := introspect.Privileges{Select: true, Insert: true}
-	cat.Tables = append(cat.Tables, &introspect.Table{
-		Schema: "public", Name: "saved_queries", Kind: introspect.RelTable, Privileges: privs,
-		Columns:    []*introspect.Column{{Name: "id", Position: 1, PGType: "int4", TypeSchema: "pg_catalog", NotNull: true}},
-		PrimaryKey: &introspect.Constraint{Name: "saved_queries_pkey", Columns: []string{"id"}},
-	}, &introspect.Table{
-		Schema: "public", Name: "runs", Kind: introspect.RelTable, Privileges: privs,
-		Columns: []*introspect.Column{
-			{Name: "id", Position: 1, PGType: "int4", TypeSchema: "pg_catalog", NotNull: true},
-			{Name: "query_id", Position: 2, PGType: "int4", TypeSchema: "pg_catalog", NotNull: true},
-		},
-		PrimaryKey: &introspect.Constraint{Name: "runs_pkey", Columns: []string{"id"}},
-		ForeignKeys: []*introspect.ForeignKey{{
-			Name: "runs_query_id_fkey", Columns: []string{"query_id"},
-			RefSchema: "public", RefTable: "saved_queries", RefColumns: []string{"id"},
-		}},
-	})
-	built, err := schema.New(cat, inflect.Default, schema.Options{}).Build()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if run := sdlType(built.SDL, "type Run "); !strings.Contains(run, "query: SavedQuery") {
-		t.Errorf("Run should keep the query relation:\n%s", run)
-	}
-	pay := sdlType(built.SDL, "type CreateRunPayload")
-	if !strings.Contains(pay, "query: Query") || !strings.Contains(pay, "savedQueryByQueryId: SavedQuery") {
-		t.Errorf("CreateRunPayload should keep query and rename the relation:\n%s", pay)
-	}
-	if m := built.Meta["CreateRunPayload"]["savedQueryByQueryId"]; m == nil || m.Kind != schema.KindRelationForward {
-		t.Error("missing relation metadata on CreateRunPayload.savedQueryByQueryId")
 	}
 }
 

@@ -1,6 +1,7 @@
 package schema
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"slices"
@@ -148,6 +149,8 @@ type Builder struct {
 	// recordTypes caches the object type generated per function returning
 	// OUT/TABLE parameter records.
 	recordTypes map[*introspect.Function]string
+	// errs collects the naming conflicts Build reports.
+	errs []error
 }
 
 // Meta is the compiled lookup the executor/compiler use: type name -> field
@@ -809,7 +812,7 @@ func (b *Builder) addRelations(t *introspect.Table) {
 	// Forward: FK on t points to parent row (many-to-one).
 	for _, fk := range t.ForeignKeys {
 		if f := b.forwardRelationField(t, fk); f != nil {
-			b.addRootField(obj, f)
+			b.addRelationField(obj, f, "fieldName")
 		}
 	}
 	// Backward: FKs on other tables pointing at t (one-to-many).
@@ -825,7 +828,7 @@ func (b *Builder) addRelations(t *introspect.Table) {
 				Schema: other.Schema, Table: other.Name, Columns: fk.Columns,
 				Constraint: fk.Name,
 			})
-			b.addRootField(obj, &Field{
+			b.addRelationField(obj, &Field{
 				Name: name,
 				Type: b.ensureConnection(other) + "!",
 				Args: b.connectionArgs(other, "", "", ""),
@@ -833,7 +836,7 @@ func (b *Builder) addRelations(t *introspect.Table) {
 					Kind: KindRelationBackward, Table: other, FK: fk,
 					CostMultiplier: costMultiplier(fk.Comment),
 				},
-			})
+			}, "foreignFieldName")
 		}
 	}
 }
@@ -865,20 +868,44 @@ func (b *Builder) forwardRelationField(t *introspect.Table, fk *introspect.Forei
 	}
 }
 
-// fallbackRelationName is the PostGraphile-default name of fk's forward
-// relation, <referencedTable>By<Columns>, used when the inflected name is
-// taken.
-func fallbackRelationName(fk *introspect.ForeignKey) string {
-	return coreinflect.LowerCamel(coreinflect.Singularize(fk.RefTable)) + "By" + coreinflect.ByColumns(fk.Columns)
+// addRelationField adds the relation field f to obj, recording a build
+// error when obj already has a field of that name. tag is the smart comment
+// on f's constraint that renames the relation.
+func (b *Builder) addRelationField(obj *Object, f *Field, tag string) {
+	existing := obj.Field(f.Name)
+	if existing == nil {
+		obj.AddField(f)
+		return
+	}
+	b.errs = append(b.errs, fmt.Errorf(
+		"schema: type %s: relation field %q of constraint %s conflicts with %s of the same name; rename the relation with a @%s smart comment on constraint %s, or switch the naming mode (plugins.settings.simple_names.enabled)",
+		obj.Name, f.Name, f.Meta.FK.Name, describeField(existing), tag, f.Meta.FK.Name))
+}
+
+// describeField names the source of an object field for a naming-conflict
+// error.
+func describeField(f *Field) string {
+	switch {
+	case f.Meta == nil:
+		return "a field"
+	case f.Meta.FK != nil:
+		return "the relation of constraint " + f.Meta.FK.Name
+	case f.Meta.Kind == KindComputed && f.Meta.Function != nil:
+		return "the computed column " + f.Meta.Function.Schema + "." + f.Meta.Function.Name
+	case f.Meta.Kind == KindColumn:
+		return "a column field"
+	}
+	return "a field"
 }
 
 // addPayloadFields appends the fields PostGraphile gives mutation payloads:
 // query (the Query root, readable alongside the mutation's result) on every
 // payload and, when t is set (the payload carries one row of t), the row's
 // forward relations and a <row>Edge for Relay connection updates. A
-// relation whose name is taken on the payload falls back to
-// <referencedTable>By<Columns>; one still colliding is left out.
-func (b *Builder) addPayloadFields(obj *Object, t *introspect.Table) {
+// relation whose name is one of the payload's own fields (those already on
+// obj, the edge, and reserved, the fields the caller adds afterwards) is
+// left out with a warning; the row field still reaches it.
+func (b *Builder) addPayloadFields(obj *Object, t *introspect.Table, reserved ...string) {
 	b.addRootField(obj, &Field{
 		Name:        "query",
 		Type:        "Query",
@@ -888,22 +915,29 @@ func (b *Builder) addPayloadFields(obj *Object, t *introspect.Table) {
 	if t == nil {
 		return
 	}
+	typeName := b.TypeForTable[tableKey(t.Schema, t.Name)]
+	hasEdge := t.PrimaryKey != nil && typeName != ""
+	edgeName := ""
+	if hasEdge {
+		edgeName = strings.ToLower(typeName[:1]) + typeName[1:] + "Edge"
+	}
 	for _, fk := range t.ForeignKeys {
 		f := b.forwardRelationField(t, fk)
 		if f == nil {
 			continue
 		}
-		if obj.Field(f.Name) != nil {
-			f.Name = fallbackRelationName(fk)
+		if obj.Field(f.Name) != nil || f.Name == edgeName || slices.Contains(reserved, f.Name) {
+			b.log.Warn("relation left out of mutation payload: a payload field has its name",
+				"type", obj.Name, "field", f.Name, "constraint", fk.Name)
+			continue
 		}
-		b.addRootField(obj, f)
+		obj.AddField(f)
 	}
-	typeName := b.TypeForTable[tableKey(t.Schema, t.Name)]
-	if t.PrimaryKey == nil || typeName == "" {
+	if !hasEdge {
 		return
 	}
 	edge := &Field{
-		Name:        strings.ToLower(typeName[:1]) + typeName[1:] + "Edge",
+		Name:        edgeName,
 		Type:        typeName + "Edge",
 		Description: "An edge for the payload's " + typeName + ", to add to a Relay connection. Its cursor is the row's nodeId, valid under every ordering; orderBy is accepted for PostGraphile compatibility.",
 		Meta:        &FieldMeta{Kind: KindPayloadEdge, Table: t},
@@ -918,30 +952,11 @@ func (b *Builder) addPayloadFields(obj *Object, t *introspect.Table) {
 // ForwardRelationName returns the name of the relation field following fk
 // from t to the referenced table: [inflect.KindRelationForward] for a key
 // referencing one row, [inflect.KindRelationForwardMany] for a PERIOD key.
-// When that name equals one of t's column fields or the name of an earlier
-// foreign key's relation, it falls back to <referencedTable>By<Columns>
-// (PostGraphile's default form). SchemaHook plugins adding surface keyed by
+// The name depends on fk alone, never on the other fields of t's type (a
+// conflict is a Build error). SchemaHook plugins adding surface keyed by
 // the relation (filters, nested inputs) use it so their names line up with
 // the selection field.
 func (b *Builder) ForwardRelationName(t *introspect.Table, fk *introspect.ForeignKey) string {
-	name := b.forwardRelationBase(t, fk)
-	taken := map[string]bool{}
-	for _, c := range t.Columns {
-		taken[b.Inflect(inflect.KindFieldName, inflect.Input{Schema: t.Schema, Table: t.Name, Column: c.Name})] = true
-	}
-	for _, other := range t.ForeignKeys {
-		if other == fk {
-			break
-		}
-		taken[b.ForwardRelationName(t, other)] = true
-	}
-	if taken[name] {
-		return fallbackRelationName(fk)
-	}
-	return name
-}
-
-func (b *Builder) forwardRelationBase(t *introspect.Table, fk *introspect.ForeignKey) string {
 	kind := inflect.KindRelationForward
 	if !fk.ReferencesOne() {
 		kind = inflect.KindRelationForwardMany
@@ -1323,10 +1338,14 @@ func (b *Builder) addMutations(t *introspect.Table, filterName string) {
 				{Name: rowField, Type: typeName, Meta: &FieldMeta{Kind: KindPayloadRow, Table: t}},
 				{Name: "clientMutationId", Type: "String", Meta: &FieldMeta{Kind: KindClientMutationID}},
 			}}
-			b.addPayloadFields(obj, t)
+			deletedNodeID := ""
 			if verb == "delete" && t.PrimaryKey != nil {
+				deletedNodeID = b.Inflect(inflect.KindPayloadDeletedNodeID, inflect.Input{Schema: t.Schema, Table: t.Name})
+			}
+			b.addPayloadFields(obj, t, deletedNodeID)
+			if deletedNodeID != "" {
 				b.addRootField(obj, &Field{
-					Name:        b.Inflect(inflect.KindPayloadDeletedNodeID, inflect.Input{Schema: t.Schema, Table: t.Name}),
+					Name:        deletedNodeID,
 					Type:        "ID",
 					Description: "The nodeId of the deleted " + typeName + ".",
 					Meta:        &FieldMeta{Kind: KindPayloadDeletedNodeID, Table: t},
@@ -1953,13 +1972,24 @@ func (b *Builder) addComputedField(t *introspect.Table, f *introspect.Function) 
 	default:
 		fieldType = base // always nullable: the function may return NULL
 	}
-	b.addRootField(obj, &Field{
+	field := &Field{
 		Name:        b.Inflect(inflect.KindComputedField, inflect.Input{Schema: f.Schema, Table: t.Name, Function: f.Name}),
 		Type:        fieldType,
 		Description: f.Comment,
 		Args:        b.functionArgs(f.Args[1:]),
 		Meta:        &FieldMeta{Kind: KindComputed, Table: t, Function: f},
-	})
+	}
+	if rel := obj.Field(field.Name); rel != nil && rel.Meta != nil && rel.Meta.FK != nil {
+		tag := "fieldName"
+		if rel.Meta.Kind == KindRelationBackward {
+			tag = "foreignFieldName"
+		}
+		b.errs = append(b.errs, fmt.Errorf(
+			"schema: type %s: relation field %q of constraint %s conflicts with %s of the same name; rename the relation with a @%s smart comment on constraint %s or the function with @name, or switch the naming mode (plugins.settings.simple_names.enabled)",
+			obj.Name, field.Name, rel.Meta.FK.Name, describeField(field), tag, rel.Meta.FK.Name))
+		return
+	}
+	b.addRootField(obj, field)
 }
 
 // FieldsByOrderBy indexes every object field that takes an orderBy argument
@@ -2026,7 +2056,12 @@ func (b *Builder) addLiveFields() {
 }
 
 // Build renders SDL, validates it, and returns the executable schema + meta.
+// It fails with every relation-name conflict found while generating the
+// schema (a relation field named like another field of its type).
 func (b *Builder) Build() (*Built, error) {
+	if err := errors.Join(b.errs...); err != nil {
+		return nil, err
+	}
 	if len(b.Mutation.Fields) == 0 {
 		delete(b.Objects, "Mutation")
 	}

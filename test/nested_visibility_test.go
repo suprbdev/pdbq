@@ -27,20 +27,20 @@ func TestNestedMutationVisibility(t *testing.T) {
 
 	t.Run("forward create", func(t *testing.T) {
 		res := post(t, hs.URL, fmt.Sprintf(`mutation {
-			createComment(input: {body: "First!", post: {create: {title: "Fwd", author: {create: {email: %q}}}}}) {
+			createComment(input: {body: "First!", postByPostId: {create: {title: "Fwd", userByAuthorId: {create: {email: %q}}}}}) {
 				comment {
 					body
-					post {
+					postByPostId {
 						title
-						author { email postsByAuthorId { totalCount nodes { title } } }
+						userByAuthorId { email postsByAuthorId { totalCount nodes { title } } }
 						commentsByPostId(filter: {parentId: {isNull: true}}) { totalCount nodes { body } }
 					}
 				}
 			}
 		}`, email("fwd")), nil)
 		requireNoErrors(t, res)
-		want := normalizeStr(t, fmt.Sprintf(`{"comment": {"body": "First!", "post": {"title": "Fwd",
-			"author": {"email": %q, "postsByAuthorId": {"totalCount": 1, "nodes": [{"title": "Fwd"}]}},
+		want := normalizeStr(t, fmt.Sprintf(`{"comment": {"body": "First!", "postByPostId": {"title": "Fwd",
+			"userByAuthorId": {"email": %q, "postsByAuthorId": {"totalCount": 1, "nodes": [{"title": "Fwd"}]}},
 			"commentsByPostId": {"totalCount": 1, "nodes": [{"body": "First!"}]}}}}`, email("fwd")))
 		if got := normalize(t, res.Data["createComment"]); got != want {
 			t.Errorf("got %s\nwant %s", got, want)
@@ -58,7 +58,7 @@ func TestNestedMutationVisibility(t *testing.T) {
 					id
 					all: postsByAuthorId(orderBy: TITLE_ASC) {
 						totalCount
-						nodes { title author { email } commentsByPostId { totalCount nodes { body post { title } } } }
+						nodes { title userByAuthorId { email } commentsByPostId { totalCount nodes { body postByPostId { title } } } }
 					}
 					commented: postsByAuthorId(filter: {commentsByPostId: {some: {parentId: {isNull: true}}}}) {
 						totalCount nodes { title }
@@ -77,8 +77,8 @@ func TestNestedMutationVisibility(t *testing.T) {
 		mustUnmarshal(t, res.Data["createUser"], &out)
 		userID = out.User.ID
 		wantAll := normalizeStr(t, fmt.Sprintf(`{"totalCount": 2, "nodes": [
-			{"title": "Kid A", "author": {"email": %[1]q}, "commentsByPostId": {"totalCount": 1, "nodes": [{"body": "ga", "post": {"title": "Kid A"}}]}},
-			{"title": "Kid B", "author": {"email": %[1]q}, "commentsByPostId": {"totalCount": 0, "nodes": []}}]}`, email("bwd")))
+			{"title": "Kid A", "userByAuthorId": {"email": %[1]q}, "commentsByPostId": {"totalCount": 1, "nodes": [{"body": "ga", "postByPostId": {"title": "Kid A"}}]}},
+			{"title": "Kid B", "userByAuthorId": {"email": %[1]q}, "commentsByPostId": {"totalCount": 0, "nodes": []}}]}`, email("bwd")))
 		if got := normalize(t, out.User.All); got != wantAll {
 			t.Errorf("children: got %s\nwant %s", got, wantAll)
 		}
@@ -93,17 +93,17 @@ func TestNestedMutationVisibility(t *testing.T) {
 			t.Skip("backward create failed")
 		}
 		res := post(t, hs.URL, fmt.Sprintf(`mutation {
-			createPost(input: {title: "Kid C", author: {connectById: {id: %d}}, commentsByPostId: {create: [{body: "gc"}]}}) {
+			createPost(input: {title: "Kid C", userByAuthorId: {connectById: {id: %d}}, commentsByPostId: {create: [{body: "gc"}]}}) {
 				post {
 					title
-					author { postsByAuthorId(orderBy: TITLE_ASC) { totalCount nodes { title } } }
+					userByAuthorId { postsByAuthorId(orderBy: TITLE_ASC) { totalCount nodes { title } } }
 					commentsByPostId { nodes { body } }
 				}
 			}
 		}`, userID), nil)
 		requireNoErrors(t, res)
 		want := normalizeStr(t, `{"post": {"title": "Kid C",
-			"author": {"postsByAuthorId": {"totalCount": 3, "nodes": [{"title": "Kid A"}, {"title": "Kid B"}, {"title": "Kid C"}]}},
+			"userByAuthorId": {"postsByAuthorId": {"totalCount": 3, "nodes": [{"title": "Kid A"}, {"title": "Kid B"}, {"title": "Kid C"}]}},
 			"commentsByPostId": {"nodes": [{"body": "gc"}]}}}`)
 		if got := normalize(t, res.Data["createPost"]); got != want {
 			t.Errorf("got %s\nwant %s", got, want)
@@ -167,12 +167,12 @@ func TestNestedMutationVisibilityRLS(t *testing.T) {
 
 	t.Run("connected parent lists readable rows only", func(t *testing.T) {
 		res := asGrace(t, fmt.Sprintf(`mutation {
-			createNvItem(input: {body: "grace-new", ownerId: 2, list: {connectById: {id: %d}}}) {
-				nvItem { list { name nvItemsByListId { totalCount nodes { body } } } }
+			createNvItem(input: {body: "grace-new", ownerId: 2, nvListByListId: {connectById: {id: %d}}}) {
+				nvItem { nvListByListId { name nvItemsByListId { totalCount nodes { body } } } }
 			}
 		}`, listID))
 		requireNoErrors(t, res)
-		want := normalizeStr(t, `{"nvItem": {"list": {"name": "shared", "nvItemsByListId": {"totalCount": 2, "nodes": [{"body": "grace-visible"}, {"body": "grace-new"}]}}}}`)
+		want := normalizeStr(t, `{"nvItem": {"nvListByListId": {"name": "shared", "nvItemsByListId": {"totalCount": 2, "nodes": [{"body": "grace-visible"}, {"body": "grace-new"}]}}}}`)
 		if got := normalize(t, res.Data["createNvItem"]); got != want {
 			t.Errorf("got %s\nwant %s", got, want)
 		}
@@ -180,23 +180,23 @@ func TestNestedMutationVisibilityRLS(t *testing.T) {
 
 	t.Run("created parent and children", func(t *testing.T) {
 		res := asGrace(t, `mutation {
-			createNvItem(input: {body: "in-fresh", ownerId: 2, list: {create: {ownerId: 2, name: "fresh"}}}) {
-				nvItem { list { name nvItemsByListId { totalCount nodes { body } } } }
+			createNvItem(input: {body: "in-fresh", ownerId: 2, nvListByListId: {create: {ownerId: 2, name: "fresh"}}}) {
+				nvItem { nvListByListId { name nvItemsByListId { totalCount nodes { body } } } }
 			}
 		}`)
 		requireNoErrors(t, res)
-		want := normalizeStr(t, `{"nvItem": {"list": {"name": "fresh", "nvItemsByListId": {"totalCount": 1, "nodes": [{"body": "in-fresh"}]}}}}`)
+		want := normalizeStr(t, `{"nvItem": {"nvListByListId": {"name": "fresh", "nvItemsByListId": {"totalCount": 1, "nodes": [{"body": "in-fresh"}]}}}}`)
 		if got := normalize(t, res.Data["createNvItem"]); got != want {
 			t.Errorf("forward: got %s\nwant %s", got, want)
 		}
 
 		res = asGrace(t, `mutation {
 			createNvList(input: {ownerId: 2, name: "kids", nvItemsByListId: {create: [{body: "kid", ownerId: 2}]}}) {
-				nvList { name nvItemsByListId { totalCount nodes { body list { name } } } }
+				nvList { name nvItemsByListId { totalCount nodes { body nvListByListId { name } } } }
 			}
 		}`)
 		requireNoErrors(t, res)
-		want = normalizeStr(t, `{"nvList": {"name": "kids", "nvItemsByListId": {"totalCount": 1, "nodes": [{"body": "kid", "list": {"name": "kids"}}]}}}`)
+		want = normalizeStr(t, `{"nvList": {"name": "kids", "nvItemsByListId": {"totalCount": 1, "nodes": [{"body": "kid", "nvListByListId": {"name": "kids"}}]}}}`)
 		if got := normalize(t, res.Data["createNvList"]); got != want {
 			t.Errorf("backward: got %s\nwant %s", got, want)
 		}

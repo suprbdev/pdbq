@@ -77,15 +77,15 @@ func TestSchemaSurface(t *testing.T) {
 	sdl := built.SDL
 
 	for _, want := range []string{
-		"author: UserFilter",                // forward relation on PostFilter
-		"authorExists: Boolean",             // forward existence variant
+		"userByAuthorId: UserFilter",        // forward relation on PostFilter
+		"userByAuthorIdExists: Boolean",     // forward existence variant
 		"postsByAuthorId: PostToManyFilter", // reverse relation on UserFilter
 		"postsByAuthorIdExist: Boolean",     // reverse existence variant
 		"some: PostFilter",                  // quantifier wrapper
 		"postCount: BigIntFilterOps",        // computed filter (int8 -> BigInt)
 		"POST_COUNT_ASC",                    // computed ordering
 		"POST_COUNT_DESC",
-		"AUTHOR__EMAIL_ASC",              // forward relational ordering
+		"USER_BY_AUTHOR_ID__EMAIL_ASC",   // forward relational ordering
 		"POSTS_BY_AUTHOR_ID__TITLE_DESC", // reverse relational ordering
 	} {
 		if !strings.Contains(sdl, want) {
@@ -97,7 +97,7 @@ func TestSchemaSurface(t *testing.T) {
 	// order values like the tables' own.
 	for _, reject := range []string{
 		"excerpt: StringFilterOps", "EXCERPT_ASC",
-		"AUTHOR__FULL_NAME_ASC", "POSTS_BY_AUTHOR_ID__BODY_ASC",
+		"USER_BY_AUTHOR_ID__FULL_NAME_ASC", "POSTS_BY_AUTHOR_ID__BODY_ASC",
 	} {
 		if strings.Contains(sdl, reject) {
 			t.Errorf("SDL must not contain %q", reject)
@@ -118,20 +118,20 @@ func TestSettingsToggles(t *testing.T) {
 	if strings.Contains(built.SDL, "POST_COUNT_ASC") {
 		t.Error("computed: false must drop computed orderBy values")
 	}
-	if !strings.Contains(built.SDL, "author: UserFilter") {
+	if !strings.Contains(built.SDL, "userByAuthorId: UserFilter") {
 		t.Error("computed: false must keep relation filters")
 	}
 
 	built = setup(t, func(s *advancedfilters.Settings) { s.RelationOrder = false })
-	if strings.Contains(built.SDL, "AUTHOR__EMAIL_ASC") {
+	if strings.Contains(built.SDL, "USER_BY_AUTHOR_ID__EMAIL_ASC") {
 		t.Error("relation_order: false must drop relational orderBy values")
 	}
-	if !strings.Contains(built.SDL, "author: UserFilter") {
+	if !strings.Contains(built.SDL, "userByAuthorId: UserFilter") {
 		t.Error("relation_order: false must keep relation filters")
 	}
 
 	built = setup(t, func(s *advancedfilters.Settings) { s.Relations = false })
-	if strings.Contains(built.SDL, "AUTHOR__EMAIL_ASC") {
+	if strings.Contains(built.SDL, "USER_BY_AUTHOR_ID__EMAIL_ASC") {
 		t.Error("relations: false must drop relational orderBy values too")
 	}
 }
@@ -142,13 +142,13 @@ func TestSmartCommentTags(t *testing.T) {
 	cat := testutil.FixtureCatalog()
 	cat.Table("public", "posts").ForeignKeys[0].Comment = "@omit filter"
 	built := setupCatalog(t, nil, cat)
-	if strings.Contains(built.SDL, "author: UserFilter") || strings.Contains(built.SDL, "PostToManyFilter") {
+	if strings.Contains(built.SDL, "userByAuthorId: UserFilter") || strings.Contains(built.SDL, "PostToManyFilter") {
 		t.Error("@omit filter on a FK must drop both relation filter directions")
 	}
 
 	cat = testutil.FixtureCatalog()
 	built = setupCatalog(t, func(s *advancedfilters.Settings) { s.RelationsOptIn, s.ComputedOptIn = true, true }, cat)
-	for _, reject := range []string{"author: UserFilter", "postCount: BigIntFilterOps", "POST_COUNT_ASC"} {
+	for _, reject := range []string{"userByAuthorId: UserFilter", "postCount: BigIntFilterOps", "POST_COUNT_ASC"} {
 		if strings.Contains(built.SDL, reject) {
 			t.Errorf("opt-in mode must suppress untagged surface %q", reject)
 		}
@@ -157,7 +157,7 @@ func TestSmartCommentTags(t *testing.T) {
 	cat = testutil.FixtureCatalog()
 	cat.Table("public", "posts").ForeignKeys[0].Comment = "@filterable"
 	built = setupCatalog(t, func(s *advancedfilters.Settings) { s.RelationsOptIn = true }, cat)
-	if !strings.Contains(built.SDL, "author: UserFilter") {
+	if !strings.Contains(built.SDL, "userByAuthorId: UserFilter") {
 		t.Error("@filterable must opt a FK into relations_opt_in mode")
 	}
 }
@@ -165,7 +165,7 @@ func TestSmartCommentTags(t *testing.T) {
 func TestForwardRelationFilter(t *testing.T) {
 	built := setup(t, nil)
 	stmt := compileRoot(t, built, `{
-		allPosts(filter: {author: {email: {equalTo: "ada@example.com"}}}) { nodes { id } }
+		allPosts(filter: {userByAuthorId: {email: {equalTo: "ada@example.com"}}}) { nodes { id } }
 	}`)
 	sql := stmt.SQL
 	for _, want := range []string{
@@ -230,7 +230,7 @@ func TestRelationExistenceFilter(t *testing.T) {
 	}
 
 	stmt = compileRoot(t, built, `{
-		allPosts(filter: {authorExists: false}) { nodes { id } }
+		allPosts(filter: {userByAuthorIdExists: false}) { nodes { id } }
 	}`)
 	if !strings.Contains(stmt.SQL, `NOT EXISTS (SELECT 1 FROM "public"."users" AS`) {
 		t.Errorf("forward exists: false missing NOT EXISTS:\n%s", stmt.SQL)
@@ -241,7 +241,7 @@ func TestNestedRelationFilter(t *testing.T) {
 	built := setup(t, nil)
 	// Two levels: users having a post whose author (self-join back) matches.
 	stmt := compileRoot(t, built, `{
-		allUsers(filter: {postsByAuthorId: {some: {author: {mood: {equalTo: HAPPY}}}}}) { nodes { id } }
+		allUsers(filter: {postsByAuthorId: {some: {userByAuthorId: {mood: {equalTo: HAPPY}}}}}) { nodes { id } }
 	}`)
 	if got := strings.Count(stmt.SQL, "EXISTS (SELECT 1 FROM"); got != 2 {
 		t.Errorf("want 2 nested EXISTS, got %d:\n%s", got, stmt.SQL)
@@ -261,7 +261,7 @@ func TestNestedRelationFilter(t *testing.T) {
 func TestForwardRelationOrder(t *testing.T) {
 	built := setup(t, nil)
 	stmt := compileRoot(t, built, `{
-		allPosts(orderBy: [AUTHOR__EMAIL_ASC], first: 5) { nodes { id } }
+		allPosts(orderBy: [USER_BY_AUTHOR_ID__EMAIL_ASC], first: 5) { nodes { id } }
 	}`)
 	sql := stmt.SQL
 	if !strings.Contains(sql, `(SELECT __ro."email" FROM "public"."users" AS __ro WHERE __ro."id" = `) {
@@ -297,7 +297,7 @@ func TestRelationOrderWithKeysetCursor(t *testing.T) {
 	built := setup(t, nil)
 	cursor := base64.StdEncoding.EncodeToString([]byte(`["Post",1]`))
 	stmt := compileRoot(t, built, fmt.Sprintf(`{
-		allPosts(orderBy: [AUTHOR__EMAIL_ASC], first: 2, after: %q) {
+		allPosts(orderBy: [USER_BY_AUTHOR_ID__EMAIL_ASC], first: 2, after: %q) {
 			nodes { id }
 			pageInfo { hasNextPage endCursor }
 		}
@@ -317,10 +317,10 @@ func TestRelationOrderSmartComments(t *testing.T) {
 	cat := testutil.FixtureCatalog()
 	cat.Table("public", "posts").ForeignKeys[0].Comment = "@omit order"
 	built := setupCatalog(t, nil, cat)
-	if strings.Contains(built.SDL, "AUTHOR__EMAIL_ASC") || strings.Contains(built.SDL, "POSTS_BY_AUTHOR_ID__TITLE_ASC") {
+	if strings.Contains(built.SDL, "USER_BY_AUTHOR_ID__EMAIL_ASC") || strings.Contains(built.SDL, "POSTS_BY_AUTHOR_ID__TITLE_ASC") {
 		t.Error("@omit order on a FK must drop both relational order directions")
 	}
-	if !strings.Contains(built.SDL, "author: UserFilter") {
+	if !strings.Contains(built.SDL, "userByAuthorId: UserFilter") {
 		t.Error("@omit order must keep the relation filter fields")
 	}
 }
@@ -374,7 +374,7 @@ func TestRelationFilterOnBackwardRelationField(t *testing.T) {
 	// Relation filter applied inside a nested child connection.
 	stmt := compileRoot(t, built, `{
 		userById(id: 1) {
-			postsByAuthorId(filter: {author: {email: {equalTo: "x"}}}) { nodes { id } }
+			postsByAuthorId(filter: {userByAuthorId: {email: {equalTo: "x"}}}) { nodes { id } }
 		}
 	}`)
 	if !strings.Contains(stmt.SQL, `EXISTS (SELECT 1 FROM "public"."users" AS`) {

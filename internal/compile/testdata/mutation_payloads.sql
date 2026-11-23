@@ -8,7 +8,7 @@ __vis AS NOT MATERIALIZED (
   SELECT "id", "title" FROM "public"."posts"
   UNION ALL SELECT "id", "title" FROM __mut
 )
-SELECT json_build_object('clientMutationId', $3::text, 'author', __l_3.data, 'postEdge', json_build_object('cursor', replace(encode(convert_to(jsonb_build_array('Post'::text, __t_1."id")::text, 'UTF8'), 'base64'), E'\n', ''), 'node', json_build_object('title', __t_1."title")), 'query', json_build_object('allPosts', (SELECT __q_7.data FROM (
+SELECT json_build_object('clientMutationId', $3::text, 'userByAuthorId', __l_3.data, 'postEdge', json_build_object('cursor', replace(encode(convert_to(jsonb_build_array('Post'::text, __t_1."id")::text, 'UTF8'), 'base64'), E'\n', ''), 'node', json_build_object('title', __t_1."title")), 'query', json_build_object('allPosts', (SELECT __q_7.data FROM (
   SELECT json_build_object('totalCount', (SELECT count(*) FROM __vis AS __c_6)::int, 'nodes', coalesce(json_agg(__s_5.ndata ORDER BY __s_5.__rn ASC) FILTER (WHERE __s_5.__rn <= $4), '[]'::json)) AS data
   FROM (
     SELECT json_build_object('title', __t_4."title") AS ndata, row_number() OVER (ORDER BY __t_4."id" ASC) AS __rn

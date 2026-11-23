@@ -49,7 +49,6 @@ func TestWatchHotSwap(t *testing.T) {
 	cfg.Database.URL = url
 	noIdentity(&cfg)
 	cfg.Errors.Detail = "dev"
-	cfg.Plugins.Disabled = []string{"simple_names"}
 	cfg.Schema.Schemas = []string{watchSchema}
 	cfg.Watch.Enabled = true
 	cfg.Watch.PollInterval = 200 * time.Millisecond

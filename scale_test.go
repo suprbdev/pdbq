@@ -92,18 +92,19 @@ func genCatalog(n int, hub bool) *introspect.Catalog {
 	return cat
 }
 
-func scaleApp(indexedOnly, aggregates bool) *pdbq.App {
+func scaleApp(indexedOnly, aggregates, simple bool) *pdbq.App {
 	cfg := config.DefaultConfig()
 	cfg.Filters.IndexedOnly = indexedOnly
+	cfg.Plugins.Settings.SimpleNames.Enabled = simple
 	if aggregates {
 		cfg.Aggregates.Enabled = true
 	}
 	return pdbq.New(cfg, pdbq.WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))))
 }
 
-func buildSDL(tb testing.TB, n int, hub, indexedOnly, aggregates bool) string {
+func buildSDL(tb testing.TB, n int, hub, indexedOnly, aggregates, simple bool) string {
 	tb.Helper()
-	built, err := scaleApp(indexedOnly, aggregates).BuildSchema(context.Background(), genCatalog(n, hub))
+	built, err := scaleApp(indexedOnly, aggregates, simple).BuildSchema(context.Background(), genCatalog(n, hub))
 	if err != nil {
 		tb.Fatal(err)
 	}
@@ -115,18 +116,19 @@ func buildSDL(tb testing.TB, n int, hub, indexedOnly, aggregates bool) string {
 // the digests with PDBQ_PRINT_SDL_DIGEST=1.
 func TestScaleSDLStable(t *testing.T) {
 	cases := []struct {
-		name                         string
-		hub, indexedOnly, aggregates bool
-		want                         string
+		name                                 string
+		hub, indexedOnly, aggregates, simple bool
+		want                                 string
 	}{
-		{"random-indexed", false, true, false, "903538caca06533e1dc771400b4bb681cd0644aeb1a7ad9dcc389610b06ee480"},
-		{"random-all", false, false, false, "89582e1ca57b9e41aaf2fa446776200eac809d7f0eb1a9ef82ad111700ccbc91"},
-		{"hub-all", true, false, false, "496ff2417af873bdfd49a23b370ba1342bcf26c2f1b01f46cae014dd2219a24d"},
-		{"hub-aggregates", true, true, true, "b4bbf0275debbcfc114df3b5a8c7e38a67166e889831d5ff20de7edb9777cb07"},
+		{"random-indexed", false, true, false, false, "628ae2d58c681882713c2e0c2e78c2ee575e58e110163a611eb3a5c1887aa452"},
+		{"random-all", false, false, false, false, "6eed09686f321b59d68f4a5c2230bc0802d276d38ffbf5fa631ee4f2e3cff022"},
+		{"hub-all", true, false, false, false, "80155d131be816ea143c7cb9bf0f2815b9cf77220df2f977af362b8b4ba30722"},
+		{"hub-aggregates", true, true, true, false, "2dfc85d249c8e004aa44ed4f63872504e33507e40299e7bf6e8f2a921555fabe"},
+		{"hub-simple-names", true, false, false, true, "ec9dc749fc965cb4a12da7bb0732d09546408513a2b51c22fad19cd1d233bd1f"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			sdl := buildSDL(t, 300, tc.hub, tc.indexedOnly, tc.aggregates)
+			sdl := buildSDL(t, 300, tc.hub, tc.indexedOnly, tc.aggregates, tc.simple)
 			got := fmt.Sprintf("%x", sha256.Sum256([]byte(sdl)))
 			if os.Getenv("PDBQ_PRINT_SDL_DIGEST") != "" {
 				t.Logf("%s %s len=%d", tc.name, got, len(sdl))
@@ -159,7 +161,7 @@ func BenchmarkSchemaBuildLargeAggregates(b *testing.B) {
 
 func benchBuild(b *testing.B, n int, hub, aggregates bool) {
 	cat := genCatalog(n, hub)
-	app := scaleApp(false, aggregates)
+	app := scaleApp(false, aggregates, false)
 	b.ReportAllocs()
 	for b.Loop() {
 		if _, err := app.BuildSchema(context.Background(), cat); err != nil {

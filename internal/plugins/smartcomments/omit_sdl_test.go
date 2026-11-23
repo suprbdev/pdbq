@@ -432,8 +432,8 @@ func TestOmitTableEverywhere(t *testing.T) {
 			if occ := occurrences(t, s, "vaults_by_owner_id"); len(occ) != 0 {
 				t.Errorf("one-to-many surface left: %v", surfacesOf(occ))
 			}
-			wantFields(t, s, "Vault", "owner")
-			wantFields(t, s, "VaultFilter", "owner")
+			wantFields(t, s, "Vault", "userByOwnerId")
+			wantFields(t, s, "VaultFilter", "userByOwnerId")
 		})
 	}
 	t.Run("filter", func(t *testing.T) {
@@ -479,7 +479,7 @@ func TestOmitPrimaryKeyColumn(t *testing.T) {
 	rejectFields(t, s, "UserVaultsByOwnerIdNestedPatchInput", "connectById", "connectByNodeId")
 	rejectFields(t, s, "VaultFilter", "id")
 	rejectFields(t, s, "VaultCondition", "id")
-	wantFields(t, s, "VaultLog", "vault")
+	wantFields(t, s, "VaultLog", "vaultByVaultId")
 
 	sql := compileRoot(t, built, `{ allVaults(first: 1) { edges { cursor } } }`).SQL
 	if strings.Contains(sql, `"id"`) {

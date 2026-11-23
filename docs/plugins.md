@@ -106,6 +106,7 @@ gate has the same name in pdbr; see [Aggregates](aggregates.md#settings).
 
 | Key | Default | Effect |
 |---|---|---|
+| `simple_names.enabled` | `false` | short names (`users`, `user(id:)`, `updateUser`, `author`, `posts`) instead of PostGraphile v4's |
 | `advanced_filters.relations` | `true` | relation filters (forward, reverse `some`/`none`/`every`, `<rel>Exists`) |
 | `advanced_filters.computed` | `true` | filtering and ordering by computed columns |
 | `advanced_filters.relation_order` | `true` | relational orderBy values (`REL__COLUMN_ASC`) |
@@ -121,18 +122,35 @@ gate has the same name in pdbr; see [Aggregates](aggregates.md#settings).
 | `nested_mutations.max_depth` | `3` | nesting levels per root field (`>= 1`) |
 | `nested_mutations.max_operations` | `50` | nested operations per root field (`>= 1`) |
 
-`smart_comments` and `simple_names` have no settings.
+`smart_comments` has no settings.
 
 ## Worked example 1: simple_names
 
-`internal/plugins/simplenames` is a pure naming plugin: ~60 lines, zero core
-changes. It overrides a handful of `inflect.Kind`s (`users` instead of
-`allUsers`, `user` instead of `userById`, `posts` instead of
-`postsByAuthorId`) and delegates everything else to `next`. It also
-implements `CatalogHook` — not to change the catalog, but to capture it so
-it can detect ambiguous relations (a table with several FKs) and fall back
-to the verbose name instead of colliding. Residual collisions are caught by
-the schema builder, which keeps the first field and logs a warning.
+`internal/plugins/simplenames` is a pure naming plugin with zero core
+changes. It is registered but inert until `plugins.settings.simple_names.enabled`
+is set, the way `@graphile-contrib/pg-simplify-inflector` is an opt-in on top
+of PostGraphile's verbose default. It overrides a handful of `inflect.Kind`s
+and delegates everything else to `next`:
+
+| Default (PostGraphile v4) | simple_names |
+|---|---|
+| `allUsers` | `users` |
+| `userById(id:)` | `user(id:)` |
+| `updateUserById`, `deleteUserById`, `upsertUserById` | `updateUser`, `deleteUser`, `upsertUser` (primary key only) |
+| `userByAuthorId` (FK `author_id` or `authorId`) | `author` |
+| `userByAuthor`, `userByOrgIdAndUserId` (any other FK) | same |
+| `postsByAuthorId` (`posts` has one FK to `users`) | `posts` |
+| `transfersByFromId` (`transfers` has several FKs to `users`) | same |
+
+The names come from the schema's shape alone. It also implements
+`CatalogHook`, not to change the catalog but to capture it, so it can count
+a child table's foreign keys to the parent. A relation whose name is already
+a field of its type (a column, another relation, a computed column) is a
+schema build error naming the type, the field and the constraint; rename it
+with `@fieldName` / `@foreignFieldName` on the constraint
+([smart-comments.md](smart-comments.md)). Other residual field-name
+collisions are caught by the schema builder, which keeps the first field and
+logs a warning.
 
 ## Worked example 2: advanced_filters
 
@@ -140,12 +158,12 @@ the schema builder, which keeps the first field and logs a warning.
 pattern: the plugin implements only `SchemaHook`, yet changes compiled SQL.
 
 - It adds relation fields to every `<Type>Filter` input — a forward FK takes
-  the parent's filter directly (`PostFilter.author: UserFilter`), a reverse
+  the parent's filter directly (`PostFilter.userByAuthorId: UserFilter`), a reverse
   FK takes a `{some|none|every}` wrapper (`UserFilter.postsByAuthorId:
   PostToManyFilter`), and each direction gets a Boolean existence variant
-  (`PostFilter.authorExists: Boolean`, `UserFilter.postsByAuthorIdExist:
+  (`PostFilter.userByAuthorIdExists: Boolean`, `UserFilter.postsByAuthorIdExist:
   Boolean`) compiling to a bare `(NOT) EXISTS` — adds one-level relational
-  orderBy values (`AUTHOR__EMAIL_ASC` on posts,
+  orderBy values (`USER_BY_AUTHOR_ID__EMAIL_ASC` on posts,
   `POSTS_BY_AUTHOR_ID__TITLE_DESC` on users; reverse relations aggregate with
   `MIN`/`MAX`) — and exposes eligible
   computed columns (single
@@ -234,10 +252,10 @@ surfaces. Its input shapes follow
 
 Every create input (`PostCreateInput`) and patch (`PostUpdateInput`) gets one
 field per foreign key, in both directions, named like the relation field of
-the row type (`author`, `postsByAuthorId`; `@fieldName`/`@foreignFieldName`
+the row type (`userByAuthorId`, `postsByAuthorId`; `@fieldName`/`@foreignFieldName`
 rename both). Its type lists the operations on the related rows:
 
-| Operation | Forward (`post.author`, the FK is on this row) | Backward (`user.postsByAuthorId`, the FK points here) |
+| Operation | Forward (`post.userByAuthorId`, the FK is on this row) | Backward (`user.postsByAuthorId`, the FK points here) |
 |---|---|---|
 | `connectBy<Key>`, `connectByNodeId` | look the row up and point this row's FK at it | point the row's FK at this row |
 | `create` | insert the row and point this row's FK at it | insert rows referencing this row |
@@ -262,13 +280,13 @@ mutation {
       deleteByNodeId: [{nodeId: "WyJQb3N0IiwgNF0="}]
     }
   }) { user { postsByAuthorId { totalCount nodes { title } } } }
-  createPost(input: {title: "Hi", author: {connectByEmail: {email: "ada@example.com"}}}) {
-    post { author { fullName } }
+  createPost(input: {title: "Hi", userByAuthorId: {connectByEmail: {email: "ada@example.com"}}}) {
+    post { userByAuthorId { fullName } }
   }
 }
 ```
 
-- Create inputs take `<Type><Relation>NestedInput` (`PostAuthorNestedInput`,
+- Create inputs take `<Type><Relation>NestedInput` (`PostUserByAuthorIdNestedInput`,
   `UserPostsByAuthorIdNestedInput`), which only offers `connect…` and
   `create`: a row being created references nothing yet and nothing
   references it. Patches take `<Type><Relation>NestedPatchInput` with every
