@@ -42,5 +42,5 @@ require (
 require (
 	github.com/coder/websocket v1.8.15
 	github.com/prometheus/client_golang v1.25.0
-	github.com/suprbdev/pdbcore v0.8.0
+	github.com/suprbdev/pdbcore v0.8.2-0.20261123140027-7100622755c0
 )

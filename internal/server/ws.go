@@ -638,11 +638,12 @@ func (c *wsSession) execute(ctx context.Context, id string, req gqlHTTPRequest, 
 	}
 	ex := c.s.executor.Load()
 	pctx, op, err := ex.Prepare(ctx, exec.Request{
-		Query:         req.Query,
-		OperationName: req.OperationName,
-		Variables:     req.Variables,
-		Claims:        claims,
-		Role:          role,
+		Query:            req.Query,
+		OperationName:    req.OperationName,
+		Variables:        req.Variables,
+		Claims:           claims,
+		Role:             role,
+		PartialMutations: req.partialMutations(),
 	})
 	if err != nil {
 		c.sendErrors(ctx, id, errorList(err))

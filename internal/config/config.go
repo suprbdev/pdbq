@@ -105,10 +105,11 @@ func (s Schema) Shared() confx.Schema {
 }
 
 type TX struct {
-	Mutations  bool   `koanf:"mutations" doc:"Wrap every mutation in a transaction."`
-	PerRequest bool   `koanf:"per_request" doc:"Use one transaction for the whole request instead of one per operation."`
-	Isolation  string `koanf:"isolation" doc:"Transaction isolation level: read_committed, repeatable_read, serializable."`
-	MaxRetries int    `koanf:"max_retries" doc:"Automatic retries of a transactional operation after a serialization failure or deadlock (SQLSTATE 40001/40P01). 0 disables; the whole operation re-runs, which is safe because the failed attempt rolled back."`
+	Mutations        bool   `koanf:"mutations" doc:"Wrap every mutation in a transaction."`
+	PerRequest       bool   `koanf:"per_request" doc:"Use one transaction for the whole request instead of one per operation."`
+	Isolation        string `koanf:"isolation" doc:"Transaction isolation level: read_committed, repeatable_read, serializable."`
+	MaxRetries       int    `koanf:"max_retries" doc:"Automatic retries of a transactional operation after a serialization failure or deadlock (SQLSTATE 40001/40P01). 0 disables; the whole operation re-runs, which is safe because the failed attempt rolled back."`
+	PartialMutations bool   `koanf:"partial_mutations" doc:"Let a request opt in (extensions.partialMutations) to running each mutation root field in its own savepoint, so a failing field is reported without rolling back the others. Requests asking for it while this is off are rejected."`
 }
 
 // DefaultConfig returns the documented defaults.

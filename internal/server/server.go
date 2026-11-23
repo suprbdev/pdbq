@@ -242,6 +242,18 @@ type gqlHTTPRequest struct {
 	Extensions    json.RawMessage `json:"extensions"`
 }
 
+// partialMutations reports the request's extensions.partialMutations opt-in;
+// anything but the JSON value true is off.
+func (r *gqlHTTPRequest) partialMutations() bool {
+	if len(r.Extensions) == 0 {
+		return false
+	}
+	var ext struct {
+		PartialMutations bool `json:"partialMutations"`
+	}
+	return json.Unmarshal(r.Extensions, &ext) == nil && ext.PartialMutations
+}
+
 // handleGraphQL serves GraphQL over HTTP. GET (and HEAD) runs query
 // operations only and answers 405 for a mutation or subscription; POST
 // requires an application/json body and answers 415 for any other content
@@ -303,11 +315,12 @@ func (s *Server) handleGraphQL(w http.ResponseWriter, r *http.Request) {
 	}
 
 	execReq := exec.Request{
-		Query:         req.Query,
-		OperationName: req.OperationName,
-		Variables:     req.Variables,
-		Claims:        claims,
-		Role:          role,
+		Query:            req.Query,
+		OperationName:    req.OperationName,
+		Variables:        req.Variables,
+		Claims:           claims,
+		Role:             role,
+		PartialMutations: req.partialMutations(),
 	}
 	if s.streamsIncremental(r) {
 		s.serveIncremental(w, r, ex, execReq)

@@ -400,6 +400,7 @@ func (a *App) executor(built *schema.Built, instruments *exec.Metrics) *exec.Exe
 		MaxPageSize:                a.Config.Server.MaxPageSize,
 		TxMutations:                a.Config.TX.Mutations,
 		TxPerRequest:               a.Config.TX.PerRequest,
+		PartialMutations:           a.Config.TX.PartialMutations,
 		TxRetries:                  a.Config.TX.MaxRetries,
 		Isolation:                  iso,
 		RLS:                        a.Config.RLS.Enabled,

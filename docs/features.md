@@ -156,8 +156,8 @@ Checklist of PostgreSQL and GraphQL features pdbq supports. Checked = implemente
 - [x] Statement timeout per connection (`database.statement_timeout`)
 - [x] PG error → GraphQL error mapping with `errors.detail: dev|prod` (constraint violations pass through in prod, internals sanitized)
 - [x] One transaction per request spanning operations (`transactions.per_request`)
+- [x] Opt-in partial success for mutations: each root field in its own savepoint, a failed field is reported and the rest commit (`transactions.partial_mutations` + request `extensions.partialMutations`) — see [Mutations](mutations.md#partial-success)
 - [x] Automatic retry on serialization failures (`transactions.max_retries`; SQLSTATE 40001/40P01, whole-operation re-run)
-- [ ] Savepoints for partial mutation recovery
 
 ## Server & protocol
 
