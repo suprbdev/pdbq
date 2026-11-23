@@ -130,6 +130,7 @@ func (a *App) buildServer(ctx context.Context) (*server.Server, error) {
 	if err != nil {
 		return nil, err
 	}
+	srv.SetReadiness(a.pool.Ping)
 	if a.Config.Metrics.Addr == "" {
 		srv.SetMetrics(a.metrics, a.Config.Metrics.Path)
 	} else {

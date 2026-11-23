@@ -162,7 +162,7 @@ Checklist of PostgreSQL and GraphQL features pdbq supports. Checked = implemente
 - [x] `POST /graphql` (JSON body) and `GET /graphql` (query params)
 - [x] GraphQL introspection (`__schema`, `__type`, `__typename`), resolved in-process and exempt from depth/cost limits
 - [x] Embedded GraphiQL playground (opt-in, off by default)
-- [x] `GET /healthz` / `/readyz`
+- [x] `GET /healthz` (liveness) / `/readyz` (bounded pool ping, `server.readyz_timeout`, `503` when the database is unreachable)
 - [x] `GET /schema.graphql` (SDL export; opt-in, off by default)
 - [x] Request timeout, max body size
 - [x] Atomic schema hot-swap (in-flight requests finish on the old schema)

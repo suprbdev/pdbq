@@ -22,6 +22,8 @@ server:
   expose_schema: false
   # Overall HTTP request timeout.
   request_timeout: "30s"
+  # Timeout of the database ping behind GET /readyz; an unreachable or slow database answers 503. /healthz stays a liveness check.
+  readyz_timeout: "2s"
   # Maximum accepted request body size in bytes.
   max_body_bytes: 1048576
   # Maximum GraphQL selection depth per operation.

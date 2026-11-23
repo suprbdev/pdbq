@@ -35,6 +35,7 @@ $ pdbq config example   # print the full annotated reference
 | `server.addr` | `:8080` | |
 | `server.graphiql` | `false` | GraphiQL playground at `/` (enable for dev) |
 | `server.expose_schema` | `false` | SDL at `/schema.graphql` (reveals full schema) |
+| `server.readyz_timeout` | `2s` | deadline of the pool ping behind `GET /readyz`; must be `> 0` |
 | `server.request_timeout` | `30s` | overall HTTP request timeout |
 | `server.max_body_bytes` | 1048576 | maximum request body size (1 MiB) |
 | `server.max_depth` / `max_cost` | 15 / 10000 | per-operation limits; recursive relations can tune the cost estimate with `@costMultiplier` (see [smart comments](smart-comments.md#cost-estimation-for-recursive-relations)) |
