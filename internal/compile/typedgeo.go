@@ -40,7 +40,7 @@ func (n geoNode) geoJSON(k geotype.Kind) string {
 	if n.geojson != "" {
 		return n.geojson
 	}
-	return "jsonb_build_object('type', " + quoteLiteral(k.GeoJSON()) + ", 'coordinates', " + n.coords + ")"
+	return "json_build_object('type', " + quoteLiteral(k.GeoJSON()) + ", 'coordinates', " + n.coords + ")"
 }
 
 // typedGeometry reports whether field fieldName of typeName is declared as a
@@ -203,7 +203,7 @@ func (s *stmt) geoConcrete(ctx geoCtx, n geoNode, t geotype.Type, typename strin
 }
 
 // geoList renders a list field (points, interiors, lines, polygons,
-// geometries) as a jsonb array over the matching JSON array of the parent,
+// geometries) as a json array over the matching JSON array of the parent,
 // in source order.
 func (s *stmt) geoList(ctx geoCtx, parent geoNode, field string, elem geotype.Type, sel ast.SelectionSet, depth int) (string, error) {
 	a := geoTop + "_" + strconv.Itoa(depth)
@@ -221,6 +221,6 @@ func (s *stmt) geoList(ctx geoCtx, parent geoNode, field string, elem geotype.Ty
 	if err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("(SELECT coalesce(jsonb_agg(%s ORDER BY %s.i), '[]'::jsonb) FROM jsonb_array_elements(%s) WITH ORDINALITY AS %s(v, i)%s)",
+	return fmt.Sprintf("(SELECT coalesce(json_agg(%s ORDER BY %s.i), '[]'::json) FROM jsonb_array_elements(%s) WITH ORDINALITY AS %s(v, i)%s)",
 		obj, a, src, a, where), nil
 }

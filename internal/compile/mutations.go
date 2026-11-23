@@ -175,7 +175,7 @@ func (s *stmt) payloadSelectMany(t *introspect.Table, f *ast.Field) (string, err
 			}
 			sub2 := s.alias("s")
 			pairs = append(pairs, quoteLiteral(sub.Alias), fmt.Sprintf(
-				"(SELECT coalesce(jsonb_agg(%s.data), '[]'::jsonb) FROM (\n%s\n) AS %s)",
+				"(SELECT coalesce(json_agg(%s.data), '[]'::json) FROM (\n%s\n) AS %s)",
 				sub2,
 				indent(fmt.Sprintf("SELECT %s AS data\nFROM __mut AS %s%s", jsonExpr, alias, joinLaterals(laterals))),
 				sub2))

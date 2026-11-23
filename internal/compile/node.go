@@ -24,10 +24,10 @@ func (s *stmt) nodeQuery(f *ast.Field) (string, error) {
 	t := s.c.Built.TableForType[typeName]
 	if t == nil || t.PrimaryKey == nil {
 		// Unknown or non-Node type: per Relay, resolve to null.
-		return "SELECT NULL::jsonb AS data WHERE false", nil
+		return "SELECT NULL::json AS data WHERE false", nil
 	}
 	alias := s.alias("t")
-	jsonExpr := "'{}'::jsonb"
+	jsonExpr := "'{}'::json"
 	var laterals []string
 	// Only non-matching fragments can leave the concrete selection empty.
 	if len(s.expandFor(f.SelectionSet, typeName)) > 0 {

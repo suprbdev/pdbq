@@ -4,9 +4,9 @@ WITH __mut AS (
   VALUES ($1, $2)
   RETURNING "id", "name", "type_code"
 )
-SELECT jsonb_build_object('event', __row.data) AS data
+SELECT json_build_object('event', __row.data) AS data
 FROM (
-  SELECT jsonb_build_object('id', __t_1."id", 'name', __t_1."name", 'typeCode', CASE __t_1."type_code" WHEN 'conference' THEN 'CONFERENCE' WHEN 'hackathon' THEN 'HACKATHON' WHEN 'meetup' THEN 'MEETUP' END) AS data
+  SELECT json_build_object('id', __t_1."id", 'name', __t_1."name", 'typeCode', CASE __t_1."type_code" WHEN 'conference' THEN 'CONFERENCE' WHEN 'hackathon' THEN 'HACKATHON' WHEN 'meetup' THEN 'MEETUP' END) AS data
   FROM __mut AS __t_1
 ) AS __row
 -- args: ["PGConf","conference"]

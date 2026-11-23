@@ -4,9 +4,9 @@ WITH __mut AS (
   VALUES ($1, $2, $3)
   RETURNING "id", "email", "mood"
 )
-SELECT jsonb_build_object('user', __row.data, 'clientMutationId', $4::text) AS data
+SELECT json_build_object('user', __row.data, 'clientMutationId', $4::text) AS data
 FROM (
-  SELECT jsonb_build_object('nodeId', replace(encode(convert_to(jsonb_build_array('User'::text, __t_1."id")::text, 'UTF8'), 'base64'), E'\n', ''), 'id', __t_1."id", 'email', __t_1."email", 'mood', CASE __t_1."mood" WHEN 'happy' THEN 'HAPPY' WHEN 'ok' THEN 'OK' WHEN 'sad' THEN 'SAD' END) AS data
+  SELECT json_build_object('nodeId', replace(encode(convert_to(jsonb_build_array('User'::text, __t_1."id")::text, 'UTF8'), 'base64'), E'\n', ''), 'id', __t_1."id", 'email', __t_1."email", 'mood', CASE __t_1."mood" WHEN 'happy' THEN 'HAPPY' WHEN 'ok' THEN 'OK' WHEN 'sad' THEN 'SAD' END) AS data
   FROM __mut AS __t_1
 ) AS __row
 -- args: ["a@b.c","Ada","happy","cm-1"]
@@ -18,9 +18,9 @@ WITH __mut AS (
   WHERE "public"."users"."id" = $2
   RETURNING "id", "full_name"
 )
-SELECT jsonb_build_object('user', __row.data, 'clientMutationId', $3::text) AS data
+SELECT json_build_object('user', __row.data, 'clientMutationId', $3::text) AS data
 FROM (
-  SELECT jsonb_build_object('id', __t_1."id", 'fullName', __t_1."full_name") AS data
+  SELECT json_build_object('id', __t_1."id", 'fullName', __t_1."full_name") AS data
   FROM __mut AS __t_1
 ) AS __row
 -- args: ["Grace",1,"cm-2"]
@@ -31,9 +31,9 @@ WITH __mut AS (
   WHERE "public"."users"."id" = $1
   RETURNING "id"
 )
-SELECT jsonb_build_object('user', __row.data, 'clientMutationId', $2::text) AS data
+SELECT json_build_object('user', __row.data, 'clientMutationId', $2::text) AS data
 FROM (
-  SELECT jsonb_build_object('id', __t_1."id") AS data
+  SELECT json_build_object('id', __t_1."id") AS data
   FROM __mut AS __t_1
 ) AS __row
 -- args: [2,"cm-3"]

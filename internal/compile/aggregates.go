@@ -28,7 +28,7 @@ func (s *stmt) connectionAggregate(t *introspect.Table, conn, f *ast.Field, meta
 	if meta.Kind == schema.KindGroupedAggregates {
 		return s.groupedAggregates(t, f, alias, where)
 	}
-	obj, err := s.aggregatesJSON(f, alias, "NULL::jsonb")
+	obj, err := s.aggregatesJSON(f, alias, "NULL::json")
 	if err != nil {
 		return "", err
 	}
@@ -81,14 +81,14 @@ func (s *stmt) groupedAggregates(t *introspect.Table, f *ast.Field, alias, where
 			having = "\nHAVING " + cond
 		}
 	}
-	obj, err := s.aggregatesJSON(f, alias, "jsonb_build_array("+strings.Join(keys, ", ")+")")
+	obj, err := s.aggregatesJSON(f, alias, "json_build_array("+strings.Join(keys, ", ")+")")
 	if err != nil {
 		return "", err
 	}
 	inner := fmt.Sprintf("SELECT %s AS data, %s\nFROM %s AS %s%s\nGROUP BY %s%s\nORDER BY %s\nLIMIT %s",
 		obj, strings.Join(cols, ", "), s.sourceRef(t), alias, where,
 		strings.Join(exprs, ", "), having, strings.Join(inOrder, ", "), s.param(s.maxPageSize))
-	return fmt.Sprintf("(SELECT coalesce(jsonb_agg(%s.data ORDER BY %s), '[]'::jsonb) FROM (\n%s\n) AS %s)",
+	return fmt.Sprintf("(SELECT coalesce(json_agg(%s.data ORDER BY %s), '[]'::json) FROM (\n%s\n) AS %s)",
 		g, strings.Join(order, ", "), indent(inner), g), nil
 }
 
@@ -113,7 +113,7 @@ func (s *stmt) groupKeyText(expr string, c *introspect.Column) string {
 }
 
 // aggregatesJSON renders the selection of an aggregates object (the
-// <Type>Aggregates type) over the rows at alias as one jsonb object; keys is
+// <Type>Aggregates type) over the rows at alias as one json object; keys is
 // the expression of its keys field.
 func (s *stmt) aggregatesJSON(f *ast.Field, alias, keys string) (string, error) {
 	if f.Definition == nil {

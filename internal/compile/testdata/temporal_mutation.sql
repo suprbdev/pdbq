@@ -9,14 +9,14 @@ __vis_2 AS NOT MATERIALIZED (
   SELECT * FROM "public"."booking_notes"
   UNION ALL SELECT * FROM __mut
 )
-SELECT jsonb_build_object('bookingNote', __row.data) AS data
+SELECT json_build_object('bookingNote', __row.data) AS data
 FROM (
-  SELECT jsonb_build_object('id', __t_1."id", 'roomBookingsByRoomIdAndValidAt', __l_4.data) AS data
+  SELECT json_build_object('id', __t_1."id", 'roomBookingsByRoomIdAndValidAt', __l_4.data) AS data
   FROM __mut AS __t_1
   LEFT JOIN LATERAL (
-    SELECT jsonb_build_object('nodes', coalesce(jsonb_agg(__s_3.ndata ORDER BY __s_3.__rn ASC) FILTER (WHERE __s_3.__rn <= $8), '[]'::jsonb)) AS data
+    SELECT json_build_object('nodes', coalesce(json_agg(__s_3.ndata ORDER BY __s_3.__rn ASC) FILTER (WHERE __s_3.__rn <= $8), '[]'::json)) AS data
     FROM (
-      SELECT jsonb_build_object('guest', __t_2."guest") AS ndata, row_number() OVER (ORDER BY __t_2."room_id" ASC, __t_2."valid_at" ASC) AS __rn
+      SELECT json_build_object('guest', __t_2."guest") AS ndata, row_number() OVER (ORDER BY __t_2."room_id" ASC, __t_2."valid_at" ASC) AS __rn
       FROM "public"."room_bookings" AS __t_2
       WHERE __t_2."room_id" = __t_1."room_id" AND __t_2."valid_at" && __t_1."valid_at"
       ORDER BY __t_2."room_id" ASC, __t_2."valid_at" ASC
@@ -42,14 +42,14 @@ __vis_3 AS NOT MATERIALIZED (
   SELECT * FROM "public"."booking_notes"
   UNION ALL SELECT * FROM __c_1
 )
-SELECT jsonb_build_object('roomBooking', __row.data) AS data
+SELECT json_build_object('roomBooking', __row.data) AS data
 FROM (
-  SELECT jsonb_build_object('guest', __t_1."guest", 'bookingNotesByRoomIdAndValidAt', __l_4.data) AS data
+  SELECT json_build_object('guest', __t_1."guest", 'bookingNotesByRoomIdAndValidAt', __l_4.data) AS data
   FROM __mut AS __t_1
   LEFT JOIN LATERAL (
-    SELECT jsonb_build_object('nodes', coalesce(jsonb_agg(__s_3.ndata ORDER BY __s_3.__rn ASC) FILTER (WHERE __s_3.__rn <= $12), '[]'::jsonb)) AS data
+    SELECT json_build_object('nodes', coalesce(json_agg(__s_3.ndata ORDER BY __s_3.__rn ASC) FILTER (WHERE __s_3.__rn <= $12), '[]'::json)) AS data
     FROM (
-      SELECT jsonb_build_object('note', __t_2."note") AS ndata, row_number() OVER (ORDER BY __t_2."id" ASC) AS __rn
+      SELECT json_build_object('note', __t_2."note") AS ndata, row_number() OVER (ORDER BY __t_2."id" ASC) AS __rn
       FROM __vis_3 AS __t_2
       WHERE __t_2."room_id" = __t_1."room_id" AND __t_2."valid_at" && __t_1."valid_at"
       ORDER BY __t_2."id" ASC
@@ -67,9 +67,9 @@ WITH __mut AS (
   WHERE "public"."room_bookings"."room_id" = $2 AND "public"."room_bookings"."valid_at" = daterange($3::date, $4::date, $5::text)
   RETURNING "guest"
 )
-SELECT jsonb_build_object('roomBooking', __row.data) AS data
+SELECT json_build_object('roomBooking', __row.data) AS data
 FROM (
-  SELECT jsonb_build_object('guest', __t_1."guest") AS data
+  SELECT json_build_object('guest', __t_1."guest") AS data
   FROM __mut AS __t_1
 ) AS __row
 -- args: ["Grace",1,"2026-03-01","2026-03-05","[)"]
