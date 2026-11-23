@@ -38,7 +38,7 @@ func genCatalog(n int, hub bool) *introspect.Catalog {
 			PrimaryKey: &introspect.Constraint{Name: fmt.Sprintf("t%04d_pkey", i), Columns: []string{"id"}},
 		}
 		id := col("id", 1, "int4")
-		id.NotNull, id.Generated, id.GeneratedKind = true, true, introspect.GeneratedIdentity
+		id.NotNull, id.GeneratedKind = true, introspect.GeneratedIdentityAlways
 		t.Columns = append(t.Columns, id)
 		for c := 2; c <= 20; c++ {
 			cc := col(fmt.Sprintf("c%02d", c), c, types[rng.Intn(len(types))])

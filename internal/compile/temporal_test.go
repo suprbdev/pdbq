@@ -34,7 +34,7 @@ func temporalTables() []*introspect.Table {
 		},
 	}
 	id := col(1, "id", "int4")
-	id.Generated, id.GeneratedKind = true, introspect.GeneratedIdentity
+	id.GeneratedKind = introspect.GeneratedIdentityAlways
 	notes := &introspect.Table{
 		Schema: "public", Name: "booking_notes", Kind: introspect.RelTable, Privileges: all,
 		Columns: []*introspect.Column{

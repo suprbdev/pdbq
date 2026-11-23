@@ -270,7 +270,7 @@ func schemaCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := cache.Save(out, cat); err != nil {
+			if err := cache.Save(out, cat, cache.Writer{Product: "pdbq", Version: version}); err != nil {
 				return err
 			}
 			hash, _ := cat.Hash()

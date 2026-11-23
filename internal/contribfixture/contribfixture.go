@@ -42,7 +42,7 @@ func Documents() *introspect.Table {
 		return &introspect.Column{Name: name, Position: pos, PGType: typ, TypeSchema: schema}
 	}
 	id := col(1, "id", "int4", "pg_catalog")
-	id.NotNull, id.Generated, id.GeneratedKind = true, true, introspect.GeneratedIdentity
+	id.NotNull, id.GeneratedKind = true, introspect.GeneratedIdentityAlways
 	title := col(2, "title", "text", "pg_catalog")
 	title.NotNull = true
 	paths := col(8, "paths", "_ltree", ExtSchema)
@@ -104,7 +104,7 @@ func Embeddings() *introspect.Table {
 		return &introspect.Column{Name: name, Position: pos, PGType: typ, TypeSchema: schema}
 	}
 	id := col(1, "id", "int4", "pg_catalog")
-	id.NotNull, id.Generated, id.GeneratedKind = true, true, introspect.GeneratedIdentity
+	id.NotNull, id.GeneratedKind = true, introspect.GeneratedIdentityAlways
 	return &introspect.Table{
 		Schema: "public", Name: "embeddings", Kind: introspect.RelTable,
 		Privileges: introspect.Privileges{Select: true, Insert: true, Update: true, Delete: true},
@@ -135,7 +135,7 @@ func Locations() *introspect.Table {
 		return &introspect.Column{Name: name, Position: pos, PGType: typ, TypeSchema: schema, BaseTypeSchema: schema}
 	}
 	id := col(1, "id", "int4", "pg_catalog")
-	id.NotNull, id.Generated, id.GeneratedKind = true, true, introspect.GeneratedIdentity
+	id.NotNull, id.GeneratedKind = true, introspect.GeneratedIdentityAlways
 	earth := func(pos int, name string) *introspect.Column {
 		c := col(pos, name, "cube", ExtSchema)
 		c.Domain = ExtSchema + ".earth"

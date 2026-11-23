@@ -8,8 +8,11 @@ $ pdbq schema dump -o schema.cache        # at build/deploy time
 $ pdbq serve --schema.cache_path schema.cache   # at runtime
 ```
 
-The cache is gzipped JSON of the introspected catalog with a format version
-and a content hash; `serve` refuses mismatched versions and corrupted files.
+The cache is gzipped JSON of the introspected catalog with a format version,
+the program that wrote it (product, version and pdbcore version) and a
+content hash; `serve` refuses mismatched versions, naming the writer, and
+corrupted files. The hash covers the PostgreSQL major version but not the
+minor one, so a minor upgrade is not drift.
 Booting from cache never touches `pg_catalog`, so the runtime role only
 needs privileges on the actual data.
 

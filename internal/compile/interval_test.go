@@ -24,7 +24,7 @@ func intervalCatalog() *introspect.Catalog {
 		return &introspect.Column{Name: name, Position: pos, PGType: typ, TypeSchema: "pg_catalog", BaseTypeSchema: "pg_catalog"}
 	}
 	id := col(1, "id", "int4")
-	id.NotNull, id.Generated, id.GeneratedKind = true, true, introspect.GeneratedIdentity
+	id.NotNull, id.GeneratedKind = true, introspect.GeneratedIdentityAlways
 	spans := col(4, "spans", "_interval")
 	spans.IsArray = true
 	timing := col(5, "timing", "timing")

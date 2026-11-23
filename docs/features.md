@@ -110,7 +110,7 @@ Checklist of PostgreSQL and GraphQL features pdbq supports. Checked = implemente
 - [x] Payload types with the mutated row selectable (relations included, compiled against the DML CTE)
 - [x] PostGraphile payload fields: `query` on every payload, plus the row's forward relations and `<row>Edge(orderBy:)` (cursor = the row's nodeId) on single-row payloads, compiled into the mutation's statement — see [Mutations](mutations.md)
 - [x] Payload relations and `query` fields reading the mutated table see it as it stands after the statement (created and updated rows included, deleted rows excluded) via a visibility CTE, emitted only when the payload reads the table that way
-- [x] Generated/identity columns excluded from inputs; defaulted columns optional
+- [x] Generated and identity `ALWAYS` columns excluded from inputs; identity `BY DEFAULT`, serial and defaulted columns optional
 - [x] Privilege-gated generation (no INSERT grant → no create mutation)
 - [x] Not-found update/delete → GraphQL error, transaction rolled back
 - [x] Nested mutations via built-in plugin (postgraphile-plugin-nested-mutations shapes): `connectBy<Key>`/`connectByNodeId`, `create`, `updateBy<Key>`/`updateByNodeId`, `deleteBy<Key>`/`deleteByNodeId`, `disconnectBy<Key>`/`disconnectByNodeId` on forward and backward relations, on create and update mutations; multi-CTE single statement, bounded depth, forced transaction
