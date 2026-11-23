@@ -56,7 +56,7 @@ $ pdbq config example   # print the full annotated reference
 | `rls.enabled` | `true` | see [rls.md](rls.md) for the `rls.*` and `rls.auth.*` keys |
 | `transactions.mutations` | `true` | wrap each mutation in a tx |
 | `transactions.per_request` | `false` | one tx for the whole request instead of one per operation |
-| `transactions.isolation` | `read_committed` | or `repeatable_read`, `serializable` |
+| `transactions.isolation` | `read_committed` | or `repeatable_read`, `serializable`; `read_committed` uses the server's `default_transaction_isolation` (read committed unless changed): queries run in the pipeline's implicit transaction, mutations in a plain `BEGIN` |
 | `transactions.max_retries` | 0 | automatic retries on serialization failure/deadlock (40001/40P01) |
 | `watch.enabled` | `false` | dev only; refuses to combine with cache |
 | `watch.poll_interval` | `5s` | fallback polling when event triggers can't be installed |

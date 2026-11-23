@@ -171,6 +171,8 @@ type Executor struct {
 	Opts    Options
 
 	docs *docCache
+	// queryTx replaces pgexec.QueryTx in tests.
+	queryTx func(ctx context.Context, db pgexec.ConnAcquirer, opts pgexec.TxOptions, id pgexec.Identity, stmts ...pgexec.Stmt) error
 }
 
 // New builds an executor for built. Executors constructed without New run
@@ -325,42 +327,86 @@ func (e *Executor) executeOperation(ctx context.Context, op *Operation, res *Res
 		e.Opts.TxPerRequest ||
 		(op.Type == ast.Mutation && e.Opts.TxMutations) ||
 		(e.Opts.RLS && (op.Role != "" || len(op.Claims) > 0))
-
-	// run executes every root field into res and returns the raw error of the
-	// first failed field plus the first serialization failure, if any.
-	run := func(q pgexec.Querier) (first, serialization error) {
-		for _, f := range rootFields {
-			raw, err := e.executeField(ctx, q, op, f)
-			if err != nil {
-				res.Errors = append(res.Errors, e.gqlError(err, f))
-				res.Set(f.Alias, json.RawMessage("null"))
-				if first == nil {
-					first = err
-				}
-				if serialization == nil && pgexec.IsSerializationFailure(err) {
-					serialization = err
-				}
-				if op.Type == ast.Mutation {
-					break // abort remaining mutations; tx rolls back
-				}
-				continue
-			}
-			res.Set(f.Alias, raw)
-		}
-		return first, serialization
-	}
-
-	if !needTx {
-		_, _ = run(e.Pool) // errors are already in res
+	if needTx {
+		e.executeTx(ctx, op, rootFields, res)
 		return
 	}
-	// RunTx re-invokes fn on serialization failures/deadlocks (the failed
-	// attempt rolled back completely), so per-attempt state is reset inside
-	// fn. lastFnErr lets the caller tell "fn's own error came back" from
-	// "a later attempt failed before reaching fn".
-	var lastFnErr error
-	err := pgexec.RunTx(ctx, e.Pool, pgexec.TxOptions{
-		Isolation:  e.Opts.Isolation,
+	for _, f := range rootFields {
+		raw, err := e.executeField(ctx, e.Pool, op, f)
+		if err != nil {
+			res.Errors = append(res.Errors, e.gqlError(err, f))
+			res.Set(f.Alias, json.RawMessage("null"))
+			if op.Type == ast.Mutation {
+				break // abort remaining mutations
+			}
+			continue
+		}
+		res.Set(f.Alias, raw)
+	}
+}
+
+// errTxAborted is the error PostgreSQL reports for a statement sent after
+// an earlier statement of the same transaction failed. batchTx gives it to
+// the query fields that pgexec.QueryTx skipped after a failure, which is the
+// error they got when every field ran as its own round trip.
+var errTxAborted = &pgconn.PgError{
+	Severity: "ERROR",
+	Code:     "25P02",
+	Message:  "current transaction is aborted, commands ignored until end of transaction block",
+}
+
+// txField is one root field of a transactional operation.
+type txField struct {
+	field *ast.Field
+	// stmt is the compiled statement, or nil for a field resolved in memory
+	// (introspection) or one that failed to compile.
+	stmt *compile.Statement
+	raw  json.RawMessage
+	err  error
+	// scanned reports whether the current attempt read the statement's
+	// result.
+	scanned bool
+}
+
+// executeTx runs a transactional operation. Every root field is compiled
+// (or, for introspection, resolved) before anything is sent; a compile error
+// is that field's error, and a mutation stops at it.
+//
+// Queries, and mutations with at most one statement and no compile error,
+// run as one pgexec.QueryTx batch (see batchTx). A mutation with more
+// statements, or one that must roll back because a field failed to compile,
+// runs statement by statement through pgexec.RunTx (see interactiveTx): once
+// a mutation field fails, the fields after it must not run at all, and a
+// batch would already have sent them.
+func (e *Executor) executeTx(ctx context.Context, op *Operation, rootFields []*ast.Field, res *Result) {
+	mutation := op.Type == ast.Mutation
+	fields := make([]txField, 0, len(rootFields))
+	stmts := 0
+	for _, f := range rootFields {
+		tf := txField{field: f}
+		if isIntrospectionField(f.Name) {
+			tf.raw, tf.err = e.resolveIntrospection(op, f)
+		} else if tf.stmt, tf.err = e.compileField(ctx, op, f); tf.stmt != nil {
+			stmts++
+		}
+		fields = append(fields, tf)
+		if mutation && tf.err != nil {
+			e.interactiveTx(ctx, op, fields, res)
+			return
+		}
+	}
+	if mutation && stmts > 1 {
+		e.interactiveTx(ctx, op, fields, res)
+		return
+	}
+	e.batchTx(ctx, op, fields, stmts, res)
+}
+
+// txOptions are the transaction options of op; Isolation is mapped by
+// batchIsolation.
+func (e *Executor) txOptions(op *Operation) (pgexec.TxOptions, pgexec.Identity) {
+	return pgexec.TxOptions{
+		Isolation:  batchIsolation(e.Opts.Isolation),
 		MaxRetries: e.Opts.TxRetries,
 		RLS:        e.Opts.RLS,
 		Log:        e.Opts.Logger.With("operation", op.Name),
@@ -368,17 +414,130 @@ func (e *Executor) executeOperation(ctx context.Context, op *Operation, res *Res
 		Role:         op.Role,
 		Claims:       op.Claims,
 		ClaimsPrefix: e.Opts.ClaimsPrefix,
-	}, func(q pgexec.Querier) error {
+	}
+}
+
+// batchTx sends the identity and one statement per compiled field as a
+// single pgexec.QueryTx batch.
+//
+// A query runs in the pipeline's implicit transaction (no BEGIN/COMMIT unless
+// transactions.isolation is stricter than read committed). A field error
+// raised in Go is recorded and the batch goes on. Once a statement fails,
+// PostgreSQL skips the rest of the batch: the skipped fields get the 25P02
+// error, and the response the "commit unexpectedly resulted in rollback"
+// error, that they got when the transaction ran statement by statement
+// (except after a serialization failure, as before).
+//
+// A mutation holds COMMIT back until its result was read
+// (ScanBeforeCommit), so a Go-side field error such as "no row matched" or
+// a JWT mint failure rolls it back.
+//
+// A serialization failure or deadlock re-runs the whole batch up to
+// transactions.max_retries times, and the response holds only the last
+// attempt.
+func (e *Executor) batchTx(ctx context.Context, op *Operation, fields []txField, n int, res *Result) {
+	mutation := op.Type == ast.Mutation
+	var scanErr error
+	var scannedAny bool
+	stmts := make([]pgexec.Stmt, 0, n)
+	for i := range fields {
+		tf := &fields[i]
+		if tf.stmt == nil {
+			continue
+		}
+		stmts = append(stmts, pgexec.Stmt{SQL: tf.stmt.SQL, Args: tf.stmt.Args, Scan: func(row pgx.Row) error {
+			scannedAny, tf.scanned = true, true
+			var raw []byte
+			err := row.Scan(&raw)
+			tf.raw, tf.err = e.fieldResult(op, tf.field, tf.stmt, raw, err)
+			if tf.err != nil && (mutation || err != nil) {
+				scanErr = tf.err
+				return tf.err
+			}
+			return nil
+		}})
+	}
+
+	queryTx := e.queryTx
+	if queryTx == nil {
+		queryTx = pgexec.QueryTx
+	}
+	opts, id := e.txOptions(op)
+	maxRetries := opts.MaxRetries
+	opts.MaxRetries = 0
+	opts.ScanBeforeCommit = mutation
+	var err error
+	for attempt := 0; ; attempt++ {
+		scanErr, scannedAny = nil, false
+		for i := range fields {
+			if fields[i].stmt != nil {
+				fields[i].raw, fields[i].err, fields[i].scanned = nil, nil, false
+			}
+		}
+		err = queryTx(ctx, e.Pool, opts, id, stmts...)
+		if err == nil || attempt >= maxRetries || !pgexec.IsSerializationFailure(err) || ctx.Err() != nil {
+			break
+		}
+		opts.Log.Warn("retrying after serialization failure",
+			"attempt", attempt+1, "max_retries", maxRetries)
+	}
+
+	if err == nil || scanErr != nil || scannedAny {
+		for i := range fields {
+			tf := &fields[i]
+			if tf.stmt != nil && !tf.scanned {
+				tf.err = errTxAborted
+			}
+			if tf.err != nil {
+				res.Errors = append(res.Errors, e.gqlError(tf.err, tf.field))
+				res.Set(tf.field.Alias, json.RawMessage("null"))
+				if mutation {
+					break
+				}
+				continue
+			}
+			res.Set(tf.field.Alias, tf.raw)
+		}
+	}
+	switch {
+	case err == nil:
+	case scanErr != nil:
+		if !mutation && !pgexec.IsSerializationFailure(scanErr) {
+			res.Errors = append(res.Errors, e.gqlError(pgx.ErrTxCommitRollback, nil))
+		}
+	default:
+		res.Errors = append(res.Errors, e.gqlError(err, nil))
+	}
+}
+
+// interactiveTx runs a mutation's fields one statement at a time in a
+// pgexec.RunTx transaction. The first failing field stops the loop and
+// rolls the transaction back; the fields after it are left out of the
+// response.
+func (e *Executor) interactiveTx(ctx context.Context, op *Operation, fields []txField, res *Result) {
+	opts, id := e.txOptions(op)
+	// RunTx re-invokes fn on serialization failures/deadlocks (the failed
+	// attempt rolled back completely), so per-attempt state is reset inside
+	// fn. lastFnErr lets the caller tell "fn's own error came back" from
+	// "a later attempt failed before reaching fn".
+	var lastFnErr error
+	err := pgexec.RunTx(ctx, e.Pool, opts, id, func(q pgexec.Querier) error {
 		res.reset()
-		first, serialization := run(q)
-		switch {
-		case serialization != nil:
-			// Queries retry too: the raw PG error drives RunTx's retry.
-			lastFnErr = serialization
-		case first != nil && op.Type == ast.Mutation:
-			lastFnErr = first // no commit; rollback via RunTx
-		default:
-			lastFnErr = nil // queries commit even after a field error
+		lastFnErr = nil
+		for _, tf := range fields {
+			raw, err := tf.raw, tf.err
+			if tf.stmt != nil {
+				var b []byte
+				err = q.QueryRow(ctx, tf.stmt.SQL, tf.stmt.Args...).Scan(&b)
+				raw, err = e.fieldResult(op, tf.field, tf.stmt, b, err)
+			}
+			if err != nil {
+				res.Errors = append(res.Errors, e.gqlError(err, tf.field))
+				res.Set(tf.field.Alias, json.RawMessage("null"))
+				lastFnErr = err
+				break
+			}
+			res.Set(tf.field.Alias, raw)
 		}
 		return lastFnErr
 	})
@@ -393,11 +552,19 @@ func (e *Executor) executeOperation(ctx context.Context, op *Operation, res *Res
 	res.Errors = append(res.Errors, e.gqlError(err, nil))
 }
 
-func (e *Executor) executeField(ctx context.Context, q pgexec.Querier, op *Operation, f *ast.Field) (json.RawMessage, error) {
-	if isIntrospectionField(f.Name) {
-		return e.resolveIntrospection(op, f)
+// batchIsolation is the pgexec.QueryTx isolation for transactions.isolation:
+// read committed (the default) runs in the pipeline's implicit transaction
+// at the server's default_transaction_isolation, saving the BEGIN/COMMIT;
+// stricter levels need an explicit BEGIN ISOLATION LEVEL.
+func batchIsolation(iso pgx.TxIsoLevel) pgx.TxIsoLevel {
+	if iso == pgx.ReadCommitted {
+		return ""
 	}
-	stmt, err := e.Compile(ctx, &compile.Request{
+	return iso
+}
+
+func (e *Executor) compileField(ctx context.Context, op *Operation, f *ast.Field) (*compile.Statement, error) {
+	return e.Compile(ctx, &compile.Request{
 		Field:       f,
 		Fragments:   op.Document.Fragments,
 		Vars:        op.Vars,
@@ -405,11 +572,24 @@ func (e *Executor) executeField(ctx context.Context, q pgexec.Querier, op *Opera
 		MaxDepth:    e.Opts.MaxDepth,
 		MaxPageSize: e.Opts.MaxPageSize,
 	})
+}
+
+func (e *Executor) executeField(ctx context.Context, q pgexec.Querier, op *Operation, f *ast.Field) (json.RawMessage, error) {
+	if isIntrospectionField(f.Name) {
+		return e.resolveIntrospection(op, f)
+	}
+	stmt, err := e.compileField(ctx, op, f)
 	if err != nil {
 		return nil, err
 	}
 	var raw []byte
 	err = q.QueryRow(ctx, stmt.SQL, stmt.Args...).Scan(&raw)
+	return e.fieldResult(op, f, stmt, raw, err)
+}
+
+// fieldResult turns the outcome of scanning stmt's single data column (raw
+// and the Scan error) into the field's response value.
+func (e *Executor) fieldResult(op *Operation, f *ast.Field, stmt *compile.Statement, raw []byte, err error) (json.RawMessage, error) {
 	if errors.Is(err, pgx.ErrNoRows) {
 		if stmt.Mutation {
 			return nil, gqlerror.Errorf("no row matched %q", f.Name)
