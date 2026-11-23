@@ -137,6 +137,10 @@ type stmt struct {
 	// CTE holding rows inserted earlier in the same statement, which a
 	// plain table scan could not see within one snapshot).
 	overrides map[string]string
+	// overrideAliases lists, per override row source, the aliases it was
+	// read under, so a caller can tell whether the override was used and
+	// which of its columns the statement references.
+	overrideAliases map[string][]string
 	// deferred holds the first error raised from a helper with no error
 	// return (valueExpr and friends). Callers surface it via s.err().
 	deferred error
@@ -169,9 +173,14 @@ func (s *stmt) fail(err error) {
 // err returns the first deferred rendering error, if any.
 func (s *stmt) err() error { return s.deferred }
 
-// sourceRef resolves the SQL row source for a table, honouring overrides.
-func (s *stmt) sourceRef(t *introspect.Table) string {
+// sourceRef resolves the SQL row source for a table read under alias,
+// honouring overrides.
+func (s *stmt) sourceRef(t *introspect.Table, alias string) string {
 	if ov, ok := s.overrides[t.Schema+"."+t.Name]; ok {
+		if s.overrideAliases == nil {
+			s.overrideAliases = map[string][]string{}
+		}
+		s.overrideAliases[ov] = append(s.overrideAliases[ov], alias)
 		return ov
 	}
 	return tableRef(t)
@@ -321,7 +330,7 @@ func (s *stmt) rowByKey(meta *schema.FieldMeta, f *ast.Field) (string, error) {
 		conds = append(conds, cond)
 	}
 	return fmt.Sprintf("SELECT %s AS data\nFROM %s AS %s%s\nWHERE %s\nLIMIT 1",
-		jsonExpr, s.sourceRef(t), alias, joinLaterals(laterals), strings.Join(conds, " AND ")), nil
+		jsonExpr, s.sourceRef(t, alias), alias, joinLaterals(laterals), strings.Join(conds, " AND ")), nil
 }
 
 // keyConds builds `alias."col" = $n` for each key column, reading the
@@ -391,7 +400,7 @@ func (s *stmt) listInner(t *introspect.Table, f *ast.Field, extraCond, extraSele
 	}
 	// extraCond may reference the child alias via the %%ALIAS%% placeholder,
 	// since the alias is only allocated here.
-	q := fmt.Sprintf("SELECT %s\nFROM %s AS %s%s%s%s%s", sel, s.sourceRef(t), alias, joinLaterals(laterals), where, order, page)
+	q := fmt.Sprintf("SELECT %s\nFROM %s AS %s%s%s%s%s", sel, s.sourceRef(t, alias), alias, joinLaterals(laterals), where, order, page)
 	return strings.ReplaceAll(q, "%%ALIAS%%", alias), nil
 }
 
@@ -608,7 +617,7 @@ func (s *stmt) relationOrderSQL(term orderTerm, alias string) string {
 		expr = agg + "(" + expr + ")"
 	}
 	return fmt.Sprintf("(SELECT %s FROM %s AS %s WHERE %s)",
-		expr, s.sourceRef(rel.Table), sub, join)
+		expr, s.sourceRef(rel.Table, sub), sub, join)
 }
 
 func (s *stmt) orderClause(t *introspect.Table, f *ast.Field, alias string) string {

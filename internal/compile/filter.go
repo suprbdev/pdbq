@@ -282,7 +282,7 @@ func (s *stmt) relationExists(rel *schema.FilterRelation, v any, alias, quant st
 		prefix = "NOT EXISTS"
 	}
 	return fmt.Sprintf("%s (SELECT 1 FROM %s AS %s WHERE %s)",
-		prefix, s.sourceRef(rel.Table), sub, where), nil
+		prefix, s.sourceRef(rel.Table, sub), sub, where), nil
 }
 
 // computedCond compiles operator conditions over a computed column: the

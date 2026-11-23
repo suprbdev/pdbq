@@ -1,0 +1,36 @@
+mutation {
+  createPost(input: {authorId: 1, title: "New"}) {
+    post {
+      title
+      author { postsByAuthorId(filter: {title: {startsWith: "N"}}) { totalCount nodes { title } } }
+    }
+  }
+  createComment(input: {postId: 1, parentId: 3, body: "Reply"}) {
+    comment { body parent { body commentsByParentId { totalCount } } }
+  }
+  updatePostById(id: 1, patch: {title: "Renamed"}) {
+    post { id author { postsByAuthorId(orderBy: TITLE_ASC) { nodes { id title } } } }
+  }
+  updateUserByEmail(email: "a@b.c", patch: {email: "z@b.c"}) {
+    user { email postsByAuthorId { nodes { author { email } } } }
+  }
+  upsertUserByEmail(input: {email: "a@b.c", fullName: "Ada"}) {
+    user { email postsByAuthorId { nodes { author { fullName } } } }
+  }
+  deletePostById(id: 1) {
+    post { title author { postsByAuthorId { totalCount } } }
+  }
+  createPosts(input: [{authorId: 1, title: "A"}, {authorId: 1, title: "B"}]) {
+    posts { author { postsByAuthorId { totalCount } } }
+  }
+  updatePosts(filter: {authorId: {equalTo: 1}}, patch: {published: true}) {
+    posts { author { postsByAuthorId(filter: {title: {startsWith: "P"}}) { totalCount } } }
+  }
+  deletePosts(filter: {title: {startsWith: "Draft"}}) {
+    posts { author { postsByAuthorId { totalCount } } }
+    affectedCount
+  }
+  updateCommentById(id: 1, patch: {body: "Edited"}) {
+    comment { post { title } }
+  }
+}
