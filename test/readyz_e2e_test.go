@@ -32,7 +32,7 @@ func TestReadyzPingsDatabase(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer res.Body.Close()
+	defer res.Body.Close() //nolint:errcheck
 	body, _ := io.ReadAll(res.Body)
 	if res.StatusCode != 200 || string(body) != `{"status":"ok"}` {
 		t.Errorf("readyz = %d %s", res.StatusCode, body)
