@@ -9,7 +9,19 @@ pdbq plugins list                         registered plugins + hooks
 ```
 
 All commands accept `--config` plus the config-path flags
-(`--database.url`, ...).
+(`--database.url`, `--auth.mode`, `--roles.switch`, `--roles.anonymous`,
+`--database.statement_timeout`, ...).
+
+## Identity of commands without an HTTP request
+
+`pdbq query`, `pdbq schema dump|check|print` and `pdbq plugins list` run
+without an HTTP request, so they have no credentials to verify: they load the
+config, set `auth.mode: none` and `roles.switch: false` whatever the file
+says, and then validate it. They therefore run as the **connection role**,
+with no claims set, and work on a default config that has no JWT secret.
+Point `--database.url` at a role whose privileges fit what you run; row-level
+security policies for request roles do not apply. `pdbq serve` and `pdbq
+config validate` use the configuration as written.
 
 ## pdbq query
 
@@ -74,8 +86,8 @@ See [caching.md](caching.md) for the CI/CD patterns.
 ## Shell completions
 
 `pdbq completion bash|zsh|fish|powershell` prints a completion script for the
-given shell. Flag values with a fixed vocabulary (`--errors.detail`,
-`--log.level`) complete too.
+given shell. Flag values with a fixed vocabulary (`--auth.mode`,
+`--errors.detail`, `--log.level`) complete too.
 
 ```console
 # bash (requires bash-completion)
@@ -92,6 +104,11 @@ Run `pdbq completion <shell> --help` for per-shell install notes.
 
 ```console
 $ pdbq plugins list
-simple-names         priority=100  enabled  hooks: catalog, inflection
-nested-mutations     priority=200  enabled  hooks: schema, compile, request
+smart_comments       priority=50   enabled  hooks: catalog, inflection, schema
+simple_names         priority=100  enabled  hooks: catalog, inflection
+advanced_filters     priority=150  enabled  hooks: schema
+postgis              priority=160  enabled  hooks: schema
+contrib              priority=170  enabled  hooks: schema
+aggregates           priority=180  enabled  hooks: schema
+nested_mutations     priority=200  enabled  hooks: schema, compile, request
 ```

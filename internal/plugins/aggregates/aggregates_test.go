@@ -16,14 +16,18 @@ import (
 	"github.com/suprbdev/pdbq/internal/schema"
 )
 
-// build builds cat with advanced-filters, postgis and, when withPlugin is
+// build builds cat with advanced_filters, postgis and, when withPlugin is
 // set, the aggregates plugin configured by settings.
-func build(t *testing.T, cat *introspect.Catalog, withPlugin bool, disabled map[string]bool, settings map[string]any) *schema.Built {
+func build(t *testing.T, cat *introspect.Catalog, withPlugin bool, disabled map[string]bool, settings func(*aggregates.Settings)) *schema.Built {
 	t.Helper()
 	b := schema.New(cat, inflect.Default, schema.Options{FilterIndexedOnly: true, Functions: true})
-	plugins := []plugin.Plugin{advancedfilters.New(nil), postgisplugin.New(nil)}
+	plugins := []plugin.Plugin{advancedfilters.New(advancedfilters.DefaultSettings()), postgisplugin.New(postgisplugin.DefaultSettings())}
 	if withPlugin {
-		plugins = append(plugins, aggregates.New(settings, nil))
+		s := aggregates.DefaultSettings()
+		if settings != nil {
+			settings(&s)
+		}
+		plugins = append(plugins, aggregates.New(s, false))
 	}
 	if err := plugin.NewRegistry(plugins...).TransformSchema(context.Background(), disabled, b); err != nil {
 		t.Fatal(err)
@@ -35,13 +39,20 @@ func build(t *testing.T, cat *introspect.Catalog, withPlugin bool, disabled map[
 	return built
 }
 
-func enabled(t *testing.T, cat *introspect.Catalog, settings map[string]any) string {
+func enabled(t *testing.T, cat *introspect.Catalog, settings func(*aggregates.Settings)) string {
 	t.Helper()
-	s := map[string]any{"enabled": true}
-	for k, v := range settings {
-		s[k] = v
-	}
-	return build(t, cat, true, nil, s).SDL
+	return build(t, cat, true, nil, func(s *aggregates.Settings) {
+		s.Enabled = true
+		if settings != nil {
+			settings(s)
+		}
+	}).SDL
+}
+
+func enabledSettings() aggregates.Settings {
+	s := aggregates.DefaultSettings()
+	s.Enabled = true
+	return s
 }
 
 func requireSDL(t *testing.T, sdl string, want, reject []string) {
@@ -65,8 +76,8 @@ func TestDisabledByteIdentical(t *testing.T) {
 	base := build(t, testutil.FixtureCatalog(), false, nil, nil).SDL
 	for name, sdl := range map[string]string{
 		"default settings": build(t, testutil.FixtureCatalog(), true, nil, nil).SDL,
-		"enabled: false":   build(t, testutil.FixtureCatalog(), true, nil, map[string]any{"enabled": false}).SDL,
-		"plugins.disabled": build(t, testutil.FixtureCatalog(), true, map[string]bool{"aggregates": true}, map[string]any{"enabled": true}).SDL,
+		"enabled: false":   build(t, testutil.FixtureCatalog(), true, nil, func(s *aggregates.Settings) { s.Enabled = false }).SDL,
+		"plugins.disabled": build(t, testutil.FixtureCatalog(), true, map[string]bool{"aggregates": true}, func(s *aggregates.Settings) { s.Enabled = true }).SDL,
 	} {
 		if sdl != base {
 			t.Errorf("%s: schema differs from the plugin-less schema", name)
@@ -122,7 +133,7 @@ func TestTimestampDerivatives(t *testing.T) {
 		FilterIndexedOnly: true,
 		AllowColumns:      map[string][]string{"public.users": {"created_at"}},
 	})
-	if err := aggregates.New(map[string]any{"enabled": true}, nil).TransformSchema(context.Background(), b); err != nil {
+	if err := aggregates.New(enabledSettings(), false).TransformSchema(context.Background(), b); err != nil {
 		t.Fatal(err)
 	}
 	built, err := b.Build()
@@ -136,13 +147,11 @@ func TestTimestampDerivatives(t *testing.T) {
 }
 
 func TestSettings(t *testing.T) {
-	sdl := enabled(t, testutil.FixtureCatalog(), map[string]any{"grouped": false, "order": false, "filters": false, "spatial": false})
+	sdl := enabled(t, testutil.FixtureCatalog(), func(s *aggregates.Settings) { s.Grouped, s.Order, s.Filters, s.Spatial = false, false, false, false })
 	requireSDL(t, sdl, []string{"aggregates: PostAggregates"}, []string{
 		"groupedAggregates(", "PostGroupBy", "PostHavingInput", "POSTS_BY_AUTHOR_ID_COUNT_ASC",
 		"PostAggregatesFilter", "stExtent",
 	})
-	sdl = enabled(t, testutil.FixtureCatalog(), map[string]any{"grouped": "false"})
-	requireSDL(t, sdl, nil, []string{"groupedAggregates("})
 }
 
 // TestSmartTags covers per-table opt-in/out and per-column exclusion.
@@ -173,7 +182,7 @@ func TestSmartTags(t *testing.T) {
 
 // TestBindings checks the metadata the compiler reads.
 func TestBindings(t *testing.T) {
-	built := build(t, testutil.FixtureCatalog(), true, nil, map[string]any{"enabled": true, "scan_cost": 7})
+	built := build(t, testutil.FixtureCatalog(), true, nil, func(s *aggregates.Settings) { s.Enabled, s.ScanCost = true, 7 })
 	if m := built.Meta["PostConnection"]["aggregates"]; m == nil || m.Kind != schema.KindAggregates || m.ScanCost != 7 {
 		t.Errorf("aggregates meta: %+v", m)
 	}
@@ -215,7 +224,7 @@ func tagTable(cat *introspect.Catalog, table, comment string) *introspect.Catalo
 // when spatial columns read as typed geometry objects.
 func TestTypedGeometry(t *testing.T) {
 	b := schema.New(testutil.FixtureCatalog(), inflect.Default, schema.Options{FilterIndexedOnly: true})
-	reg := plugin.NewRegistry(postgisplugin.New(map[string]any{"typed_geometry": true}), aggregates.New(map[string]any{"enabled": true}, nil))
+	reg := plugin.NewRegistry(postgisplugin.New(postgisplugin.Settings{Filters: true, Derived: true, Ordering: true, Projection: true, TypedGeometry: true}), aggregates.New(enabledSettings(), false))
 	if err := reg.TransformSchema(context.Background(), nil, b); err != nil {
 		t.Fatal(err)
 	}
@@ -227,7 +236,7 @@ func TestTypedGeometry(t *testing.T) {
 }
 
 func TestUnionCollect(t *testing.T) {
-	built := build(t, testutil.FixtureCatalog(), true, nil, map[string]any{"enabled": true, "spatial_union_collect": true, "scan_cost": 3})
+	built := build(t, testutil.FixtureCatalog(), true, nil, func(s *aggregates.Settings) { s.Enabled, s.SpatialUnionCollect, s.ScanCost = true, true, 3 })
 	requireSDL(t, built.SDL, []string{"stUnion: PlaceStUnionAggregates", "stCollect: PlaceStCollectAggregates"}, nil)
 	if m := built.Meta["PlaceStUnionAggregates"]["location"]; m == nil || m.ScanCost != 30 {
 		t.Errorf("stUnion must carry 10x the scan cost: %+v", m)
@@ -248,7 +257,7 @@ func TestColumnPolicies(t *testing.T) {
 		&introspect.Column{Name: "fee", Position: 21, PGType: "money", TypeSchema: "pg_catalog"},
 		&introspect.Column{Name: "created_at_truncated_to_day", Position: 22, PGType: "text", TypeSchema: "pg_catalog"},
 	)
-	reg := plugin.NewRegistry(smartcomments.New(), advancedfilters.New(nil), aggregates.New(map[string]any{"enabled": true}, nil))
+	reg := plugin.NewRegistry(smartcomments.New(), advancedfilters.New(advancedfilters.DefaultSettings()), aggregates.New(enabledSettings(), false))
 	if err := reg.TransformCatalog(context.Background(), nil, cat); err != nil {
 		t.Fatal(err)
 	}
@@ -293,7 +302,7 @@ func TestRelationsOptIn(t *testing.T) {
 		}
 	}
 	b := schema.New(cat, inflect.Default, schema.Options{FilterIndexedOnly: true})
-	if err := aggregates.New(map[string]any{"enabled": true}, map[string]any{"relations_opt_in": true}).TransformSchema(context.Background(), b); err != nil {
+	if err := aggregates.New(enabledSettings(), true).TransformSchema(context.Background(), b); err != nil {
 		t.Fatal(err)
 	}
 	built, err := b.Build()

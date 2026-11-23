@@ -87,7 +87,7 @@ func renderTags(tags smarttags.Tags) string {
 // column hidden from read.
 func (p *Plugin) hideKeys(t *introspect.Table) {
 	if pk := t.PrimaryKey; pk != nil && omit.HiddenKey(t, pk.Columns) {
-		p.note("smart-comments: primary key includes an omitted column; no nodeId, by-key lookups or keyset cursors for the table",
+		p.note("smart_comments: primary key includes an omitted column; no nodeId, by-key lookups or keyset cursors for the table",
 			"table", tableKey(t.Schema, t.Name), "constraint", pk.Name)
 		keepIndexed(t, pk)
 		t.PrimaryKey = nil
@@ -95,7 +95,7 @@ func (p *Plugin) hideKeys(t *introspect.Table) {
 	uniques := t.Uniques[:0]
 	for _, u := range t.Uniques {
 		if omit.HiddenKey(t, u.Columns) {
-			p.note("smart-comments: unique constraint includes an omitted column; no by-key lookups or mutations for it",
+			p.note("smart_comments: unique constraint includes an omitted column; no by-key lookups or mutations for it",
 				"table", tableKey(t.Schema, t.Name), "constraint", u.Name)
 			keepIndexed(t, u)
 			continue
@@ -124,7 +124,7 @@ func (p *Plugin) hideRowTypedColumns(t *introspect.Table, removed map[string]boo
 		if !removed[tableKey(c.TypeSchema, strings.TrimPrefix(c.PGType, "_"))] || omit.Everything(c.Comment) {
 			continue
 		}
-		p.note("smart-comments: column typed as an omitted table's row type is omitted",
+		p.note("smart_comments: column typed as an omitted table's row type is omitted",
 			"table", tableKey(t.Schema, t.Name), "column", c.Name)
 		c.Comment = strings.TrimRight("@omit\n"+c.Comment, "\n")
 	}
@@ -139,7 +139,7 @@ func (p *Plugin) dropFunctions(c *introspect.Catalog, removed map[string]bool) {
 	kept := c.Functions[:0]
 	for _, f := range c.Functions {
 		if ref := rowTypeOf(f, removed); ref != "" {
-			p.note("smart-comments: function not exposed: it returns or takes rows of an omitted table",
+			p.note("smart_comments: function not exposed: it returns or takes rows of an omitted table",
 				"function", f.Schema+"."+f.Name, "table", ref)
 			continue
 		}

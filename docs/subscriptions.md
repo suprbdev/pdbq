@@ -121,21 +121,22 @@ message every interval. On shutdown every socket is closed with `1001`.
 ## Authentication
 
 The identity is fixed for the life of the connection by `connection_init`,
-following [`rls.auth.mode`](rls.md):
+following [`auth.mode`](rls.md):
 
 - **`jwt`**: browsers cannot set headers on a WebSocket, so the token comes
   from the `connection_init` payload, as PostGraphile reads it:
   `{"authorization": "Bearer <jwt>"}`. The key is matched without regard
   to case, and `{"headers": {"Authorization": "Bearer <jwt>"}}` also
   works. Without either, the upgrade request's `Authorization` header is
-  used, and without that the connection is anonymous. An invalid or expired
-  token, or a role outside `rls.allowed_roles`, closes the socket with
+  used, and without that the connection is anonymous (refused with `4403`
+  when `roles.anonymous` is empty). An invalid or expired
+  token, or a role outside `roles.allowed`, closes the socket with
   `4403`. When the token's `exp` passes, the socket is closed with `4403`,
   so the client reconnects with a fresh token.
 - **`headers`**: claims come only from the upgrade request's claim headers,
   as set by the trusted gateway. The `connection_init` payload cannot add
   claim headers.
-- **`none`**: every connection is anonymous.
+- **`none`**: every connection runs as `roles.anonymous` (or as the connection role with `roles.switch: false`).
 
 ## Topics
 

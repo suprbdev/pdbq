@@ -15,7 +15,7 @@ import (
 )
 
 // TestNestedMutationOperations covers every nested operation of the
-// nested-mutations plugin against a live database, in both directions, by
+// nested_mutations plugin against a live database, in both directions, by
 // key and by nodeId, on create and update mutations: the payload must show
 // the rows as they stand after the statement, and a failing operation must
 // roll the whole mutation back.
@@ -228,7 +228,7 @@ func TestNestedMutationOperations(t *testing.T) {
 	t.Run("a failed guard aborts the statement without a transaction", func(t *testing.T) {
 		plain := testServer(t, func(cfg *config.Config) {
 			cfg.TX.Mutations = false
-			cfg.Plugins.Settings["nested-mutations"] = map[string]any{"force_transactions": false}
+			cfg.Plugins.Settings.NestedMutations.ForceTransactions = false
 		})
 		res := post(t, plain.URL, fmt.Sprintf(`mutation { updateNoTeamById(id: %d, patch: {name: "no-tx", noMembersByTeamId: {create: [{name: "no-tx-kid"}], deleteById: [{id: 999999}]}}) { noTeam { id } } }`, red), nil)
 		expectError(t, res, "noMembersByTeamId.deleteById[0] matched 0 rows")
@@ -270,9 +270,9 @@ func TestNestedMutationOperationsRLS(t *testing.T) {
 		`ALTER TABLE nr_items ENABLE ROW LEVEL SECURITY`,
 		`CREATE POLICY nr_lists_all ON nr_lists USING (true) WITH CHECK (true)`,
 		`CREATE POLICY nr_items_read ON nr_items FOR SELECT USING (true)`,
-		`CREATE POLICY nr_items_ins ON nr_items FOR INSERT WITH CHECK (owner_id = NULLIF(current_setting('pdbq.claims.user_id', true), '')::integer)`,
-		`CREATE POLICY nr_items_upd ON nr_items FOR UPDATE USING (owner_id = NULLIF(current_setting('pdbq.claims.user_id', true), '')::integer)`,
-		`CREATE POLICY nr_items_del ON nr_items FOR DELETE USING (owner_id = NULLIF(current_setting('pdbq.claims.user_id', true), '')::integer)`,
+		`CREATE POLICY nr_items_ins ON nr_items FOR INSERT WITH CHECK (owner_id = NULLIF(current_setting('jwt.claims.user_id', true), '')::integer)`,
+		`CREATE POLICY nr_items_upd ON nr_items FOR UPDATE USING (owner_id = NULLIF(current_setting('jwt.claims.user_id', true), '')::integer)`,
+		`CREATE POLICY nr_items_del ON nr_items FOR DELETE USING (owner_id = NULLIF(current_setting('jwt.claims.user_id', true), '')::integer)`,
 		`INSERT INTO nr_lists (owner_id, name) VALUES (2, 'shared')`,
 		`INSERT INTO nr_items (list_id, owner_id, body, secret) SELECT id, 1, 'ada', 's' FROM nr_lists`,
 		`INSERT INTO nr_items (list_id, owner_id, body) SELECT id, 2, 'grace' FROM nr_lists`,
@@ -286,9 +286,7 @@ func TestNestedMutationOperationsRLS(t *testing.T) {
 		t.Fatal(err)
 	}
 	hs := testServer(t, func(cfg *config.Config) {
-		cfg.RLS.Enabled = true
-		cfg.RLS.Auth.Mode = "headers"
-		cfg.RLS.RoleClaim = "role"
+		headersIdentity(cfg)
 	})
 	asGrace := func(t *testing.T, query string) gqlResp {
 		t.Helper()

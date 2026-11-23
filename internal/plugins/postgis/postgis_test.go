@@ -14,7 +14,7 @@ import (
 
 // buildWith applies the plugin (configured by settings) to the fixture catalog
 // and returns the builder for inspection.
-func buildWith(t *testing.T, settings map[string]any, mutate func(*introspect.Catalog)) *schema.Builder {
+func buildWith(t *testing.T, settings func(*Settings), mutate func(*introspect.Catalog)) *schema.Builder {
 	t.Helper()
 	cat := testutil.FixtureCatalog()
 	if mutate != nil {
@@ -24,7 +24,11 @@ func buildWith(t *testing.T, settings map[string]any, mutate func(*introspect.Ca
 		Logger:    slog.Default(),
 		Functions: true,
 	})
-	if err := New(settings).TransformSchema(context.Background(), b); err != nil {
+	s := DefaultSettings()
+	if settings != nil {
+		settings(&s)
+	}
+	if err := New(s).TransformSchema(context.Background(), b); err != nil {
 		t.Fatalf("TransformSchema: %v", err)
 	}
 	return b
@@ -264,26 +268,27 @@ func TestDistanceOrdering(t *testing.T) {
 func TestSettingsToggleEachHalf(t *testing.T) {
 	tests := []struct {
 		setting string
+		off     func(*Settings)
 		check   func(*testing.T, *schema.Builder)
 	}{
-		{"filters", func(t *testing.T, b *schema.Builder) {
+		{"filters", func(s *Settings) { s.Filters = false }, func(t *testing.T, b *schema.Builder) {
 			if _, ok := b.Inputs["GeometryFilterOps"]; ok {
 				t.Error("GeometryFilterOps generated with filters disabled")
 			}
 		}},
-		{"derived", func(t *testing.T, b *schema.Builder) {
+		{"derived", func(s *Settings) { s.Derived = false }, func(t *testing.T, b *schema.Builder) {
 			if b.Objects["Place"].Field("locationArea") != nil {
 				t.Error("derived accessors generated with derived disabled")
 			}
 		}},
-		{"ordering", func(t *testing.T, b *schema.Builder) {
+		{"ordering", func(s *Settings) { s.Ordering = false }, func(t *testing.T, b *schema.Builder) {
 			for _, v := range b.Enums["PlacesOrderBy"].Values {
 				if v.Distance {
 					t.Error("distance ordering generated with ordering disabled")
 				}
 			}
 		}},
-		{"projection", func(t *testing.T, b *schema.Builder) {
+		{"projection", func(s *Settings) { s.Projection = false }, func(t *testing.T, b *schema.Builder) {
 			for _, a := range b.Objects["Place"].Field("location").Args {
 				if a.Name == "transform" {
 					t.Error("projection args generated with projection disabled")
@@ -293,7 +298,7 @@ func TestSettingsToggleEachHalf(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.setting, func(t *testing.T) {
-			tc.check(t, buildWith(t, map[string]any{tc.setting: false}, nil))
+			tc.check(t, buildWith(t, tc.off, nil))
 		})
 	}
 }
@@ -329,7 +334,7 @@ func TestInertWithoutSpatialColumns(t *testing.T) {
 	spatialFree := testutil.FixtureCatalog()
 	spatialFree.Tables = removeTable(spatialFree.Tables, "places")
 	withPlugin := schema.New(spatialFree, inflect.Next(inflect.Default), schema.Options{Logger: slog.Default(), Functions: true})
-	if err := New(nil).TransformSchema(context.Background(), withPlugin); err != nil {
+	if err := New(DefaultSettings()).TransformSchema(context.Background(), withPlugin); err != nil {
 		t.Fatal(err)
 	}
 	after, err := withPlugin.Build()
@@ -355,7 +360,7 @@ func removeTable(tables []*introspect.Table, name string) []*introspect.Table {
 }
 
 func TestTypedGeometryFieldTypes(t *testing.T) {
-	b := buildWith(t, map[string]any{"typed_geometry": true}, func(cat *introspect.Catalog) {
+	b := buildWith(t, func(s *Settings) { s.TypedGeometry = true }, func(cat *introspect.Catalog) {
 		places := cat.Table("public", "places")
 		places.Columns = append(places.Columns,
 			&introspect.Column{Name: "route", Position: 6, PGType: "geometry", TypeSchema: "public",
@@ -411,7 +416,7 @@ func TestTypedGeometryFieldTypes(t *testing.T) {
 
 // typed_geometry defaults to off and must leave the schema untouched.
 func TestTypedGeometryOffIsIdentical(t *testing.T) {
-	sdl := func(settings map[string]any) string {
+	sdl := func(settings func(*Settings)) string {
 		t.Helper()
 		built, err := buildWith(t, settings, nil).Build()
 		if err != nil {
@@ -420,7 +425,7 @@ func TestTypedGeometryOffIsIdentical(t *testing.T) {
 		return built.SDL
 	}
 	def := sdl(nil)
-	if off := sdl(map[string]any{"typed_geometry": false}); off != def {
+	if off := sdl(func(s *Settings) { s.TypedGeometry = false }); off != def {
 		t.Error("typed_geometry: false changed the schema")
 	}
 	if strings.Contains(def, "GeometryInterface") || strings.Contains(def, "GeometryPoint") {
@@ -433,7 +438,7 @@ func TestTypedGeometryOffIsIdentical(t *testing.T) {
 func TestTypedGeometryNameClash(t *testing.T) {
 	b := buildWith(t, nil, nil)
 	b.Objects["GeometryPoint"] = &schema.Object{Name: "GeometryPoint"}
-	if err := New(map[string]any{"typed_geometry": true}).TransformSchema(context.Background(), b); err != nil {
+	if err := New(Settings{Filters: true, Derived: true, Ordering: true, Projection: true, TypedGeometry: true}).TransformSchema(context.Background(), b); err != nil {
 		t.Fatal(err)
 	}
 	if got := b.Objects["Place"].Field("location").Type; got != "GeoJSON" {
@@ -477,7 +482,7 @@ func TestDistanceFields(t *testing.T) {
 		t.Error("near: missing for the distance field")
 	}
 
-	noOrder := buildWith(t, map[string]any{"ordering": false}, nil)
+	noOrder := buildWith(t, func(s *Settings) { s.Ordering = false }, nil)
 	if noOrder.Objects["Place"].Field("locationDistance") != nil || hasArg(noOrder.Query.Field("allPlaces"), "near") {
 		t.Error("ordering: false kept the distance field or near:")
 	}
@@ -526,7 +531,7 @@ func geometryOutputs(cat *introspect.Catalog) {
 }
 
 func TestTypedGeometryFunctionOutputs(t *testing.T) {
-	b := buildWith(t, map[string]any{"typed_geometry": true}, geometryOutputs)
+	b := buildWith(t, func(s *Settings) { s.TypedGeometry = true }, geometryOutputs)
 	for _, tc := range []struct {
 		obj, field, want string
 	}{
@@ -555,7 +560,7 @@ func TestTypedGeometryFunctionOutputs(t *testing.T) {
 // Without typed_geometry the new outputs stay on the GeoJSON scalar and the
 // schema is the same as with the setting explicitly off.
 func TestTypedGeometryFunctionOutputsOffIsIdentical(t *testing.T) {
-	sdl := func(settings map[string]any) string {
+	sdl := func(settings func(*Settings)) string {
 		t.Helper()
 		built, err := buildWith(t, settings, geometryOutputs).Build()
 		if err != nil {
@@ -564,7 +569,7 @@ func TestTypedGeometryFunctionOutputsOffIsIdentical(t *testing.T) {
 		return built.SDL
 	}
 	def := sdl(nil)
-	if off := sdl(map[string]any{"typed_geometry": false}); off != def {
+	if off := sdl(func(s *Settings) { s.TypedGeometry = false }); off != def {
 		t.Error("typed_geometry: false changed the schema")
 	}
 	for _, want := range []string{"  centroid: GeoJSON\n", "makePoint: GeoJSON", "gridPoints: [GeoJSON!]!", "  spot: GeoJSON\n"} {

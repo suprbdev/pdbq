@@ -36,11 +36,11 @@ func testServer(t *testing.T, mutate func(*config.Config)) *httptest.Server {
 	}
 	cfg := config.DefaultConfig()
 	cfg.Database.URL = url
-	cfg.RLS.Enabled = false
+	noIdentity(&cfg)
 	cfg.Errors.Detail = "dev"
 	// The e2e suite asserts against the verbose default naming; a dedicated
-	// subtest covers simple-names separately.
-	cfg.Plugins.Disabled = []string{"simple-names"}
+	// subtest covers simple_names separately.
+	cfg.Plugins.Disabled = []string{"simple_names"}
 	if mutate != nil {
 		mutate(&cfg)
 	}
@@ -58,7 +58,7 @@ func testServer(t *testing.T, mutate func(*config.Config)) *httptest.Server {
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv, err := server.New(cfg.Server, server.NewAuthenticator(cfg.RLS, nil), app.Executor(built), built.SDL, nil)
+	srv, err := server.New(cfg.Server, mustAuthenticator(t, cfg), app.Executor(built), built.SDL, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -571,7 +571,7 @@ func TestQueries(t *testing.T) {
 	})
 }
 
-// TestAdvancedFilters covers the advanced-filters built-in: relation filters
+// TestAdvancedFilters covers the advanced_filters built-in: relation filters
 // (EXISTS subqueries) and computed-column filtering/ordering.
 func TestAdvancedFilters(t *testing.T) {
 	hs := testServer(t, nil)
@@ -992,11 +992,11 @@ func TestAdvancedFilters(t *testing.T) {
 
 	t.Run("disabled plugin removes the surface", func(t *testing.T) {
 		hs := testServer(t, func(cfg *config.Config) {
-			cfg.Plugins.Disabled = append(cfg.Plugins.Disabled, "advanced-filters")
+			cfg.Plugins.Disabled = append(cfg.Plugins.Disabled, "advanced_filters")
 		})
 		res := post(t, hs.URL, `{allUsers(filter: {postCount: {greaterThanOrEqualTo: "2"}}) { nodes { email } }}`, nil)
 		if len(res.Errors) == 0 {
-			t.Error("postCount filter should be rejected when advanced-filters is disabled")
+			t.Error("postCount filter should be rejected when advanced_filters is disabled")
 		}
 	})
 }
@@ -1248,7 +1248,7 @@ func TestMutationsAndRollback(t *testing.T) {
 	}
 
 	// Nested mutation writing a PostGIS column: geometry values flow through
-	// the nested-mutations CTE builder, not the core compiler, so they need
+	// the nested_mutations CTE builder, not the core compiler, so they need
 	// the constructor wrapper there too.
 	res = post(t, hs.URL, fmt.Sprintf(`mutation {
 		createUser(input: {
@@ -1360,17 +1360,15 @@ func TestSerializationRetry(t *testing.T) {
 	}
 }
 
-// TestJWTMint covers rls.auth.jwt_type: a function returning the configured
+// TestJWTMint covers auth.mint_type: a function returning the configured
 // composite yields a signed HS256 token, and the token round-trips through
 // the verifier into RLS claims.
 func TestJWTMint(t *testing.T) {
 	const secret = "e2e-mint-secret"
 	hs := testServer(t, func(c *config.Config) {
-		c.RLS.Enabled = true
-		c.RLS.Auth.Mode = "jwt"
-		c.RLS.Auth.JWTSecret = secret
-		c.RLS.Auth.JWTType = "public.jwt"
-		c.RLS.Auth.JWTIssuer = "pdbq-e2e"
+		jwtIdentity(c, secret)
+		c.Auth.MintType = "public.jwt"
+		c.Auth.JWT.Issuer = "pdbq-e2e"
 	})
 
 	// Anonymous request mints a token via the authenticate() function.
@@ -1528,9 +1526,7 @@ func TestSDLAndHealth(t *testing.T) {
 // published posts; app_user with user_id=1 also sees their own draft.
 func TestRLSMatrix(t *testing.T) {
 	hs := testServer(t, func(cfg *config.Config) {
-		cfg.RLS.Enabled = true
-		cfg.RLS.Auth.Mode = "headers"
-		cfg.RLS.RoleClaim = "role"
+		headersIdentity(cfg)
 	})
 
 	countPosts := func(headers map[string]string) int {
@@ -1634,7 +1630,7 @@ func normalizeStr(t *testing.T, s string) string {
 	return normalize(t, json.RawMessage(s))
 }
 
-// TestSmartComments exercises the smart-comments path end to end: COMMENT ON
+// TestSmartComments exercises the smart_comments path end to end: COMMENT ON
 // statements applied to the live database change the generated schema
 // (rename, relation field name, mutation gating, description stripping).
 func TestSmartComments(t *testing.T) {
@@ -1829,7 +1825,7 @@ func TestTypedGeometry(t *testing.T) {
 	}
 
 	hs := testServer(t, func(c *config.Config) {
-		c.Plugins.Settings = map[string]map[string]any{"postgis": {"typed_geometry": true}}
+		c.Plugins.Settings.Postgis.TypedGeometry = true
 	})
 
 	t.Run("typmod-fixed point and unconstrained geography", func(t *testing.T) {

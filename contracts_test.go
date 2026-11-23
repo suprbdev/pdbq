@@ -41,7 +41,7 @@ func contractCatalog(t *testing.T) *introspect.Catalog {
 func contractApp(t *testing.T) *pdbq.App {
 	t.Helper()
 	cfg := pdbq.DefaultConfig()
-	cfg.Plugins.Disabled = []string{"simple-names"}
+	cfg.Plugins.Disabled = []string{"simple_names"}
 	cfg.Contracts = []pdbq.ContractConfig{{Name: "internal", Path: "/"}, {Name: "public"}, {Name: "partner", Default: "exclude"}}
 	return pdbq.New(cfg, pdbq.WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))))
 }
@@ -104,7 +104,7 @@ func TestContractSchemas(t *testing.T) {
 func TestContractFullSchemaUnchanged(t *testing.T) {
 	ctx := context.Background()
 	plain := pdbq.DefaultConfig()
-	plain.Plugins.Disabled = []string{"simple-names"}
+	plain.Plugins.Disabled = []string{"simple_names"}
 	want, err := pdbq.New(plain).BuildSchema(ctx, contractCatalog(t))
 	if err != nil {
 		t.Fatal(err)

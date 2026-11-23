@@ -11,7 +11,6 @@ import (
 	"github.com/suprbdev/pdbcore/introspect"
 	"github.com/suprbdev/pdbcore/postgis"
 	"github.com/suprbdev/pdbcore/testutil"
-	"github.com/suprbdev/pdbq/internal/config"
 	"github.com/suprbdev/pdbq/internal/inflect"
 	"github.com/suprbdev/pdbq/internal/plugins/advancedfilters"
 	"github.com/suprbdev/pdbq/internal/plugins/aggregates"
@@ -33,16 +32,30 @@ func costWith(t *testing.T, cat *introspect.Catalog, query string, rawVars map[s
 	return costFor(t, cat, nil, query, rawVars)
 }
 
+func defaultPostgis() *postgisplugin.Settings {
+	s := postgisplugin.DefaultSettings()
+	return &s
+}
+
+func typedPostgis() *postgisplugin.Settings {
+	s := postgisplugin.DefaultSettings()
+	s.TypedGeometry = true
+	return &s
+}
+
+// defaultMaxCost mirrors config.DefaultConfig().Server.MaxCost.
+const defaultMaxCost = 10000
+
 // costFor is costWith with the postgis plugin applied first when
 // postgisSettings is non-nil.
-func costFor(t *testing.T, cat *introspect.Catalog, postgisSettings map[string]any, query string, rawVars map[string]any) int {
+func costFor(t *testing.T, cat *introspect.Catalog, postgisSettings *postgisplugin.Settings, query string, rawVars map[string]any) int {
 	t.Helper()
 	b := schema.New(cat, inflect.Default, schema.Options{
 		FilterIndexedOnly: true,
 		Functions:         true,
 	})
 	if postgisSettings != nil {
-		if err := postgisplugin.New(postgisSettings).TransformSchema(context.Background(), b); err != nil {
+		if err := postgisplugin.New(*postgisSettings).TransformSchema(context.Background(), b); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -185,10 +198,16 @@ func TestCostTypedGeometryLists(t *testing.T) {
 		exterior { points { longitude latitude } }
 		interiors { points { longitude latitude } }
 	} } } } }`
-	got := costFor(t, testutil.FixtureCatalog(), map[string]any{"typed_geometry": true}, query, nil)
-	if limit := config.DefaultConfig().Server.MaxCost; got > limit {
+	got := costFor(t, testutil.FixtureCatalog(), typedPostgis(), query, nil)
+	if limit := defaultMaxCost; got > limit {
 		t.Errorf("typed polygon page costs %d, over the default max_cost %d", got, limit)
 	}
+}
+
+func enabledAggregates() aggregates.Settings {
+	s := aggregates.DefaultSettings()
+	s.Enabled = true
+	return s
 }
 
 // aggregateCost is cost against the fixture schema with the aggregates
@@ -196,10 +215,10 @@ func TestCostTypedGeometryLists(t *testing.T) {
 func aggregateCost(t *testing.T, query string) int {
 	t.Helper()
 	b := schema.New(testutil.FixtureCatalog(), inflect.Default, schema.Options{FilterIndexedOnly: true})
-	if err := advancedfilters.New(nil).TransformSchema(context.Background(), b); err != nil {
+	if err := advancedfilters.New(advancedfilters.DefaultSettings()).TransformSchema(context.Background(), b); err != nil {
 		t.Fatal(err)
 	}
-	if err := aggregates.New(map[string]any{"enabled": true}, nil).TransformSchema(context.Background(), b); err != nil {
+	if err := aggregates.New(enabledAggregates(), false).TransformSchema(context.Background(), b); err != nil {
 		t.Fatal(err)
 	}
 	built, err := b.Build()
@@ -247,8 +266,8 @@ func TestCostAggregates(t *testing.T) {
 // TestCostScoreFields pins score fields at the cost of a column: one per
 // row, multiplied by the page like any scalar, whatever the reference.
 func TestCostScoreFields(t *testing.T) {
-	cols := costFor(t, testutil.FixtureCatalog(), map[string]any{}, `{ allPlaces(first: 20) { nodes { id name } } }`, nil)
-	scores := costFor(t, testutil.FixtureCatalog(), map[string]any{},
+	cols := costFor(t, testutil.FixtureCatalog(), defaultPostgis(), `{ allPlaces(first: 20) { nodes { id name } } }`, nil)
+	scores := costFor(t, testutil.FixtureCatalog(), defaultPostgis(),
 		`{ allPlaces(first: 20, near: {geometry: "POINT(0 0)"}) { nodes { locationDistance(useSpheroid: true) areaDistance } } }`, nil)
 	if cols != scores {
 		t.Errorf("score fields cost %d, columns %d", scores, cols)
@@ -271,7 +290,7 @@ func TestCostRasterFields(t *testing.T) {
 		PrimaryKey: &introspect.Constraint{Name: "tiles_pkey", Columns: []string{"id"}},
 	})
 	page := func(sel string) int {
-		return costFor(t, cat, map[string]any{}, `{ allTiles(first: 20) { nodes { `+sel+` } } }`, nil)
+		return costFor(t, cat, defaultPostgis(), `{ allTiles(first: 20) { nodes { `+sel+` } } }`, nil)
 	}
 	base := page("id")
 	for sel, perRow := range map[string]int{

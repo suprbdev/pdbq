@@ -88,7 +88,7 @@ func TestSpatialPrecisionAndBuffer(t *testing.T) {
 // geometry object.
 func TestTypedGeometryPrecision(t *testing.T) {
 	hs := testServer(t, func(c *config.Config) {
-		c.Plugins.Settings = map[string]map[string]any{"postgis": {"typed_geometry": true}}
+		c.Plugins.Settings.Postgis.TypedGeometry = true
 	})
 	res := post(t, hs.URL, `{allPlaces(condition: {id: 1}) { nodes { location(precision: 1) { x y } } }}`, nil)
 	requireNoErrors(t, res)

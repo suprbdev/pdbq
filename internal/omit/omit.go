@@ -1,7 +1,7 @@
 // Package omit is the single decision point for the omit smart comment
 // (and its @behavior aliases): given the comment of a table, column,
 // constraint or function, it reports which generated surface the object is
-// hidden from. The schema builder, the smart-comments plugin and every
+// hidden from. The schema builder, the smart_comments plugin and every
 // plugin adding surface consult it instead of parsing tags themselves, so
 // one rule set covers the whole API.
 //

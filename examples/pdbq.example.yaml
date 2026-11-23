@@ -10,8 +10,8 @@ database:
   max_conns: 10
   # Timeout for establishing a connection.
   connect_timeout: "10s"
-  # Per-statement timeout applied to every request (0 disables).
-  statement_timeout: "30s"
+  # Per-statement timeout applied to every request (0 disables). Keep it below the HTTP request timeout so a slow statement fails with SQLSTATE 57014 (a timeout error the client can act on) before the request is cut off.
+  statement_timeout: "25s"
 
 server:
   # Listen address for the HTTP server.
@@ -125,40 +125,55 @@ filters:
   # Per-table extra filterable columns, keyed by schema.table, overriding indexed_only.
   allow_columns: {}
 
-rls:
-  # Run each request as a switched role with claims exposed via set_config (SET LOCAL). Disabling uses the privileged connection directly and logs a loud warning.
-  enabled: true
-  # Role assumed for authenticated requests without a role claim.
-  default_role: ""
-  # Role assumed for unauthenticated requests.
-  anonymous_role: "anonymous"
-  # JWT claim (or claim header in headers mode: app_role is <header_prefix>App-Role) carrying the database role.
-  role_claim: "role"
-  # Roles a request may assume via the role claim. Empty allows any role (subject to database grants); default_role and anonymous_role are always allowed.
-  allowed_roles: []
-  # set_config namespace for request claims, e.g. pdbq.claims.
-  claims_prefix: "pdbq.claims"
-  auth:
-    # Claim source: 'jwt', 'headers' (behind a trusted gateway), or 'none'.
-    mode: "jwt"
-    # HMAC secret for HS256/384/512 verification (jwt mode; ignored when jwks_url is set).
-    jwt_secret: ""
-    # JWKS endpoint for asymmetric JWT verification (RS256/384/512, ES256/384/512). Takes precedence over jwt_secret.
+auth:
+  # Credential source: 'jwt' (verify a bearer JWT), 'headers' (claims set by a trusted gateway) or 'none' (no credentials: every request is anonymous).
+  mode: "jwt"
+  # JWT verification (jwt mode) and the key minting signs with.
+  jwt:
+    # HMAC secret verifying HS256/384/512 tokens (ignored for verification when jwks_url is set) and signing minted tokens.
+    secret: ""
+    # File holding the HMAC secret (trailing newlines are stripped), instead of secret.
+    secret_file: ""
+    # JWKS endpoint for asymmetric JWT verification (RS256/384/512, ES256/384/512). Takes precedence over secret.
     jwks_url: ""
     # How long fetched JWKS keys are cached; an unknown kid triggers an early refresh (key rotation) at most once a minute. After the TTL, keys refresh in the background and stay in use for up to one more TTL while the endpoint fails; failed fetches back off from 1s to 1m.
     jwks_cache_ttl: "1h0m0s"
     # Expected iss claim; empty skips the check.
-    jwt_issuer: ""
+    issuer: ""
     # Expected aud claim; empty skips the check.
-    jwt_audience: ""
-    # Header prefix mapped to claims in headers mode, e.g. X-Pdbq-Claim-. The rest of the name maps to one claim (User-Id is user_id); requests with a claim header containing an underscore or other punctuation, repeated, or folding onto another claim header are rejected. The gateway must strip every client-supplied header with this prefix, in any letter case.
-    header_prefix: "X-Pdbq-Claim-"
-    # Claim names (e.g. user_id) accepted from claim headers in headers mode; role_claim is always accepted. Requests carrying any other claim header are rejected. Empty accepts any claim.
-    header_claims: []
-    # CIDR blocks (or single IPs) allowed to supply claim headers in headers mode. Requests from other peers that carry claim headers are rejected. Empty trusts every peer and logs a startup warning.
+    audience: ""
+    # Clock skew tolerated when checking exp, nbf and iat.
+    leeway: "0s"
+    # Path of the claim carrying the database role: dot-separated keys with optional array indexes and double-quoted keys, e.g. role, app_metadata.role, realm_access.roles[0] or "https://example.com/role". A missing claim falls back to roles.default; a claim that is not a non-empty string is rejected.
+    role_claim_path: "role"
+  # Gateway claim headers (headers mode).
+  headers:
+    # Header prefix mapped to claims, e.g. X-Pdbq-Claim-. The rest of the name maps to one claim (User-Id is user_id); requests with a claim header containing an underscore or other punctuation, repeated, or folding onto another claim header are rejected. The gateway must strip every client-supplied header with this prefix, in any letter case.
+    prefix: "X-Pdbq-Claim-"
+    # Claim names (e.g. user_id) accepted from claim headers; role_claim is always accepted. Requests carrying any other claim header are rejected. Empty accepts any claim.
+    claims: []
+    # Claim carrying the database role (role is sent as <prefix>Role). A missing claim falls back to roles.default.
+    role_claim: "role"
+    # CIDR blocks (or single IPs) allowed to send claim headers; required in headers mode. Requests from other peers that carry claim headers are rejected.
     trusted_proxies: []
-    # Schema-qualified composite type (e.g. public.jwt) minted into a signed JWT: any function returning it yields an HS256 token string built from the composite's fields (an exp field becomes the token expiry). Requires jwt_secret; jwt_issuer/jwt_audience are embedded when set. Empty disables minting.
-    jwt_type: ""
+  # Schema-qualified composite type (e.g. public.jwt) minted into a signed JWT: any function returning it yields an HS256 token string built from the composite's fields (an exp field becomes the token expiry). Requires jwt.secret or jwt.secret_file; jwt.issuer/jwt.audience are embedded when set. Empty disables minting.
+  mint_type: ""
+
+roles:
+  # Run each request as its resolved role (SET LOCAL ROLE). Disabling runs every request as the connection role, with credentials still verified and claims still set; it logs a loud warning.
+  switch: true
+  # Role of requests without credentials (every request in auth mode none). Empty refuses requests without credentials with 401 (auth modes jwt and headers).
+  anonymous: ""
+  # Role of authenticated requests without a role claim; empty falls back to anonymous, and a request that resolves to no role is refused.
+  default: ""
+  # Roles a request may assume via its role claim. Empty allows any role (subject to database grants); default and anonymous are always allowed.
+  allowed: []
+
+claims:
+  # Namespace of the per-claim settings: claim user_id is current_setting('jwt.claims.user_id', true) with the default (PostGraphile's). Empty sets no per-claim settings.
+  prefix: "jwt.claims"
+  # Setting that receives every claim as one JSON object ('{}' without credentials), e.g. request.jwt.claims (PostgREST's: current_setting('request.jwt.claims', true)::json->>'sub'). Empty sets none.
+  json_setting: ""
 
 transactions:
   # Wrap every mutation in a transaction.
@@ -187,8 +202,62 @@ errors:
 plugins:
   # Plugin names to disable.
   disabled: []
-  # Per-plugin configuration, keyed by plugin name.
-  settings: {}
+  # Per-plugin settings, one section per plugin.
+  settings:
+    # advanced_filters plugin: relation filters, relational ordering and computed-column filtering and ordering.
+    advanced_filters:
+      # Relation filters (forward, reverse some/none/every and the <rel>Exists/<rel>Exist variants).
+      relations: true
+      # Filtering and ordering by computed columns (single row-argument stable functions; needs schema.functions). Computed filters are not index-backed, so they bypass filters.indexed_only.
+      computed: true
+      # One-level relational orderBy values (REL__COLUMN_ASC/_DESC); off as well when relations is off.
+      relation_order: true
+      # Only foreign keys tagged @filterable (alias @sortable) get relation filters and orderings.
+      relations_opt_in: false
+      # Only computed-column functions tagged @filterable (alias @sortable) get filter and orderBy surface.
+      computed_opt_in: false
+    # postgis plugin: spatial filters, accessors, projection arguments and distance ordering.
+    postgis:
+      # GeometryFilterOps on spatial columns and RasterFilterOps on raster columns.
+      filters: true
+      # Derived accessors (<field>Area, <field>Centroid, ...) and the raster accessors, pixel value and statistics.
+      derived: true
+      # Distance ordering (<COLUMN>_DISTANCE_ASC/_DESC), the <field>Distance fields and the near: argument.
+      ordering: true
+      # The transform:, simplify:, precision: and buffer: projection arguments of spatial column fields.
+      projection: true
+      # Type spatial column fields as @graphile/postgis-style geometry objects instead of the GeoJSON scalar.
+      typed_geometry: false
+    # contrib plugin: full-text, pg_trgm, hstore, ltree, range, inet, pgvector, cube and earthdistance surfaces.
+    contrib:
+      # Vocabulary operators, StringTrgmFilterOps, the unaccent, fuzzystrmatch and intarray inputs, the distance-threshold inputs, the value filters (<field>Nlevel, <field>Value, <field>Icount) and the <field>Rank fields (and so rank ordering).
+      filters: true
+      # Rank, similarity, Levenshtein, nlevel, icount, value, vector, cube and earth distance orderBy values, the similarity and distance fields and the similarTo:, nearVector:, nearPoint: and hstoreKey: arguments.
+      ordering: true
+    # aggregates plugin: connection, grouped, relational-order and relational-filter aggregates (opt-in).
+    aggregates:
+      # Aggregates for every table; otherwise only for tables tagged @aggregates.
+      enabled: false
+      # groupedAggregates, <Type>GroupBy and <Type>HavingInput.
+      grouped: true
+      # <REL>_COUNT_* and <REL>_<AGGREGATE>_<COLUMN>_* orderBy values.
+      order: true
+      # The aggregates field of to-many relation filters.
+      filters: true
+      # The stExtent and stCentroid spatial aggregates.
+      spatial: true
+      # The stUnion and stCollect spatial aggregates, whose results grow with the row set.
+      spatial_union_collect: false
+      # Cost-estimate surcharge per aggregate field, aggregate orderBy value and relation-aggregate comparison.
+      scan_cost: 10
+    # nested_mutations plugin: nested connect/create/update/delete/disconnect inputs on create and update mutations.
+    nested_mutations:
+      # Run an operation using nested fields in a transaction even when transactions.mutations is off, so the nested writes are atomic.
+      force_transactions: true
+      # Maximum nesting depth of nested mutation inputs per root field.
+      max_depth: 3
+      # Maximum nested operations (each list item counting once) per root field.
+      max_operations: 50
 
 log:
   # Log level: debug, info, warn, error.
@@ -204,5 +273,5 @@ metrics:
   # Separate listen address for the metrics endpoint, e.g. :9090, keeping it off the public listener; empty serves it on the main server address.
   addr: ""
 
-# Schema contracts: named GraphQL schemas for different audiences, each a subset of the full schema selected by @contract / @behavior ±contract:<name> smart comments and served at <path>/graphql. Entries are {name, default: include|exclude, path (default /<name>)}, or bare names. When set, only the contracts are served (give one path: / to serve it at /graphql). Requires the smart-comments plugin.
+# Schema contracts: named GraphQL schemas for different audiences, each a subset of the full schema selected by @contract / @behavior ±contract:<name> smart comments and served at <path>/graphql. Entries are {name, default: include|exclude, path (default /<name>)}, or bare names. When set, only the contracts are served (give one path: / to serve it at /graphql). Requires the smart_comments plugin.
 contracts: []

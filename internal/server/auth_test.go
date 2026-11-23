@@ -11,9 +11,13 @@ import (
 )
 
 func TestReservedRoleClaimRejected(t *testing.T) {
-	rls := config.DefaultConfig().RLS
-	rls.Auth.Mode = "headers"
-	authn := NewAuthenticator(rls, nil)
+	a := config.DefaultConfig().Auth
+	a.Mode = "headers"
+	a.Headers.TrustedProxies = []string{"192.0.2.0/24"}
+	authn, err := NewAuthenticator(a, config.DefaultConfig().Roles, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	s, err := New(config.Server{MaxBodyBytes: 1 << 20}, authn, nil, "type Query { ok: Boolean }", slog.Default())
 	if err != nil {
 		t.Fatal(err)

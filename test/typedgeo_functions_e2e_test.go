@@ -75,7 +75,7 @@ func TestTypedGeometryFunctions(t *testing.T) {
 			c.Server.ExposeSchema = true
 			c.Filters.IndexedOnly = false
 			if typed {
-				c.Plugins.Settings = map[string]map[string]any{"postgis": {"typed_geometry": true}}
+				c.Plugins.Settings.Postgis.TypedGeometry = true
 			}
 		}).URL
 	}

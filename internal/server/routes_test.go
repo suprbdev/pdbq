@@ -12,12 +12,14 @@ import (
 )
 
 func testAuth() *Authenticator {
-	return NewAuthenticator(config.RLS{
-		Enabled:       true,
-		AnonymousRole: "anonymous",
-		RoleClaim:     "role",
-		Auth:          config.Auth{Mode: "jwt", JWTSecret: "test-secret"},
-	}, nil)
+	a, r := config.DefaultConfig().Auth, config.DefaultConfig().Roles
+	a.JWT.Secret = "test-secret"
+	r.Anonymous, r.Switch = "anonymous", false
+	authn, err := NewAuthenticator(a, r, nil)
+	if err != nil {
+		panic(err)
+	}
+	return authn
 }
 
 func testServer(cfg config.Server) *Server {

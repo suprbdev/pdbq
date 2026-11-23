@@ -46,7 +46,7 @@ func compileRoot(t *testing.T, reg *plugin.Registry, built *schema.Built, query 
 }
 
 func TestNestedCreateParent(t *testing.T) {
-	reg, built := setupWith(t, plugin.NewRegistry(nestedmutations.New(nil)))
+	reg, built := setupWith(t, plugin.NewRegistry(nestedmutations.New(nestedmutations.DefaultSettings())))
 	stmt := compileRoot(t, reg, built, `mutation {
 		createPost(input: {title: "Hi", author: {create: {email: "x@y.z"}}}) {
 			post { id title }
@@ -70,7 +70,7 @@ func TestNestedCreateParent(t *testing.T) {
 }
 
 func TestNestedConnectAndChildren(t *testing.T) {
-	reg := plugin.NewRegistry(nestedmutations.New(nil))
+	reg := plugin.NewRegistry(nestedmutations.New(nestedmutations.DefaultSettings()))
 	reg, built := setupWith(t, reg)
 	stmt := compileRoot(t, reg, built, `mutation {
 		createUser(input: {
@@ -113,7 +113,7 @@ func TestConnectInputPerReferencedKey(t *testing.T) {
 			RefSchema: "public", RefTable: "users", RefColumns: []string{"email"},
 		}},
 	})
-	reg := plugin.NewRegistry(nestedmutations.New(nil))
+	reg := plugin.NewRegistry(nestedmutations.New(nestedmutations.DefaultSettings()))
 	b := schema.New(cat, inflect.Default, schema.Options{FilterIndexedOnly: true})
 	if err := reg.TransformSchema(context.Background(), nil, b); err != nil {
 		t.Fatal(err)
@@ -147,7 +147,7 @@ func TestConnectInputPerReferencedKey(t *testing.T) {
 }
 
 func TestNestedCreateMapsEnumLabels(t *testing.T) {
-	reg, built := setupWith(t, plugin.NewRegistry(nestedmutations.New(nil)))
+	reg, built := setupWith(t, plugin.NewRegistry(nestedmutations.New(nestedmutations.DefaultSettings())))
 
 	// Forward nested create: enum on the parent row.
 	stmt := compileRoot(t, reg, built, `mutation {
@@ -191,7 +191,7 @@ func assertEnumArg(t *testing.T, stmt *compile.Statement) {
 }
 
 func TestPlainCreateStillUsesBaseCompiler(t *testing.T) {
-	reg := plugin.NewRegistry(nestedmutations.New(nil))
+	reg := plugin.NewRegistry(nestedmutations.New(nestedmutations.DefaultSettings()))
 	reg, built := setupWith(t, reg)
 	stmt := compileRoot(t, reg, built, `mutation {
 		createPost(input: {title: "Hi", authorId: 1}) {
@@ -232,7 +232,7 @@ func TestNestedForwardRelationNameCollidesWithColumn(t *testing.T) {
 			RefSchema: "public", RefTable: "users", RefColumns: []string{"email"},
 		}},
 	})
-	reg := plugin.NewRegistry(nestedmutations.New(nil))
+	reg := plugin.NewRegistry(nestedmutations.New(nestedmutations.DefaultSettings()))
 	b := schema.New(cat, inflect.Default, schema.Options{FilterIndexedOnly: true})
 	if err := reg.TransformSchema(context.Background(), nil, b); err != nil {
 		t.Fatal(err)
@@ -253,7 +253,7 @@ func TestNestedForwardRelationNameCollidesWithColumn(t *testing.T) {
 }
 
 func TestPayloadReadsVisibilityCTEs(t *testing.T) {
-	reg, built := setupWith(t, plugin.NewRegistry(nestedmutations.New(nil)))
+	reg, built := setupWith(t, plugin.NewRegistry(nestedmutations.New(nestedmutations.DefaultSettings())))
 	query := `mutation {
 		createUser(input: {
 			email: "a@b.c",
@@ -291,7 +291,7 @@ func TestPayloadReadsVisibilityCTEs(t *testing.T) {
 }
 
 func TestConnectGetsNoVisibilityCTE(t *testing.T) {
-	reg, built := setupWith(t, plugin.NewRegistry(nestedmutations.New(nil)))
+	reg, built := setupWith(t, plugin.NewRegistry(nestedmutations.New(nestedmutations.DefaultSettings())))
 	sql := compileRoot(t, reg, built, `mutation {
 		createPost(input: {title: "Hi", author: {connectById: {id: 7}}}) {
 			post { author { email } }

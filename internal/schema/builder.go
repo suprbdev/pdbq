@@ -62,7 +62,7 @@ type Options struct {
 	// the partitioned parent.
 	ExposePartitions bool
 	// JWTType is the "schema.type" composite that functions return to have a
-	// JWT minted (rls.auth.jwt_type). Root functions returning it keep a
+	// JWT minted (auth.mint_type). Root functions returning it keep a
 	// String result instead of the composite's object type.
 	JWTType string
 	// DomainScalars declares a custom scalar per domain over a built-in
@@ -181,10 +181,10 @@ type Built struct {
 	// InputColumns maps input type name -> field name -> column name.
 	InputColumns map[string]map[string]string
 	// FilterRelations maps filter input type name -> field name -> relation
-	// binding (advanced-filters plugin; empty otherwise).
+	// binding (advanced_filters plugin; empty otherwise).
 	FilterRelations map[string]map[string]*FilterRelation
 	// FilterComputed maps filter input type name -> field name -> the
-	// computed-column function backing it (advanced-filters plugin).
+	// computed-column function backing it (advanced_filters plugin).
 	FilterComputed map[string]map[string]*introspect.Function
 	// FilterContrib maps filter input type name -> field name -> the
 	// contrib value of a column the field compares (contrib plugin).
@@ -209,7 +209,7 @@ type OrderSpec struct {
 	Desc   bool
 	// Computed orders by a row-type function instead of Column.
 	Computed *introspect.Function
-	// Relation orders by a related table's column (advanced-filters); Column
+	// Relation orders by a related table's column (advanced_filters); Column
 	// stays empty for these.
 	Relation *OrderRelation
 	// Distance orders by spatial distance from the field's near: geometry
@@ -788,8 +788,8 @@ func (b *Builder) addRootField(obj *Object, f *Field) {
 
 // costMultiplier reads the @costMultiplier smart comment off a database
 // COMMENT, returning 0 when absent or malformed. It is parsed straight from
-// the catalog (like advanced-filters does) so the cost override works with the
-// smart-comments plugin disabled. Values below 1 are ignored: a zero or
+// the catalog (like advanced_filters does) so the cost override works with the
+// smart_comments plugin disabled. Values below 1 are ignored: a zero or
 // negative multiplier would let a subtree escape the cost limit entirely.
 func costMultiplier(comment string) int {
 	tags, _ := smarttags.Parse(comment)
@@ -1039,7 +1039,7 @@ func (b *Builder) addCondition(t *introspect.Table) string {
 
 // FilterableColumns exposes the filterable/orderable column set (indexed-only
 // policy plus config overrides) for SchemaHook plugins adding filter or order
-// surface over another table's columns (e.g. advanced-filters relational
+// surface over another table's columns (e.g. advanced_filters relational
 // ordering).
 func (b *Builder) FilterableColumns(t *introspect.Table) []*introspect.Column {
 	return b.filterableColumns(t)
@@ -1055,14 +1055,14 @@ func (b *Builder) GraphQLTypeFor(c *introspect.Column) string {
 // GraphQLInputTypeFor returns the GraphQL input type a column takes in
 // mutation inputs and key arguments (without the non-null marker), e.g. a
 // composite's input type or a range's bound input — exported for SchemaHook
-// plugins adding column-valued input fields (e.g. nested-mutations keys).
+// plugins adding column-valued input fields (e.g. nested_mutations keys).
 func (b *Builder) GraphQLInputTypeFor(c *introspect.Column) string {
 	return b.gqlInputTypeForColumn(c)
 }
 
 // FilterOpsInputFor returns (creating if needed) the operator input type for
 // a column-shaped value — exported for SchemaHook plugins adding filterable
-// fields (e.g. advanced-filters computed columns).
+// fields (e.g. advanced_filters computed columns).
 func (b *Builder) FilterOpsInputFor(c *introspect.Column) string {
 	if ci := b.ContribColumn(c); ci.Owned() && ci.OpsInput != "" {
 		return b.contribOpInput(ci)
@@ -1899,7 +1899,7 @@ func (b *Builder) unexposedRowArg(f *introspect.Function) string {
 // column, bound like a composite input (the argument is populated from it
 // with jsonb_populate_record, absent fields NULL). Generated and identity
 // columns are included: the argument is a value handed to the function,
-// not a write to t. The smart-comments plugin removes columns hidden from
+// not a write to t. The smart_comments plugin removes columns hidden from
 // reads.
 func (b *Builder) rowInput(t *introspect.Table) string {
 	key := tableKey(t.Schema, t.Name)

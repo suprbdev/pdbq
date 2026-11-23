@@ -71,9 +71,9 @@ func contractsServerWith(t *testing.T, watch bool, configure func(*config.Config
 	}
 	cfg := config.DefaultConfig()
 	cfg.Database.URL = url
-	cfg.RLS.Enabled = false
+	noIdentity(&cfg)
 	cfg.Errors.Detail = "dev"
-	cfg.Plugins.Disabled = []string{"simple-names"}
+	cfg.Plugins.Disabled = []string{"simple_names"}
 	cfg.Schema.Schemas = []string{contractsSchema}
 	cfg.Filters.IndexedOnly = false
 	cfg.Server.ExposeSchema = true
@@ -275,9 +275,8 @@ func TestContractsKeepRLS(t *testing.T) {
 	}
 	cfg := config.DefaultConfig()
 	cfg.Database.URL = url
-	cfg.Plugins.Disabled = []string{"simple-names"}
-	cfg.RLS.Auth.Mode = "headers"
-	cfg.RLS.RoleClaim = "role"
+	cfg.Plugins.Disabled = []string{"simple_names"}
+	headersIdentity(&cfg)
 	cfg.Contracts = []config.Contract{{Name: "public"}}
 	if err := cfg.Validate(); err != nil {
 		t.Fatal(err)

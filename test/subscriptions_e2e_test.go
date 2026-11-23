@@ -35,12 +35,10 @@ func subsServer(t *testing.T) *subsFixture {
 	}
 	cfg := config.DefaultConfig()
 	cfg.Database.URL = url
-	cfg.RLS.Enabled = true
-	cfg.RLS.Auth.Mode = "jwt"
-	cfg.RLS.Auth.JWTSecret = subsSecret
-	cfg.RLS.AllowedRoles = []string{"anonymous", "app_user"}
+	jwtIdentity(&cfg, subsSecret)
+	cfg.Roles.Allowed = []string{"anonymous", "app_user"}
 	cfg.Errors.Detail = "dev"
-	cfg.Plugins.Disabled = []string{"simple-names"}
+	cfg.Plugins.Disabled = []string{"simple_names"}
 	cfg.Server.Subscriptions = true
 	cfg.Server.SubscriptionsKeepalive = 0
 	if err := cfg.Validate(); err != nil {
@@ -57,7 +55,7 @@ func subsServer(t *testing.T) *subsFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv, err := server.New(cfg.Server, server.NewAuthenticator(cfg.RLS, nil), app.Executor(built), built.SDL, nil)
+	srv, err := server.New(cfg.Server, mustAuthenticator(t, cfg), app.Executor(built), built.SDL, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -312,8 +310,8 @@ func TestSubscriptionsReconnect(t *testing.T) {
 	}
 	cfg := config.DefaultConfig()
 	cfg.Database.URL = url
-	cfg.RLS.Enabled = false
-	cfg.Plugins.Disabled = []string{"simple-names"}
+	noIdentity(&cfg)
+	cfg.Plugins.Disabled = []string{"simple_names"}
 	cfg.Server.Subscriptions = true
 	app := pdbq.New(cfg)
 	t.Cleanup(app.Close)

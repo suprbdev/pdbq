@@ -20,7 +20,7 @@ import (
 // server.max_headline_document characters of its document.
 func TestHeadlineDocumentBound(t *testing.T) {
 	b := schema.New(contribfixture.Catalog(), inflect.Default, schema.Options{FilterIndexedOnly: true, MaxHeadlineDocument: 500})
-	if err := contribplugin.New(nil).TransformSchema(context.Background(), b); err != nil {
+	if err := contribplugin.New(contribplugin.DefaultSettings()).TransformSchema(context.Background(), b); err != nil {
 		t.Fatal(err)
 	}
 	built, err := b.Build()

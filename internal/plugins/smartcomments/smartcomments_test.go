@@ -21,7 +21,7 @@ import (
 )
 
 // build runs the full pipeline (catalog hooks -> inflection -> schema hooks)
-// over a fixture catalog mutated by prep, with the smart-comments plugin plus
+// over a fixture catalog mutated by prep, with the smart_comments plugin plus
 // any extras registered.
 func build(t *testing.T, prep func(*introspect.Catalog), extra ...plugin.Plugin) *schema.Built {
 	t.Helper()
@@ -98,10 +98,10 @@ func TestOmitTableReadAndMany(t *testing.T) {
 func TestOmitTableFilterAndOrder(t *testing.T) {
 	built := build(t, func(c *introspect.Catalog) {
 		c.Table("public", "posts").Comment = "@omit filter,order"
-	}, advancedfilters.New(nil))
+	}, advancedfilters.New(advancedfilters.DefaultSettings()))
 	sdl := built.SDL
 	rejectSDL(t, sdl, "PostFilter", "PostsOrderBy")
-	// advanced-filters must not resurrect relation filters into a deleted input.
+	// advanced_filters must not resurrect relation filters into a deleted input.
 	rejectSDL(t, sdl, "PostToManyFilter")
 	wantSDL(t, sdl, "UserFilter")
 }
@@ -230,7 +230,7 @@ func TestViewKeysAndRelations(t *testing.T) {
 func TestFieldNameOnForeignKey(t *testing.T) {
 	built := build(t, func(c *introspect.Catalog) {
 		c.Table("public", "posts").ForeignKeys[0].Comment = "@fieldName writer\n@foreignFieldName authored"
-	}, advancedfilters.New(nil))
+	}, advancedfilters.New(advancedfilters.DefaultSettings()))
 	sdl := built.SDL
 	wantSDL(t, sdl, "writer: User", "authored(", "writer: UserFilter", "authored: PostToManyFilter")
 	rejectSDL(t, sdl, "author: User", "postsByAuthorId")
@@ -247,7 +247,7 @@ func TestOmitManyOnForeignKey(t *testing.T) {
 func TestOmitForeignKey(t *testing.T) {
 	built := build(t, func(c *introspect.Catalog) {
 		c.Table("public", "posts").ForeignKeys[0].Comment = "@omit"
-	}, advancedfilters.New(nil))
+	}, advancedfilters.New(advancedfilters.DefaultSettings()))
 	rejectSDL(t, built.SDL, "author: User", "postsByAuthorId", "PostToManyFilter")
 }
 
@@ -279,7 +279,7 @@ func TestAdvancedFilterOmits(t *testing.T) {
 				f.Comment = "@omit order"
 			}
 		}
-	}, advancedfilters.New(nil))
+	}, advancedfilters.New(advancedfilters.DefaultSettings()))
 	sdl := built.SDL
 	// Selection fields stay; only the filter surface goes.
 	wantSDL(t, sdl, "author: User", "postsByAuthorId(", "postCount: BigIntFilterOps")
@@ -293,7 +293,7 @@ func TestAdvancedFilterOptIn(t *testing.T) {
 				f.Comment = "@filterable"
 			}
 		}
-	}, advancedfilters.New(map[string]any{"relations_opt_in": true, "computed_opt_in": true}))
+	}, advancedfilters.New(advancedfilters.Settings{Relations: true, Computed: true, RelationOrder: true, RelationsOptIn: true, ComputedOptIn: true}))
 	sdl := built.SDL
 	// Only the tagged computed column gets filter surface; untagged FKs none.
 	wantSDL(t, sdl, "postCount: BigIntFilterOps", "POST_COUNT_ASC")
@@ -304,15 +304,15 @@ func TestComposesWithOtherBuiltins(t *testing.T) {
 	built := build(t, func(c *introspect.Catalog) {
 		c.Table("public", "users").Comment = "@name customers"
 		c.Table("public", "posts").ForeignKeys[0].Comment = "@fieldName writer\n@foreignFieldName authored"
-	}, simplenames.New(), nestedmutations.New(nil))
+	}, simplenames.New(), nestedmutations.New(nestedmutations.DefaultSettings()))
 	sdl := built.SDL
-	// @name feeds simple-names: short root fields derive from the new name.
+	// @name feeds simple_names: short root fields derive from the new name.
 	wantSDL(t, sdl, "customers(", "customer(", "updateCustomer(")
 	rejectSDL(t, sdl, "allCustomers(", "users(")
-	// @fieldName flows through the shared inflection, so the nested-mutations
+	// @fieldName flows through the shared inflection, so the nested_mutations
 	// input field aligns with the renamed selection field.
 	if !strings.Contains(sdlBlock(t, sdl, "input PostCreateInput {"), "writer:") {
-		t.Error("nested-mutations input must use the @fieldName name")
+		t.Error("nested_mutations input must use the @fieldName name")
 	}
 	wantSDL(t, sdl, "authored(")
 }
@@ -362,7 +362,7 @@ func TestNestedMutationsHonorOmittedForeignKeyColumns(t *testing.T) {
 	omit := func(action string) *schema.Built {
 		return build(t, func(c *introspect.Catalog) {
 			c.Table("public", "posts").Column("author_id").Comment = "@omit " + action
-		}, nestedmutations.New(nil))
+		}, nestedmutations.New(nestedmutations.DefaultSettings()))
 	}
 	sdl := omit("create").SDL
 	if strings.Contains(sdlBlock(t, sdl, "input PostCreateInput {"), "author:") {

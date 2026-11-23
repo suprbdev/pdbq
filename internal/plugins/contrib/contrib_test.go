@@ -16,7 +16,7 @@ import (
 
 // buildWith applies the plugin (configured by settings, or not at all when
 // apply is false) to cat and returns the builder for inspection.
-func buildWith(t *testing.T, cat *introspect.Catalog, settings map[string]any, indexedOnly, apply bool) *schema.Builder {
+func buildWith(t *testing.T, cat *introspect.Catalog, settings func(*Settings), indexedOnly, apply bool) *schema.Builder {
 	t.Helper()
 	b := schema.New(cat, inflect.Next(inflect.Default), schema.Options{
 		Logger:            slog.New(slog.NewTextHandler(io.Discard, nil)),
@@ -24,7 +24,11 @@ func buildWith(t *testing.T, cat *introspect.Catalog, settings map[string]any, i
 		FilterIndexedOnly: indexedOnly,
 	})
 	if apply {
-		if err := New(settings).TransformSchema(context.Background(), b); err != nil {
+		s := DefaultSettings()
+		if settings != nil {
+			settings(&s)
+		}
+		if err := New(s).TransformSchema(context.Background(), b); err != nil {
 			t.Fatalf("TransformSchema: %v", err)
 		}
 	}
@@ -198,7 +202,7 @@ func TestAllowColumnsGetEverything(t *testing.T) {
 		FilterIndexedOnly: true,
 		AllowColumns:      map[string][]string{"public.documents": {"notes"}},
 	})
-	if err := New(nil).TransformSchema(context.Background(), b); err != nil {
+	if err := New(DefaultSettings()).TransformSchema(context.Background(), b); err != nil {
 		t.Fatal(err)
 	}
 	if got := fieldType(t, b, "DocumentFilter", "notes"); got != "StringTrgmUnaccentFuzzyFilterOps" {
@@ -255,7 +259,7 @@ func TestOldTrgmVersionLimitsOperators(t *testing.T) {
 }
 
 func TestSettingsToggleEachHalf(t *testing.T) {
-	noFilters := buildWith(t, contribfixture.Catalog(), map[string]any{"filters": false}, true, true)
+	noFilters := buildWith(t, contribfixture.Catalog(), func(s *Settings) { s.Filters = false }, true, true)
 	if fieldType(t, noFilters, "KeyValueHashFilterOps", "containsKey") != "" {
 		t.Error("filters: false kept vocabulary operators")
 	}
@@ -268,7 +272,7 @@ func TestSettingsToggleEachHalf(t *testing.T) {
 	if !hasEnumValue(noFilters, "DocumentsOrderBy", "LABEL_SIMILARITY_DESC") {
 		t.Error("filters: false removed similarity ordering")
 	}
-	noOrder := buildWith(t, contribfixture.Catalog(), map[string]any{"ordering": false}, true, true)
+	noOrder := buildWith(t, contribfixture.Catalog(), func(s *Settings) { s.Ordering = false }, true, true)
 	if hasEnumValue(noOrder, "DocumentsOrderBy", "SEARCH_RANK_DESC") || hasEnumValue(noOrder, "DocumentsOrderBy", "LABEL_SIMILARITY_DESC") {
 		t.Error("ordering: false kept contrib orderBy values")
 	}

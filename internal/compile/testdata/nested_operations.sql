@@ -16,10 +16,10 @@ __vis_5 AS NOT MATERIALIZED (
   UNION ALL SELECT "id", "post_id", "body" FROM __c_3
 ),
 __guard AS MATERIALIZED (
-  SELECT (SELECT CASE WHEN count(*) > 0 THEN true ELSE concat('nested-mutations: author.connectByEmail matched ', count(*), ' rows')::boolean END FROM __p_1)
-    AND (SELECT CASE WHEN count(*) > 0 THEN true ELSE concat('nested-mutations: commentsByPostId.deleteById[0] matched ', count(*), ' rows')::boolean END FROM __c_2)
-    AND (SELECT CASE WHEN count(*) > 0 THEN true ELSE concat('nested-mutations: commentsByPostId.updateByNodeId[0] matched ', count(*), ' rows')::boolean END FROM __c_3)
-    AND (SELECT CASE WHEN count(*) > 0 THEN true ELSE concat('nested-mutations: updatePostById matched ', count(*), ' rows')::boolean END FROM __mut) AS ok
+  SELECT (SELECT CASE WHEN count(*) > 0 THEN true ELSE concat('nested_mutations: author.connectByEmail matched ', count(*), ' rows')::boolean END FROM __p_1)
+    AND (SELECT CASE WHEN count(*) > 0 THEN true ELSE concat('nested_mutations: commentsByPostId.deleteById[0] matched ', count(*), ' rows')::boolean END FROM __c_2)
+    AND (SELECT CASE WHEN count(*) > 0 THEN true ELSE concat('nested_mutations: commentsByPostId.updateByNodeId[0] matched ', count(*), ' rows')::boolean END FROM __c_3)
+    AND (SELECT CASE WHEN count(*) > 0 THEN true ELSE concat('nested_mutations: updatePostById matched ', count(*), ' rows')::boolean END FROM __mut) AS ok
 )
 SELECT __guarded.data
 FROM __guard
@@ -65,8 +65,8 @@ __vis_3 AS NOT MATERIALIZED (
   UNION ALL SELECT "id", "parent_id" FROM __c_2
 ),
 __guard AS MATERIALIZED (
-  SELECT (SELECT CASE WHEN count(*) > 0 THEN true ELSE concat('nested-mutations: commentsByParentId.connectById[0] matched ', count(*), ' rows')::boolean END FROM __c_1)
-    AND (SELECT CASE WHEN count(*) > 0 THEN true ELSE concat('nested-mutations: updateCommentById matched ', count(*), ' rows')::boolean END FROM __mut) AS ok
+  SELECT (SELECT CASE WHEN count(*) > 0 THEN true ELSE concat('nested_mutations: commentsByParentId.connectById[0] matched ', count(*), ' rows')::boolean END FROM __c_1)
+    AND (SELECT CASE WHEN count(*) > 0 THEN true ELSE concat('nested_mutations: updateCommentById matched ', count(*), ' rows')::boolean END FROM __mut) AS ok
 )
 SELECT __guarded.data
 FROM __guard
@@ -100,7 +100,7 @@ __vis_2 AS NOT MATERIALIZED (
   UNION ALL SELECT "id", "owner_id" FROM __c_1
 ),
 __guard AS MATERIALIZED (
-  SELECT (SELECT CASE WHEN count(*) > 0 THEN true ELSE concat('nested-mutations: updateUserById matched ', count(*), ' rows')::boolean END FROM __mut) AS ok
+  SELECT (SELECT CASE WHEN count(*) > 0 THEN true ELSE concat('nested_mutations: updateUserById matched ', count(*), ' rows')::boolean END FROM __mut) AS ok
 )
 SELECT __guarded.data
 FROM __guard
@@ -138,9 +138,9 @@ __vis_3 AS NOT MATERIALIZED (
   UNION ALL SELECT "id", "full_name" FROM __p_2
 ),
 __guard AS MATERIALIZED (
-  SELECT (SELECT CASE WHEN count(*) > 0 THEN true ELSE concat('nested-mutations: owner.deleteByEmail matched ', count(*), ' rows')::boolean END FROM __d_1)
-    AND (SELECT CASE WHEN count(*) > 0 THEN true ELSE concat('nested-mutations: owner.updateById matched ', count(*), ' rows')::boolean END FROM __p_2)
-    AND (SELECT CASE WHEN count(*) > 0 THEN true ELSE concat('nested-mutations: updatePlaceById matched ', count(*), ' rows')::boolean END FROM __mut) AS ok
+  SELECT (SELECT CASE WHEN count(*) > 0 THEN true ELSE concat('nested_mutations: owner.deleteByEmail matched ', count(*), ' rows')::boolean END FROM __d_1)
+    AND (SELECT CASE WHEN count(*) > 0 THEN true ELSE concat('nested_mutations: owner.updateById matched ', count(*), ' rows')::boolean END FROM __p_2)
+    AND (SELECT CASE WHEN count(*) > 0 THEN true ELSE concat('nested_mutations: updatePlaceById matched ', count(*), ' rows')::boolean END FROM __mut) AS ok
 )
 SELECT __guarded.data
 FROM __guard

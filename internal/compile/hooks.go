@@ -108,7 +108,7 @@ func QuoteLiteral(s string) string { return quoteLiteral(s) }
 // against a caller-supplied CTE chain. The chain's final CTE must be named
 // __mut and yield the mutated row(s); params created via ps are preserved
 // and the payload's own params continue after them. This is the extension
-// point CompileHook plugins (e.g. nested-mutations) use to replace the DML
+// point CompileHook plugins (e.g. nested_mutations) use to replace the DML
 // while reusing payload/relation compilation.
 // overrides remaps "schema.table" row sources to CTE names so the payload
 // can see rows inserted by the supplied CTEs (same-snapshot rule).

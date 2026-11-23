@@ -107,7 +107,7 @@ func TestScoreFieldsGating(t *testing.T) {
 		t.Error("@omit read kept embeddingL2Distance")
 	}
 
-	noOrder := buildWith(t, contribfixture.Catalog(), map[string]any{"ordering": false}, true, true)
+	noOrder := buildWith(t, contribfixture.Catalog(), func(s *Settings) { s.Ordering = false }, true, true)
 	if len(scoreFields(noOrder, "Document")) != 0 || len(scoreFields(noOrder, "Embedding")) != 0 {
 		t.Error("ordering: false kept score fields")
 	}
@@ -168,7 +168,7 @@ func TestVectorThresholdFilters(t *testing.T) {
 	if got := fieldType(t, all, "EmbeddingFilter", "flags"); got != "BitDistanceFilterOps" {
 		t.Errorf("indexed_only off: EmbeddingFilter.flags = %s", got)
 	}
-	noFilters := buildWith(t, contribfixture.Catalog(), map[string]any{"filters": false}, false, true)
+	noFilters := buildWith(t, contribfixture.Catalog(), func(s *Settings) { s.Filters = false }, false, true)
 	if noFilters.Inputs["VectorDistanceFilterOps"] != nil || noFilters.Inputs["BitDistanceFilterOps"] != nil {
 		t.Error("filters: false declared threshold inputs")
 	}

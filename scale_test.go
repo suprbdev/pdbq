@@ -96,7 +96,7 @@ func scaleApp(indexedOnly, aggregates bool) *pdbq.App {
 	cfg := config.DefaultConfig()
 	cfg.Filters.IndexedOnly = indexedOnly
 	if aggregates {
-		cfg.Plugins.Settings["aggregates"] = map[string]any{"enabled": true}
+		cfg.Plugins.Settings.Aggregates.Enabled = true
 	}
 	return pdbq.New(cfg, pdbq.WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))))
 }

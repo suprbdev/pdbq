@@ -15,10 +15,10 @@
 //   - relational aggregate ordering: <REL>_COUNT_ASC/_DESC and
 //     <REL>_<SPEC>_<COLUMN>_ASC/_DESC orderBy values sort a table by
 //     aggregates over a reverse relation (POSTS_BY_AUTHOR_ID_SUM_ID_DESC).
-//   - relational aggregate filtering: the advanced-filters
+//   - relational aggregate filtering: the advanced_filters
 //     <Type>ToManyFilter wrapper gains an aggregates field
 //     ({postsByAuthorId: {aggregates: {filter: {...}, sum: {id: {greaterThan:
-//     "5"}}}}}), so it needs advanced-filters with relations enabled.
+//     "5"}}}}}), so it needs advanced_filters with relations enabled.
 //   - spatial aggregates (a pdbq extension, prefixed st to stay clear of
 //     upstream names): stExtent, stUnion, stCollect and stCentroid groups
 //     over geometry/geography columns, returned as GeoJSON.
@@ -31,7 +31,7 @@
 // rest of the plugins it only adds schema surface plus bindings; the core
 // compiler renders every aggregate inside the root field's single statement.
 //
-// Relational ordering and filtering follow advanced-filters: they aggregate
+// Relational ordering and filtering follow advanced_filters: they aggregate
 // only the related table's orderable (respectively filterable) columns, so
 // filters.indexed_only and column @omit order / @omit filter apply, and the
 // foreign key's @omit order, @omit many (on the key or the referencing
@@ -43,7 +43,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"strconv"
 	"strings"
 
 	coreinflect "github.com/suprbdev/pdbcore/inflect"
@@ -67,28 +66,54 @@ type Plugin struct {
 	relationsOptIn bool
 }
 
-// New builds the plugin from its `plugins.settings.aggregates` map: enabled
-// (default false), grouped, order, filters, spatial (default true),
-// spatial_union_collect (default false) and scan_cost (default 10).
-// advancedFilters is the `plugins.settings.advanced-filters` map, whose
-// relations_opt_in mode the relational aggregate ordering honours.
-func New(settings, advancedFilters map[string]any) *Plugin {
+// Name is the plugin's name in plugins.disabled and plugins.settings.
+const Name = "aggregates"
+
+// Settings is the plugins.settings.aggregates section.
+type Settings struct {
+	Enabled             bool `koanf:"enabled" doc:"Aggregates for every table; otherwise only for tables tagged @aggregates."`
+	Grouped             bool `koanf:"grouped" doc:"groupedAggregates, <Type>GroupBy and <Type>HavingInput."`
+	Order               bool `koanf:"order" doc:"<REL>_COUNT_* and <REL>_<AGGREGATE>_<COLUMN>_* orderBy values."`
+	Filters             bool `koanf:"filters" doc:"The aggregates field of to-many relation filters."`
+	Spatial             bool `koanf:"spatial" doc:"The stExtent and stCentroid spatial aggregates."`
+	SpatialUnionCollect bool `koanf:"spatial_union_collect" doc:"The stUnion and stCollect spatial aggregates, whose results grow with the row set."`
+	ScanCost            int  `koanf:"scan_cost" doc:"Cost-estimate surcharge per aggregate field, aggregate orderBy value and relation-aggregate comparison."`
+}
+
+// DefaultSettings returns the documented defaults: off unless a table opts
+// in, every part on once enabled except stUnion/stCollect, scan cost 10.
+func DefaultSettings() Settings {
+	return Settings{Grouped: true, Order: true, Filters: true, Spatial: true, ScanCost: 10}
+}
+
+// Validate returns the problems of s, keyed by their config path.
+func (s Settings) Validate() []string {
+	if s.ScanCost < 0 {
+		return []string{"plugins.settings." + Name + ".scan_cost must be >= 0"}
+	}
+	return nil
+}
+
+// New builds the plugin from its settings. relationsOptIn is
+// plugins.settings.advanced_filters.relations_opt_in, which the relational
+// aggregate ordering honours.
+func New(s Settings, relationsOptIn bool) *Plugin {
 	return &Plugin{
-		enabled:        boolSetting(settings, "enabled", false),
-		grouped:        boolSetting(settings, "grouped", true),
-		order:          boolSetting(settings, "order", true),
-		filters:        boolSetting(settings, "filters", true),
-		spatial:        boolSetting(settings, "spatial", true),
-		unionCollect:   boolSetting(settings, "spatial_union_collect", false),
-		scanCost:       intSetting(settings, "scan_cost", 10),
-		relationsOptIn: boolSetting(advancedFilters, "relations_opt_in", false),
+		enabled:        s.Enabled,
+		grouped:        s.Grouped,
+		order:          s.Order,
+		filters:        s.Filters,
+		spatial:        s.Spatial,
+		unionCollect:   s.SpatialUnionCollect,
+		scanCost:       s.ScanCost,
+		relationsOptIn: relationsOptIn,
 	}
 }
 
 // Name returns the plugin's config key.
-func (p *Plugin) Name() string { return "aggregates" }
+func (p *Plugin) Name() string { return Name }
 
-// Priority 180 runs the plugin after advanced-filters (150), whose to-many
+// Priority 180 runs the plugin after advanced_filters (150), whose to-many
 // filter wrappers it extends, and after the postgis and contrib plugins.
 func (p *Plugin) Priority() int { return 180 }
 
@@ -547,7 +572,7 @@ func (r *build) havingFilter(t *introspect.Table, pgType string) string {
 
 // addRelationOrder adds <REL>_COUNT_* and <REL>_<SPEC>_<COLUMN>_* values to
 // t's orderBy enum for every reverse relation from an opted-in table, unless
-// the foreign key opts out the way advanced-filters' relational ordering
+// the foreign key opts out the way advanced_filters' relational ordering
 // does (@omit order, @omit many on the key or the child table,
 // relations_opt_in without @filterable / @sortable).
 func (r *build) addRelationOrder(t *introspect.Table, surfaces map[*introspect.Table]*surface) {
@@ -593,7 +618,7 @@ func (r *build) addRelationOrder(t *introspect.Table, surfaces map[*introspect.T
 	}
 }
 
-// omitsOrder applies advanced-filters' relational-ordering rules to a
+// omitsOrder applies advanced_filters' relational-ordering rules to a
 // foreign key comment (@omit order, relations_opt_in without @filterable or
 // @sortable).
 func (r *build) omitsOrder(comment string) bool {
@@ -613,12 +638,12 @@ func addOrderPair(en *schema.Enum, base string, rel *schema.OrderRelation) {
 	)
 }
 
-// addRelationFilter adds the aggregates field to the advanced-filters
+// addRelationFilter adds the aggregates field to the advanced_filters
 // <Type>ToManyFilter wrapper over t's rows: <Type>AggregatesFilter holds a
 // filter narrowing the aggregated rows plus one <Type><Spec>AggregateFilter
 // per group, typed with the operator inputs of the aggregate results, over
 // t's filterable columns. The wrapper is only reachable through the relation
-// filter fields advanced-filters generated, so its per-foreign-key rules
+// filter fields advanced_filters generated, so its per-foreign-key rules
 // (@omit filter, relations_opt_in) apply.
 func (r *build) addRelationFilter(t *introspect.Table, s *surface) {
 	b := r.b
@@ -717,34 +742,6 @@ func warn(b *schema.Builder, msg string, t *introspect.Table, name string) {
 		logger = slog.Default()
 	}
 	logger.Warn(msg, "table", t.Schema+"."+t.Name, "name", name)
-}
-
-func boolSetting(settings map[string]any, key string, def bool) bool {
-	switch v := settings[key].(type) {
-	case bool:
-		return v
-	case string:
-		if b, err := strconv.ParseBool(v); err == nil {
-			return b
-		}
-	}
-	return def
-}
-
-func intSetting(settings map[string]any, key string, def int) int {
-	switch v := settings[key].(type) {
-	case int:
-		return v
-	case int64:
-		return int(v)
-	case float64:
-		return int(v)
-	case string:
-		if n, err := strconv.Atoi(v); err == nil {
-			return n
-		}
-	}
-	return def
 }
 
 func dateTrunc(unit string) func(string) string {

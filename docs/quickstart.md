@@ -7,7 +7,8 @@ $ docker compose up
 ```
 
 This starts PostgreSQL with a demo schema (`db/init/01-schema.sql`) and
-pdbq in watch mode.
+pdbq in watch mode, without authentication (`PDBQ_AUTH_MODE=none`) and
+running every request as the connection role (`PDBQ_ROLES_SWITCH=false`).
 
 The stack publishes no ports by itself — networking setups differ, so port
 mappings live in a gitignored `compose.override.yaml` that compose picks up
@@ -42,7 +43,7 @@ Try:
 }
 ```
 
-(The dev stack has the `simple-names` plugin enabled — with it disabled the
+(The dev stack has the `simple_names` plugin enabled — with it disabled the
 same query is `allUsers` / `postsByAuthorId`.)
 
 Because watch mode is on, `ALTER TABLE`/`CREATE TABLE` in the database is
@@ -56,6 +57,13 @@ $ pdbq config init                        # starter pdbq.yaml
 $ $EDITOR pdbq.yaml                       # set database.url
 $ pdbq serve
 ```
+
+The starter runs with nothing but `database.url` filled in: it sets
+`auth.mode: none` and `roles.switch: false`, so every request runs as the
+connection role without credentials (pdbq logs a warning). Configure
+`auth` and `roles` before production; see [Row-level security](rls.md).
+Without them the defaults expect a JWT secret (`auth.jwt.secret`) and refuse
+requests without a token.
 
 Every option is also an env var (`PDBQ_DATABASE_URL=...`) or flag
 (`--database.url=...`); precedence is flags > env > file.

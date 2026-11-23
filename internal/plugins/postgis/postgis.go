@@ -61,7 +61,7 @@
 // SRID units. dwithin takes a `useSpheroid` flag so lat/lon data stored as
 // plain geometry can still be searched in metres.
 //
-// Like advanced-filters, the plugin only adds schema surface plus catalog
+// Like advanced_filters, the plugin only adds schema surface plus catalog
 // bindings; the compiler reads the bindings and stays inert when they are
 // absent, so disabling the plugin (plugins.disabled: [postgis]) removes the
 // surface completely while plain GeoJSON read/write keeps working.
@@ -104,26 +104,38 @@ type Plugin struct {
 	typedGeometry bool
 }
 
-// New builds the plugin from its `plugins.settings.postgis` map.
-func New(settings map[string]any) *Plugin {
-	p := &Plugin{filters: true, derived: true, ordering: true, projection: true}
-	for key, target := range map[string]*bool{
-		"filters":        &p.filters,
-		"derived":        &p.derived,
-		"ordering":       &p.ordering,
-		"projection":     &p.projection,
-		"typed_geometry": &p.typedGeometry,
-	} {
-		if v, ok := settings[key].(bool); ok {
-			*target = v
-		}
-	}
-	return p
+// Name is the plugin's name in plugins.disabled and plugins.settings.
+const Name = "postgis"
+
+// Settings is the plugins.settings.postgis section.
+type Settings struct {
+	Filters       bool `koanf:"filters" doc:"GeometryFilterOps on spatial columns and RasterFilterOps on raster columns."`
+	Derived       bool `koanf:"derived" doc:"Derived accessors (<field>Area, <field>Centroid, ...) and the raster accessors, pixel value and statistics."`
+	Ordering      bool `koanf:"ordering" doc:"Distance ordering (<COLUMN>_DISTANCE_ASC/_DESC), the <field>Distance fields and the near: argument."`
+	Projection    bool `koanf:"projection" doc:"The transform:, simplify:, precision: and buffer: projection arguments of spatial column fields."`
+	TypedGeometry bool `koanf:"typed_geometry" doc:"Type spatial column fields as @graphile/postgis-style geometry objects instead of the GeoJSON scalar."`
 }
 
-func (p *Plugin) Name() string { return "postgis" }
+// DefaultSettings returns the documented defaults: every surface on, typed
+// geometry off.
+func DefaultSettings() Settings {
+	return Settings{Filters: true, Derived: true, Ordering: true, Projection: true}
+}
 
-// Priority 160 places the plugin just after advanced-filters (150), so the
+// New builds the plugin from its settings.
+func New(s Settings) *Plugin {
+	return &Plugin{
+		filters:       s.Filters,
+		derived:       s.Derived,
+		ordering:      s.Ordering,
+		projection:    s.Projection,
+		typedGeometry: s.TypedGeometry,
+	}
+}
+
+func (p *Plugin) Name() string { return Name }
+
+// Priority 160 places the plugin just after advanced_filters (150), so the
 // filter inputs it extends already exist and relation filters are in place.
 func (p *Plugin) Priority() int { return 160 }
 

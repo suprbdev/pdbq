@@ -126,6 +126,7 @@ func TestErrorClass(t *testing.T) {
 		&compile.UserError{}:                        "user_input",
 		fmt.Errorf("x: %w", gqlerror.Errorf("bad")): "user_input",
 		&pgconn.PgError{Code: "22P02"}:              "user_input",
+		&pgconn.PgError{Code: "21000"}:              "user_input",
 		&pgconn.PgError{Code: "40001"}:              "conflict",
 		context.DeadlineExceeded:                    "timeout",
 		errors.New("boom"):                          "internal",

@@ -6,7 +6,7 @@ __mut AS (
   INSERT INTO "public"."booking_notes" ("author_id", "note", "valid_at", "room_id") SELECT $1, $2, daterange($3::date, $4::date, $5::text), __p_1."room_id" FROM __p_1 RETURNING "id", "room_id", "valid_at"
 ),
 __guard AS MATERIALIZED (
-  SELECT (SELECT CASE WHEN count(*) > 0 THEN true ELSE concat('nested-mutations: roomBookingsByRoomIdAndValidAt.connectByRoomId matched ', count(*), ' rows')::boolean END FROM __p_1) AS ok
+  SELECT (SELECT CASE WHEN count(*) > 0 THEN true ELSE concat('nested_mutations: roomBookingsByRoomIdAndValidAt.connectByRoomId matched ', count(*), ' rows')::boolean END FROM __p_1) AS ok
 )
 SELECT __guarded.data
 FROM __guard

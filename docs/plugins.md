@@ -70,14 +70,63 @@ executors of earlier schemas keep serving. A plugin whose `CompileHook` or
 `RequestHook` needs what its `SchemaHook` learned stores it in
 `SchemaBuilder.Ext[<plugin name>]` and reads it back from the request's
 schema (`compile.Request.Built.Ext`, `exec.Operation.Built.Ext`), never from
-its own fields; `nested-mutations` does this.
+its own fields; `nested_mutations` does this.
 
 Hooks compose middleware-style: call `next(...)` to continue the chain (the
 innermost link is pdbq's default behaviour). Ordering is deterministic —
-priority, then registration order. Users can disable any plugin by name
-(`plugins.disabled`) and configure it under `plugins.settings.<name>`.
+priority, then registration order.
 
-## Worked example 1: simple-names
+## Built-in plugins and their settings
+
+Plugin names are snake_case: `smart_comments` (priority 50),
+`simple_names` (100), `advanced_filters` (150), `postgis` (160), `contrib`
+(170), `aggregates` (180) and `nested_mutations` (200). Users disable a
+built-in by name in `plugins.disabled`; any other name is a config error with
+a "did you mean" hint (`smart-comments` → `smart_comments`). A plugin added
+with `pdbq.WithPlugins` is enabled by registering it.
+
+Each configurable built-in has a typed settings section under
+`plugins.settings.<name>`, declared by its package as a `Settings` struct
+(with `koanf` and `doc` tags, a `DefaultSettings()` and, where values are
+constrained, a `Validate()` run by config validation) and passed to its
+`New`. Unknown keys are config errors, and environment variables decode like
+any other key:
+
+```console
+$ PDBQ_PLUGINS_SETTINGS_ADVANCED__FILTERS_RELATIONS=false pdbq serve
+$ PDBQ_PLUGINS_SETTINGS_AGGREGATES_ENABLED=true PDBQ_PLUGINS_SETTINGS_AGGREGATES_SCAN__COST=20 pdbq serve
+```
+
+(`__` keeps the underscore inside `advanced_filters` and `scan_cost`.)
+
+| Key | Default | Effect |
+|---|---|---|
+| `advanced_filters.relations` | `true` | relation filters (forward, reverse `some`/`none`/`every`, `<rel>Exists`) |
+| `advanced_filters.computed` | `true` | filtering and ordering by computed columns |
+| `advanced_filters.relation_order` | `true` | relational orderBy values (`REL__COLUMN_ASC`) |
+| `advanced_filters.relations_opt_in` | `false` | only `@filterable` foreign keys get relation surface |
+| `advanced_filters.computed_opt_in` | `false` | only `@filterable` computed columns get filter/order surface |
+| `postgis.filters` | `true` | `GeometryFilterOps`, `RasterFilterOps` |
+| `postgis.derived` | `true` | derived and raster accessors |
+| `postgis.ordering` | `true` | distance ordering, `<field>Distance`, `near:` |
+| `postgis.projection` | `true` | `buffer:`, `simplify:`, `transform:`, `precision:` |
+| `postgis.typed_geometry` | `false` | typed geometry objects instead of `GeoJSON` |
+| `contrib.filters` | `true` | contrib filter operators and rank fields ([Contrib](contrib.md#settings)) |
+| `contrib.ordering` | `true` | rank, similarity and distance ordering |
+| `aggregates.enabled` | `false` | aggregates on every table ([Aggregates](aggregates.md#settings)) |
+| `aggregates.grouped` | `true` | `groupedAggregates` |
+| `aggregates.order` | `true` | relational aggregate orderBy values |
+| `aggregates.filters` | `true` | relation-aggregate filters |
+| `aggregates.spatial` | `true` | `stExtent`, `stCentroid` |
+| `aggregates.spatial_union_collect` | `false` | `stUnion`, `stCollect` |
+| `aggregates.scan_cost` | `10` | cost surcharge per aggregate (`>= 0`) |
+| `nested_mutations.force_transactions` | `true` | force a transaction around nested writes |
+| `nested_mutations.max_depth` | `3` | nesting levels per root field (`>= 1`) |
+| `nested_mutations.max_operations` | `50` | nested operations per root field (`>= 1`) |
+
+`smart_comments` and `simple_names` have no settings.
+
+## Worked example 1: simple_names
 
 `internal/plugins/simplenames` is a pure naming plugin: ~60 lines, zero core
 changes. It overrides a handful of `inflect.Kind`s (`users` instead of
@@ -88,7 +137,7 @@ it can detect ambiguous relations (a table with several FKs) and fall back
 to the verbose name instead of colliding. Residual collisions are caught by
 the schema builder, which keeps the first field and logs a warning.
 
-## Worked example 2: advanced-filters
+## Worked example 2: advanced_filters
 
 `internal/plugins/advancedfilters` shows the "schema surface + metadata"
 pattern: the plugin implements only `SchemaHook`, yet changes compiled SQL.
@@ -120,7 +169,7 @@ pattern: the plugin implements only `SchemaHook`, yet changes compiled SQL.
   shapes (see [Temporal keys](temporal.md)).
 
 The halves toggle independently:
-`plugins.settings.advanced-filters.relations` and `...computed` (both default
+`plugins.settings.advanced_filters.relations` and `...computed` (both default
 true), plus `...relation_order` (default true, also off when `relations` is
 off) for the relational orderBy values. Computed filters are not
 index-backed, so they sidestep the `filters.indexed_only` policy by nature —
@@ -149,7 +198,7 @@ bindings carry SQL templates the core compiler renders inside the statement,
 and `FieldMeta.ScanCost` feeds the cost estimate; see
 [Aggregates](aggregates.md).
 
-## Worked example 3: smart-comments
+## Worked example 3: smart_comments
 
 `internal/plugins/smartcomments` combines three hooks to turn PostgreSQL
 `COMMENT` tags (`@omit`, `@name`, `@primaryKey`, …) into schema customization
@@ -164,21 +213,21 @@ and `FieldMeta.ScanCost` feeds the cost estimate; see
   from read, and functions over an omitted table's rows.
 - **InflectionHook** — `@name` replaces the pg identifier at the *head* of
   the naming chain and delegates to `next`, so downstream naming plugins
-  (`simple-names`) and the default inflector derive everything from the new
+  (`simple_names`) and the default inflector derive everything from the new
   name; `@fieldName`/`@foreignFieldName` short-circuit with exact names.
-  This is why the plugin runs at priority 50 (before `simple-names` at 100).
+  This is why the plugin runs at priority 50 (before `simple_names` at 100).
 - **SchemaHook** — removes what has no catalog representation (per-action
   table/column omits, orderBy and distinctOn values), marks fields `@deprecated`, and strips
-  tag lines from GraphQL descriptions. It runs before `advanced-filters`
+  tag lines from GraphQL descriptions. It runs before `advanced_filters`
   (150), so a dropped `<Type>Filter` is never referenced by relation filters.
 
-`advanced-filters` reads the same tags straight from the catalog (`@omit
+`advanced_filters` reads the same tags straight from the catalog (`@omit
 filter` on a FK, opt-in via `relations_opt_in`/`computed_opt_in` settings), so
-per-object filter tuning works even with `smart-comments` disabled. Every
+per-object filter tuning works even with `smart_comments` disabled. Every
 plugin decides through `internal/omit`, the one place that maps tags to the
 surfaces they hide.
 
-## Worked example 4: nested-mutations
+## Worked example 4: nested_mutations
 
 `internal/plugins/nestedmutations` exercises every hook surface. Its input
 shapes follow
@@ -255,10 +304,10 @@ mutation {
 - `connect…`, `update…` and `delete…` must match a row, and so must the key
   of an update mutation using nested fields: a key that matches nothing
   (missing, or filtered out by RLS) fails the whole mutation with
-  `nested-mutations: <path> matched 0 rows` (SQLSTATE `22P02`, e.g.
+  `nested_mutations: <path> matched 0 rows` (SQLSTATE `22P02`, e.g.
   `postsByAuthorId.updateById[0]` or `updateUserById`). `disconnect…` of a
   row that is not linked does nothing.
-- At most `plugins.settings.nested-mutations.max_operations` operations
+- At most `plugins.settings.nested_mutations.max_operations` operations
   (default 50, each list item counting once) run per root field, nested at
   most `max_depth` levels (default 3).
 - The bulk mutations (`createUsers`, `updateUsers`) and upserts take no
@@ -294,7 +343,7 @@ update/delete/disconnect, and there is no `deleteOthers`.
   sets no column locks the row with `SELECT … FOR UPDATE` instead, which
   still requires the `UPDATE` privilege and passes the table's `UPDATE`
   policies. Each operation that must match a row adds a guard, `(SELECT
-  CASE WHEN count(*) > 0 THEN true ELSE concat('nested-mutations: …',
+  CASE WHEN count(*) > 0 THEN true ELSE concat('nested_mutations: …',
   count(*), ' rows')::boolean END FROM <cte>)`. `compile.MutationStatement`
   evaluates the guards in a `MATERIALIZED` CTE scanned as the outer side of
   a `LEFT JOIN LATERAL` with the payload, so they run even when the payload
@@ -333,4 +382,4 @@ update/delete/disconnect, and there is no `deleteOthers`.
   `@skip`/`@include`), detects nested fields in a mutation's `input` or
   `patch` and sets `op.ForceTx`, so nested mutations (and the other fields
   of the operation) are atomic even when `transactions.mutations: false`
-  (`plugins.settings.nested-mutations.force_transactions: false` opts out).
+  (`plugins.settings.nested_mutations.force_transactions: false` opts out).

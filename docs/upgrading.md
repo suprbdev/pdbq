@@ -26,3 +26,109 @@
 - **PostgreSQL 14 is the minimum.** Older servers are refused at
   introspection and on every pool connection, so this also applies when
   booting from a schema cache.
+
+### Identity, strict config and plugin settings
+
+Breaking changes:
+
+- **The `rls` section is gone.** It is split into `auth` (how a request
+  proves who it is), `roles` (which database role it runs as) and `claims`
+  (how claims reach SQL); see the table below and [RLS](rls.md). An old
+  `rls.*` key in the file or a `PDBQ_RLS_*` variable is an error naming its
+  new key.
+- **`roles.switch: false` is not "auth off".** `rls.enabled: false` used to
+  skip authentication too. `roles.switch: false` only stops the role switch:
+  credentials are still verified (an invalid token is still a 401) and
+  claims are still set. For no authentication at all, also set
+  `auth.mode: none`.
+- **Anonymous access is opt-in.** `roles.anonymous` defaults to empty (was
+  `anonymous`): a request without credentials is answered `401` with
+  `WWW-Authenticate: Bearer`. Set `roles.anonymous: anonymous` to keep the
+  0.x behaviour. In `auth.mode: none` with role switching on it is required.
+- **Fail-closed authentication.** `pdbq serve` refuses to start in jwt mode
+  without `auth.jwt.secret`, `auth.jwt.secret_file` or `auth.jwt.jwks_url`,
+  and in headers mode without `auth.headers.trusted_proxies` (an empty list
+  used to trust every peer). Claim headers from an untrusted peer are a
+  401. A role claim that is not a non-empty string is an invalid token
+  (it used to fall back to the default role), and a credential that
+  resolves to no role is refused.
+- **Claims are `jwt.claims.*`.** The per-claim settings moved from
+  `pdbq.claims.<claim>` to `jwt.claims.<claim>` (PostGraphile's namespace).
+  Update policies, or set `claims.prefix: pdbq.claims` to keep them.
+- **Strict configuration.** Unknown keys in the YAML file are errors, and so
+  are `PDBQ_*` variables inside a config section (`PDBQ_SERVER_MAX_DPETH`);
+  the error suggests the closest key. Other `PDBQ_*` variables are ignored.
+  `log.format` must be `text` or `json`.
+- **Plugin names are snake_case**, with no aliases: `smart_comments`,
+  `simple_names`, `advanced_filters`, `nested_mutations` (`postgis`,
+  `contrib` and `aggregates` are unchanged). This applies to
+  `plugins.disabled`, `plugins.settings.<name>`, `pdbq plugins list` and the
+  `nested_mutations: … matched 0 rows` error prefix. An unknown name in
+  `plugins.disabled` is an error (with a "did you mean" hint).
+- **Plugin settings are typed.** `plugins.settings` only accepts the keys of
+  each plugin (see [Configuration](configuration.md)); a misspelt key is an
+  error instead of being ignored. Environment values such as
+  `PDBQ_PLUGINS_SETTINGS_ADVANCED__FILTERS_RELATIONS=false` now reach the
+  plugin (they used to be strings the plugins ignored).
+  `plugins.settings.nested_mutations.max_depth`/`max_operations` must be
+  `>= 1` and `plugins.settings.aggregates.scan_cost` `>= 0`.
+- **`database.statement_timeout` defaults to `25s`** (was `30s`), below the
+  30s `server.request_timeout`, so a slow statement fails with SQLSTATE
+  `57014` before the request is cut off.
+- **CLI identity.** `pdbq query`, `pdbq schema dump|check|print` and
+  `pdbq plugins list` always run with `auth.mode: none` and
+  `roles.switch: false`, as the connection role without claims (see
+  [CLI](cli.md)). They work on a default config without a JWT secret.
+- **Flags.** `--rls.enabled` is replaced by `--roles.switch`; `--auth.mode`,
+  `--roles.anonymous` and `--database.statement_timeout` are new.
+- **`pdbq config init`** writes `auth: {mode: none}` and
+  `roles: {switch: false}` instead of `rls: {enabled: false}`.
+- **Embedding.** `pdbq.RLSConfig` is gone (`pdbq.AuthConfig`,
+  `pdbq.RolesConfig`, `pdbq.ClaimsConfig`, `pdbq.JWTConfig`,
+  `pdbq.HeadersConfig` replace it); `Config.Plugins.Settings` is the typed
+  `pdbq.PluginSettings` instead of a map; `config.LoadUnvalidated` and
+  `Config.ConnectionIdentity` back the CLI loader.
+
+Also new: `auth.jwt.secret_file`, `auth.jwt.leeway`,
+`auth.jwt.role_claim_path` (paths such as `app_metadata.role`),
+`auth.headers.role_claim`, `claims.json_setting` (e.g.
+`request.jwt.claims`, for PostgREST/Supabase policies), case-insensitive
+`Bearer`, `WWW-Authenticate` challenges on 401s (exposed to CORS clients
+through `Access-Control-Expose-Headers`), and SQLSTATE class 21
+(`more than one row returned by a subquery used as an expression`) reported
+as a user error with its message in `errors.detail: prod`.
+
+| 0.x | 1.0 | Notes |
+|---|---|---|
+| `rls.enabled: true` | `roles.switch: true` | default |
+| `rls.enabled: false` | `roles.switch: false` | still verifies credentials; for no auth at all also set `auth.mode: none` |
+| `rls.anonymous_role` (default `anonymous`) | `roles.anonymous` (default empty) | empty refuses unauthenticated requests with 401; set it to keep anonymous access |
+| `rls.default_role` | `roles.default` | |
+| `rls.allowed_roles` | `roles.allowed` | |
+| `rls.role_claim` | `auth.jwt.role_claim_path` / `auth.headers.role_claim` | jwt takes a path |
+| `rls.claims_prefix` (default `pdbq.claims`) | `claims.prefix` (default `jwt.claims`) | set `claims.prefix: pdbq.claims` to keep old policies, or update them |
+| — | `claims.json_setting` | e.g. `request.jwt.claims` |
+| `rls.auth.mode` | `auth.mode` | |
+| `rls.auth.jwt_secret` | `auth.jwt.secret` | or `auth.jwt.secret_file` |
+| `rls.auth.jwks_url` | `auth.jwt.jwks_url` | |
+| `rls.auth.jwks_cache_ttl` | `auth.jwt.jwks_cache_ttl` | |
+| `rls.auth.jwt_issuer` | `auth.jwt.issuer` | |
+| `rls.auth.jwt_audience` | `auth.jwt.audience` | |
+| — | `auth.jwt.leeway` | default `0s` |
+| `rls.auth.header_prefix` | `auth.headers.prefix` | default `X-Pdbq-Claim-` |
+| `rls.auth.header_claims` | `auth.headers.claims` | |
+| `rls.auth.trusted_proxies` (empty trusted every peer) | `auth.headers.trusted_proxies` | required in headers mode |
+| `rls.auth.jwt_type` | `auth.mint_type` | |
+| `PDBQ_RLS_ENABLED` | `PDBQ_ROLES_SWITCH` | |
+| `PDBQ_RLS_ANONYMOUS__ROLE` | `PDBQ_ROLES_ANONYMOUS` | |
+| `PDBQ_RLS_ALLOWED__ROLES` | `PDBQ_ROLES_ALLOWED` | |
+| `PDBQ_RLS_AUTH_MODE` | `PDBQ_AUTH_MODE` | |
+| `PDBQ_RLS_AUTH_JWT__SECRET` | `PDBQ_AUTH_JWT_SECRET` | or `PDBQ_AUTH_JWT_SECRET__FILE` |
+| `PDBQ_RLS_AUTH_TRUSTED__PROXIES` | `PDBQ_AUTH_HEADERS_TRUSTED__PROXIES` | the other `PDBQ_RLS_*` variables follow the key table |
+| `--rls.enabled` | `--roles.switch` | |
+| `plugins.disabled: [smart-comments]` | `plugins.disabled: [smart_comments]` | likewise `simple_names`, `advanced_filters`, `nested_mutations` |
+| `plugins.settings.advanced-filters.*` | `plugins.settings.advanced_filters.*` | |
+| `plugins.settings.nested-mutations.*` | `plugins.settings.nested_mutations.*` | |
+| `PDBQ_PLUGINS_SETTINGS_AGGREGATES_ENABLED=true` (ignored) | same variable, now applied | env plugin settings are typed |
+| `database.statement_timeout` default `30s` | default `25s` | set it explicitly to keep `30s` |
+| `log.format: <anything>` | `log.format: text` or `json` | other values are rejected |

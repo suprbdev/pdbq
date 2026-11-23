@@ -17,7 +17,7 @@ import (
 // TestRLSRejectsReservedRoles checks that a role claim naming none, public
 // or a pg_ role is refused instead of being assumed: "none" in particular is
 // RESET ROLE, which would run the request as the pool's login role and
-// bypass RLS. It runs with and without rls.allowed_roles, since an empty
+// bypass RLS. It runs with and without roles.allowed, since an empty
 // list lets any other role through to the database.
 func TestRLSRejectsReservedRoles(t *testing.T) {
 	url := os.Getenv("PDBQ_TEST_DATABASE_URL")
@@ -83,10 +83,8 @@ func TestRLSRejectsReservedRoles(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			hs := testServer(t, func(cfg *config.Config) {
-				cfg.RLS.Enabled = true
-				cfg.RLS.Auth.Mode = "headers"
-				cfg.RLS.RoleClaim = "role"
-				cfg.RLS.AllowedRoles = allowed
+				headersIdentity(cfg)
+				cfg.Roles.Allowed = allowed
 			})
 			if got := run(t, hs.URL, "app_user"); got.status != http.StatusOK || got.errors != 0 || got.posts != published+1 {
 				t.Fatalf("app_user control request = %+v, want 200 with %d posts", got, published+1)

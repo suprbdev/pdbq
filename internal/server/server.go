@@ -30,12 +30,30 @@ import (
 // Authenticator turns an HTTP request into (claims, role); see pdbcore/auth.
 type Authenticator = auth.Authenticator
 
-// NewAuthenticator builds the request authenticator from the rls section;
-// log (may be nil) receives JWKS fetch failures.
-func NewAuthenticator(cfg config.RLS, log *slog.Logger) *Authenticator {
-	ac := confx.AuthConfig(cfg)
+// NewAuthenticator builds the request authenticator from the auth and
+// roles sections; log (may be nil) receives JWKS fetch failures. It fails
+// on a configuration auth.New rejects (unknown mode, jwt mode without a
+// key, headers mode without trusted proxies) or an unreadable secret file.
+func NewAuthenticator(a config.Auth, r config.Roles, log *slog.Logger) (*Authenticator, error) {
+	ac, err := confx.AuthConfig(a, r)
+	if err != nil {
+		return nil, err
+	}
 	ac.Logger = log
-	return auth.New(ac)
+	authn, err := auth.New(ac)
+	if err != nil {
+		return nil, fmt.Errorf("auth: %w", err)
+	}
+	return authn, nil
+}
+
+// exposeHeaders are the response headers beyond the CORS-safelisted ones
+// that cross-origin scripts may read.
+var exposeHeaders = []string{"WWW-Authenticate"}
+
+// corsPolicy is the CORS policy of the GraphQL endpoint.
+func (s *Server) corsPolicy() httpx.CORSPolicy {
+	return httpx.CORSPolicy{Origins: s.cfg.CORSOrigins, AllowMethods: "POST, GET, OPTIONS", ExposeHeaders: exposeHeaders}
 }
 
 // Server is the HTTP front end. Executor is stored atomically so watch mode
@@ -180,7 +198,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /graphql", s.handleGraphQL)
 	mux.HandleFunc("GET /graphql", s.handleGraphQL)
 	if len(s.cfg.CORSOrigins) > 0 {
-		mux.HandleFunc("OPTIONS /graphql", httpx.Preflight(s.cfg.CORSOrigins, "POST, GET, OPTIONS"))
+		mux.HandleFunc("OPTIONS /graphql", httpx.Preflight(s.corsPolicy()))
 	}
 	mux.HandleFunc("GET /healthz", httpx.Healthz)
 	mux.HandleFunc("GET /readyz", s.handleReadyz)
@@ -198,7 +216,7 @@ func (s *Server) Handler() http.Handler {
 		h = http.TimeoutHandler(h, s.cfg.RequestTimeout, `{"errors":[{"message":"request timeout"}]}`)
 	}
 	if len(s.cfg.CORSOrigins) > 0 {
-		h = httpx.CORS(s.cfg.CORSOrigins, h)
+		h = httpx.CORS(s.corsPolicy(), h)
 	}
 	if s.cfg.Compression {
 		h = httpx.Gzip(h)
@@ -206,7 +224,7 @@ func (s *Server) Handler() http.Handler {
 	if s.cfg.IncrementalDelivery {
 		buffered, streaming := h, http.Handler(mux)
 		if len(s.cfg.CORSOrigins) > 0 {
-			streaming = httpx.CORS(s.cfg.CORSOrigins, streaming)
+			streaming = httpx.CORS(s.corsPolicy(), streaming)
 		}
 		h = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if s.streamsIncremental(r) {
@@ -314,10 +332,11 @@ func (s *Server) handleGraphQL(w http.ResponseWriter, r *http.Request) {
 
 	claims, role, err := s.auth.Authenticate(r)
 	if err != nil {
-		writeError(w, http.StatusUnauthorized, err.Error())
+		writeAuthError(w, err)
 		return
 	}
 	if role != "" && !pgexec.ValidRole(role) {
+		w.Header().Set("WWW-Authenticate", auth.Challenge(auth.ErrRoleNotAllowed))
 		writeError(w, http.StatusUnauthorized, fmt.Sprintf("role %q is not allowed", role))
 		return
 	}
@@ -389,6 +408,15 @@ func (s *Server) handleGraphiQL(w http.ResponseWriter, r *http.Request) {
 		page = strings.Replace(page, "{url: '/graphql'}", "{url: '"+s.prefix+"/graphql'}", 1)
 	}
 	w.Write([]byte(page)) //nolint:errcheck
+}
+
+// writeAuthError answers a request whose credentials were refused: 401
+// with the error's WWW-Authenticate challenge.
+func writeAuthError(w http.ResponseWriter, err error) {
+	if c := auth.Challenge(err); c != "" {
+		w.Header().Set("WWW-Authenticate", c)
+	}
+	writeError(w, http.StatusUnauthorized, err.Error())
 }
 
 func writeError(w http.ResponseWriter, status int, msg string) {

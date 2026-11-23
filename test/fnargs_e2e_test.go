@@ -89,7 +89,7 @@ func TestFunctionPolymorphicArguments(t *testing.T) {
 	}
 
 	off := testServer(t, func(c *config.Config) {
-		c.Plugins.Disabled = append(c.Plugins.Disabled, "smart-comments")
+		c.Plugins.Disabled = append(c.Plugins.Disabled, "smart_comments")
 	})
 	res = post(t, off.URL, `{ pickFirst(a: "x", b: "y") }`, nil)
 	if len(res.Errors) == 0 || !strings.Contains(res.Errors[0].Message, "pickFirst") {

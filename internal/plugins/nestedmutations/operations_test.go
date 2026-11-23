@@ -23,7 +23,7 @@ import (
 )
 
 func TestNestedInputShapes(t *testing.T) {
-	_, built := setupWith(t, plugin.NewRegistry(nestedmutations.New(nil)))
+	_, built := setupWith(t, plugin.NewRegistry(nestedmutations.New(nestedmutations.DefaultSettings())))
 	for _, want := range []string{
 		"input PostAuthorNestedInput {\n  connectById: UserConnectByIdInput\n  connectByEmail: UserConnectByEmailInput\n  connectByNodeId: UserConnectByNodeIdInput\n  create: UserCreateInput\n}",
 		"input PostAuthorNestedPatchInput {\n  connectById: UserConnectByIdInput\n  connectByEmail: UserConnectByEmailInput\n  connectByNodeId: UserConnectByNodeIdInput\n  create: UserCreateInput\n  updateById: UserUpdateByIdInput\n  updateByEmail: UserUpdateByEmailInput\n  updateByNodeId: UserUpdateByNodeIdInput\n  deleteById: UserDeleteByIdInput\n  deleteByEmail: UserDeleteByEmailInput\n  deleteByNodeId: UserDeleteByNodeIdInput\n}",
@@ -60,7 +60,7 @@ func TestNestedInputShapes(t *testing.T) {
 }
 
 func TestNestedUpdateMutation(t *testing.T) {
-	reg, built := setupWith(t, plugin.NewRegistry(nestedmutations.New(nil)))
+	reg, built := setupWith(t, plugin.NewRegistry(nestedmutations.New(nestedmutations.DefaultSettings())))
 	sql := compileRoot(t, reg, built, `mutation {
 		updatePostById(id: 1, patch: {title: "T", author: {connectByEmail: {email: "a@b.c"}},
 			commentsByPostId: {connectById: [{id: 2}], updateById: {id: 3, commentPatch: {body: "b"}}, deleteById: [{id: 4}]}}) {
@@ -75,9 +75,9 @@ func TestNestedUpdateMutation(t *testing.T) {
 		`UPDATE "public"."comments" SET "body" = $7 FROM __mut WHERE "public"."comments"."id" = $6 AND "public"."comments"."post_id" = __mut."id" RETURNING`,
 		`SELECT "id", "post_id", "body" FROM "public"."comments" WHERE NOT EXISTS (SELECT 1 FROM __c_2 AS __m WHERE __m."id" = "public"."comments"."id") AND NOT EXISTS (SELECT 1 FROM __c_3 AS __m`,
 		"\n  UNION ALL SELECT \"id\", \"post_id\", \"body\" FROM __c_2\n  UNION ALL SELECT \"id\", \"post_id\", \"body\" FROM __c_4\n)",
-		"__guard AS MATERIALIZED (\n  SELECT (SELECT CASE WHEN count(*) > 0 THEN true ELSE concat('nested-mutations: author.connectByEmail matched ', count(*), ' rows')::boolean END FROM __p_1)",
-		"concat('nested-mutations: commentsByPostId.updateById[0] matched ', count(*), ' rows')",
-		"concat('nested-mutations: updatePostById matched ', count(*), ' rows')::boolean END FROM __mut) AS ok\n)",
+		"__guard AS MATERIALIZED (\n  SELECT (SELECT CASE WHEN count(*) > 0 THEN true ELSE concat('nested_mutations: author.connectByEmail matched ', count(*), ' rows')::boolean END FROM __p_1)",
+		"concat('nested_mutations: commentsByPostId.updateById[0] matched ', count(*), ' rows')",
+		"concat('nested_mutations: updatePostById matched ', count(*), ' rows')::boolean END FROM __mut) AS ok\n)",
 		"FROM __guard\nLEFT JOIN LATERAL (\n",
 		") AS __guarded ON true\nWHERE __guard.ok",
 	} {
@@ -97,14 +97,14 @@ func TestNestedUpdateMutation(t *testing.T) {
 }
 
 func TestNestedUpdateWithoutColumnsLocksMainRow(t *testing.T) {
-	reg, built := setupWith(t, plugin.NewRegistry(nestedmutations.New(nil)))
+	reg, built := setupWith(t, plugin.NewRegistry(nestedmutations.New(nestedmutations.DefaultSettings())))
 	sql := compileRoot(t, reg, built, `mutation {
 		updateUserById(id: 1, patch: {placesByOwnerId: {create: [{name: "Home"}], disconnectById: [{id: 2}]}}) { user { id } }
 	}`).SQL
 	for _, want := range []string{
 		"__mut AS (\n  SELECT __s.\"id\" FROM \"public\".\"users\" AS __s WHERE __s.\"id\" = $1 FOR UPDATE OF __s\n)",
 		`UPDATE "public"."places" SET "owner_id" = NULL FROM __mut WHERE "public"."places"."id" = $3 AND "public"."places"."owner_id" = __mut."id"`,
-		"concat('nested-mutations: updateUserById matched ', count(*), ' rows')",
+		"concat('nested_mutations: updateUserById matched ', count(*), ' rows')",
 	} {
 		if !strings.Contains(sql, want) {
 			t.Errorf("SQL missing %q:\n%s", want, sql)
@@ -116,7 +116,7 @@ func TestNestedUpdateWithoutColumnsLocksMainRow(t *testing.T) {
 }
 
 func TestNestedForwardOperationsTargetTheReferencedRow(t *testing.T) {
-	reg, built := setupWith(t, plugin.NewRegistry(nestedmutations.New(nil)))
+	reg, built := setupWith(t, plugin.NewRegistry(nestedmutations.New(nestedmutations.DefaultSettings())))
 	user := base64.StdEncoding.EncodeToString([]byte(`["User", 7]`))
 	sql := compileRoot(t, reg, built, `mutation {
 		updatePostById(id: 9, patch: {author: {updateByNodeId: {nodeId: "`+user+`", userPatch: {fullName: "U"}}, deleteByEmail: {email: "e"}}}) { post { id } }
@@ -148,7 +148,7 @@ func TestForwardDisconnect(t *testing.T) {
 			RefSchema: "public", RefTable: "users", RefColumns: []string{"email"},
 		}},
 	})
-	reg := plugin.NewRegistry(nestedmutations.New(nil))
+	reg := plugin.NewRegistry(nestedmutations.New(nestedmutations.DefaultSettings()))
 	b := schema.New(cat, inflect.Default, schema.Options{FilterIndexedOnly: true})
 	if err := reg.TransformSchema(context.Background(), nil, b); err != nil {
 		t.Fatal(err)
@@ -172,7 +172,7 @@ func TestForwardDisconnect(t *testing.T) {
 }
 
 func TestNestedErrors(t *testing.T) {
-	reg, built := setupWith(t, plugin.NewRegistry(nestedmutations.New(map[string]any{"max_depth": 2, "max_operations": 3})))
+	reg, built := setupWith(t, plugin.NewRegistry(nestedmutations.New(nestedmutations.Settings{ForceTransactions: true, MaxDepth: 2, MaxOperations: 3})))
 	post := base64.StdEncoding.EncodeToString([]byte(`["Post", 1]`))
 	for _, tc := range []struct{ name, query, want string }{
 		{"two links", `mutation { createPost(input: {title: "x", author: {connectById: {id: 1}, create: {email: "e"}}}) { post { id } } }`,
@@ -204,7 +204,7 @@ func TestNestedErrors(t *testing.T) {
 }
 
 func TestBeforeOperationForcesTx(t *testing.T) {
-	p := nestedmutations.New(nil)
+	p := nestedmutations.New(nestedmutations.DefaultSettings())
 	_, built := setupWith(t, plugin.NewRegistry(p))
 	for query, want := range map[string]bool{
 		`mutation { updateUserById(id: 1, patch: {postsByAuthorId: {create: [{title: "x"}]}}) { user { id } } }`:                                  true,
@@ -245,7 +245,7 @@ func TestPatchMustKeepReferencedKey(t *testing.T) {
 			RefSchema: "public", RefTable: "users", RefColumns: []string{"email"},
 		}},
 	})
-	reg := plugin.NewRegistry(nestedmutations.New(nil))
+	reg := plugin.NewRegistry(nestedmutations.New(nestedmutations.DefaultSettings()))
 	b := schema.New(cat, inflect.Default, schema.Options{FilterIndexedOnly: true})
 	if err := reg.TransformSchema(context.Background(), nil, b); err != nil {
 		t.Fatal(err)
@@ -298,7 +298,7 @@ func sdlBlock(sdl, header string) string {
 // the same plugin, as a second contract or a watch-mode rebuild does: the
 // first schema's operations keep their nested fields.
 func TestStatePerSchema(t *testing.T) {
-	p := nestedmutations.New(nil)
+	p := nestedmutations.New(nestedmutations.DefaultSettings())
 	reg, first := setupWith(t, plugin.NewRegistry(p))
 	cat := testutil.FixtureCatalog()
 	cat.Tables = slices.DeleteFunc(cat.Tables, func(t *introspect.Table) bool { return t.Name == "posts" || t.Name == "comments" })

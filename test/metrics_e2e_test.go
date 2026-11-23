@@ -25,9 +25,9 @@ func metricsConfig(t *testing.T) config.Config {
 	}
 	cfg := config.DefaultConfig()
 	cfg.Database.URL = url
-	cfg.RLS.Enabled = false
+	noIdentity(&cfg)
 	cfg.Errors.Detail = "dev"
-	cfg.Plugins.Disabled = []string{"simple-names"}
+	cfg.Plugins.Disabled = []string{"simple_names"}
 	cfg.Metrics.Enabled = true
 	return cfg
 }

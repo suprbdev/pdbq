@@ -21,7 +21,7 @@
 //     column (MIN for ASC, MAX for DESC). The related columns respect the
 //     filters.indexed_only policy exactly like the table's own orderBy
 //     values. Toggled via
-//     plugins.settings.advanced-filters.relation_order (also off when
+//     plugins.settings.advanced_filters.relation_order (also off when
 //     relations is off).
 //   - computed-column filtering and ordering: stable/immutable row-type
 //     functions without extra arguments become filter fields and orderBy
@@ -30,12 +30,12 @@
 //
 // The plugin only adds schema surface plus catalog bindings; the compiler
 // reads the bindings from schema.Built and stays inert when they are absent,
-// so disabling the plugin (plugins.disabled: [advanced-filters]) removes the
+// so disabling the plugin (plugins.disabled: [advanced_filters]) removes the
 // feature completely. The two halves toggle independently via
-// plugins.settings.advanced-filters.{relations,computed}.
+// plugins.settings.advanced_filters.{relations,computed}.
 //
 // The surface is also tunable per object through smart comments (parsed
-// directly from catalog comments, so this works even when the smart-comments
+// directly from catalog comments, so this works even when the smart_comments
 // plugin is disabled):
 //
 //   - "@omit filter" on a foreign key skips its relation filter (both
@@ -43,7 +43,7 @@
 //     table skips the reverse relation filter and orderings; "@omit filter"
 //     / "@omit order" on a computed function skips its filter field /
 //     orderBy values.
-//   - with plugins.settings.advanced-filters.relations_opt_in (or
+//   - with plugins.settings.advanced_filters.relations_opt_in (or
 //     computed_opt_in) set, the default flips: only foreign keys / computed
 //     functions tagged "@filterable" (alias "@sortable") get filter surface.
 //   - "@fieldName" / "@foreignFieldName" renames apply automatically (they
@@ -76,25 +76,33 @@ type Plugin struct {
 	computedOptIn  bool
 }
 
-// New builds the plugin from its `plugins.settings.advanced-filters` map.
-func New(settings map[string]any) *Plugin {
-	p := &Plugin{relations: true, computed: true, relationOrder: true}
-	if v, ok := settings["relations"].(bool); ok {
-		p.relations = v
+// Name is the plugin's name in plugins.disabled and plugins.settings.
+const Name = "advanced_filters"
+
+// Settings is the plugins.settings.advanced_filters section.
+type Settings struct {
+	Relations      bool `koanf:"relations" doc:"Relation filters (forward, reverse some/none/every and the <rel>Exists/<rel>Exist variants)."`
+	Computed       bool `koanf:"computed" doc:"Filtering and ordering by computed columns (single row-argument stable functions; needs schema.functions). Computed filters are not index-backed, so they bypass filters.indexed_only."`
+	RelationOrder  bool `koanf:"relation_order" doc:"One-level relational orderBy values (REL__COLUMN_ASC/_DESC); off as well when relations is off."`
+	RelationsOptIn bool `koanf:"relations_opt_in" doc:"Only foreign keys tagged @filterable (alias @sortable) get relation filters and orderings."`
+	ComputedOptIn  bool `koanf:"computed_opt_in" doc:"Only computed-column functions tagged @filterable (alias @sortable) get filter and orderBy surface."`
+}
+
+// DefaultSettings returns the documented defaults: every half on, opt-in
+// modes off.
+func DefaultSettings() Settings {
+	return Settings{Relations: true, Computed: true, RelationOrder: true}
+}
+
+// New builds the plugin from its settings.
+func New(s Settings) *Plugin {
+	return &Plugin{
+		relations:      s.Relations,
+		computed:       s.Computed,
+		relationOrder:  s.RelationOrder,
+		relationsOptIn: s.RelationsOptIn,
+		computedOptIn:  s.ComputedOptIn,
 	}
-	if v, ok := settings["computed"].(bool); ok {
-		p.computed = v
-	}
-	if v, ok := settings["relation_order"].(bool); ok {
-		p.relationOrder = v
-	}
-	if v, ok := settings["relations_opt_in"].(bool); ok {
-		p.relationsOptIn = v
-	}
-	if v, ok := settings["computed_opt_in"].(bool); ok {
-		p.computedOptIn = v
-	}
-	return p
 }
 
 // filterOmits reports which halves of the filter surface a smart comment
@@ -107,7 +115,7 @@ func filterOmits(comment string, optIn bool) (skipFilter, skipOrder bool) {
 	return skipFilter, skipOrder
 }
 
-func (p *Plugin) Name() string  { return "advanced-filters" }
+func (p *Plugin) Name() string  { return Name }
 func (p *Plugin) Priority() int { return 150 }
 
 // ---- SchemaHook ----

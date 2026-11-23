@@ -29,12 +29,10 @@ func liveServer(t *testing.T, mutate func(*config.Server)) (string, *pgx.Conn) {
 	}
 	cfg := config.DefaultConfig()
 	cfg.Database.URL = url
-	cfg.RLS.Enabled = true
-	cfg.RLS.Auth.Mode = "jwt"
-	cfg.RLS.Auth.JWTSecret = subsSecret
-	cfg.RLS.AllowedRoles = []string{"anonymous", "app_user"}
+	jwtIdentity(&cfg, subsSecret)
+	cfg.Roles.Allowed = []string{"anonymous", "app_user"}
 	cfg.Errors.Detail = "dev"
-	cfg.Plugins.Disabled = []string{"simple-names"}
+	cfg.Plugins.Disabled = []string{"simple_names"}
 	cfg.Server.Subscriptions = true
 	cfg.Server.SubscriptionsKeepalive = 0
 	cfg.Server.Live = true

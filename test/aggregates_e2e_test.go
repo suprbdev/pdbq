@@ -19,7 +19,7 @@ import (
 func aggregatesServer(t *testing.T, mutate func(*config.Config)) string {
 	t.Helper()
 	return testServer(t, func(cfg *config.Config) {
-		cfg.Plugins.Settings = map[string]map[string]any{"aggregates": {"enabled": true, "spatial_union_collect": true}}
+		cfg.Plugins.Settings.Aggregates.Enabled, cfg.Plugins.Settings.Aggregates.SpatialUnionCollect = true, true
 		cfg.Filters.AllowColumns = map[string][]string{"public.users": {"created_at"}}
 		if mutate != nil {
 			mutate(cfg)
@@ -292,9 +292,7 @@ func TestAggregatesCostLimit(t *testing.T) {
 
 func TestAggregatesRLS(t *testing.T) {
 	url := aggregatesServer(t, func(cfg *config.Config) {
-		cfg.RLS.Enabled = true
-		cfg.RLS.Auth.Mode = "headers"
-		cfg.RLS.RoleClaim = "role"
+		headersIdentity(cfg)
 	})
 	query := func(headers map[string]string) float64 {
 		t.Helper()

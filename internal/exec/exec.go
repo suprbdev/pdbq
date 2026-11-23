@@ -150,9 +150,13 @@ type Options struct {
 	// attempt rolled back completely.
 	TxRetries int
 	Isolation pgx.TxIsoLevel
-	// RLS enables SET LOCAL ROLE + claims set_config per operation.
-	RLS          bool
+	// ClaimsPrefix is the namespace of the per-claim settings
+	// (claims.prefix); empty sets none.
 	ClaimsPrefix string
+	// ClaimsJSONSetting is the setting receiving every claim as one JSON
+	// object (claims.json_setting); empty sets none. When set, every
+	// operation runs in a transaction so the setting is always defined.
+	ClaimsJSONSetting string
 	// DevErrors exposes full PG error details in GraphQL errors.
 	DevErrors bool
 	// StrictErrors hides every PG error message, including the
@@ -511,7 +515,7 @@ func (e *Executor) executeOperation(ctx context.Context, op *Operation, res *Res
 	needTx := op.ForceTx || op.Partial ||
 		e.Opts.TxPerRequest ||
 		(op.Type == ast.Mutation && e.Opts.TxMutations) ||
-		(e.Opts.RLS && (op.Role != "" || len(op.Claims) > 0))
+		op.Role != "" || len(op.Claims) > 0 || e.Opts.ClaimsJSONSetting != ""
 	if needTx {
 		e.executeTx(ctx, op, rootFields, res)
 		return
@@ -605,13 +609,14 @@ func (e *Executor) txOptions(op *Operation) (pgexec.TxOptions, pgexec.Identity) 
 	return pgexec.TxOptions{
 		Isolation:  batchIsolation(e.Opts.Isolation),
 		MaxRetries: e.Opts.TxRetries,
-		RLS:        e.Opts.RLS,
+		RLS:        true,
 		Log:        e.Opts.Logger.With("operation", op.Name),
 		Observer:   e.Opts.Metrics.observer(),
 	}, pgexec.Identity{
-		Role:         op.Role,
-		Claims:       op.Claims,
-		ClaimsPrefix: e.Opts.ClaimsPrefix,
+		Role:              op.Role,
+		Claims:            op.Claims,
+		ClaimsPrefix:      e.Opts.ClaimsPrefix,
+		ClaimsJSONSetting: e.Opts.ClaimsJSONSetting,
 	}
 }
 

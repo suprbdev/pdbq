@@ -43,12 +43,10 @@ func incServer(t *testing.T, mutate func(*config.Config)) *incFixture {
 	}
 	cfg := config.DefaultConfig()
 	cfg.Database.URL = url
-	cfg.RLS.Enabled = true
-	cfg.RLS.Auth.Mode = "jwt"
-	cfg.RLS.Auth.JWTSecret = incSecret
-	cfg.RLS.AllowedRoles = []string{"anonymous", "app_user"}
+	jwtIdentity(&cfg, incSecret)
+	cfg.Roles.Allowed = []string{"anonymous", "app_user"}
 	cfg.Errors.Detail = "dev"
-	cfg.Plugins.Disabled = []string{"simple-names"}
+	cfg.Plugins.Disabled = []string{"simple_names"}
 	cfg.Server.Subscriptions = true
 	cfg.Server.SubscriptionsKeepalive = 0
 	cfg.Server.ExposeSchema = true
@@ -72,7 +70,7 @@ func incServer(t *testing.T, mutate func(*config.Config)) *incFixture {
 		t.Fatal(err)
 	}
 	ex := app.Executor(built)
-	srv, err := server.New(cfg.Server, server.NewAuthenticator(cfg.RLS, nil), ex, built.SDL, nil)
+	srv, err := server.New(cfg.Server, mustAuthenticator(t, cfg), ex, built.SDL, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -429,7 +427,7 @@ func TestIncrementalRLS(t *testing.T) {
 func TestIncrementalSnapshot(t *testing.T) {
 	f := incServer(t, func(c *config.Config) {
 		c.Server.IncrementalStreamBatchSize = 1
-		c.RLS.Enabled = false
+		noIdentity(c)
 	})
 	ctx := context.Background()
 	q := `{
@@ -521,7 +519,7 @@ func TestIncrementalLimits(t *testing.T) {
 // TestIncrementalMutationInline checks that a mutation's deferred fragments
 // are delivered in its single result.
 func TestIncrementalMutationInline(t *testing.T) {
-	f := incServer(t, func(c *config.Config) { c.RLS.Enabled = false })
+	f := incServer(t, func(c *config.Config) { noIdentity(c) })
 	resp := incPost(t, f.http, `mutation { publishPost(input: {postId: 1}) { clientMutationId ... @defer { query { postById(id: 1) { published } } } } }`, "multipart/mixed, application/json", "")
 	b, _ := io.ReadAll(resp.Body)
 	if resp.Header.Get("Content-Type") != "application/json" || !strings.Contains(string(b), `"published"`) || strings.Contains(string(b), "hasNext") {

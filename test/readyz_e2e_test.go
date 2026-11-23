@@ -19,7 +19,7 @@ func TestReadyzPingsDatabase(t *testing.T) {
 	}
 	cfg := config.DefaultConfig()
 	cfg.Database.URL = url
-	cfg.RLS.Enabled = false
+	noIdentity(&cfg)
 	app := pdbq.New(cfg)
 	t.Cleanup(app.Close)
 	h, err := app.Handler(context.Background())

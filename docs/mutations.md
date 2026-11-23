@@ -39,7 +39,7 @@ The single-row payloads (`CreatePostPayload`, `UpdatePostPayload`,
 
 `deleted<Type>NodeId` (`deletedPostNodeId`, the PostGraphile v4 name) is
 named through `inflect.KindPayloadDeletedNodeID`, follows `@name` on the
-table and is not affected by `simple-names`. It is present on every
+table and is not affected by `simple_names`. It is present on every
 `delete<Type>By<Key>` payload, including the by-unique mutations, and absent
 when the table has no `nodeId` (no primary key, or `@omit read` on a key
 column). A delete that matches no row is still the not-found error.
@@ -95,7 +95,7 @@ The result field is named the way PostGraphile names it:
 | another type | the lowerCamel type name: `mood: Mood`, `bigInt: BigInt`, `geoJson: GeoJSON`, `uuid: UUID` |
 | an array of any of these | the plural: `integers: [Int!]`, `strings: [String!]` |
 | `void` | no result field |
-| the `rls.auth.jwt_type` composite | the composite's name (`jwt: String`, the signed token) |
+| the `auth.mint_type` composite | the composite's name (`jwt: String`, the signed token) |
 
 Functions returning an anonymous `record` without `OUT` parameters (or
 `SETOF record`) are not exposed, as in PostGraphile: the shape of the row is
@@ -174,7 +174,7 @@ before the modification.
   wherever the payload reads it — relations leading back to it, and every
   `query` field: `createPost { query { allPosts { totalCount } } }` counts
   the new post, `deletePostById { query { postById(…) } }` no longer finds
-  the deleted one. The `nested-mutations` plugin does the same for every
+  the deleted one. The `nested_mutations` plugin does the same for every
   table its CTEs write. Rows changed by triggers or referential actions
   (`ON DELETE CASCADE`, …) are not reflected.
 - **Custom mutations** are opaque: pdbq does not know what the function

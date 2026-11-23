@@ -25,7 +25,7 @@ func buildAllowing(t *testing.T, cat *introspect.Catalog, allow map[string][]str
 		FilterIndexedOnly: true,
 		AllowColumns:      allow,
 	})
-	if err := New(nil).TransformSchema(context.Background(), b); err != nil {
+	if err := New(DefaultSettings()).TransformSchema(context.Background(), b); err != nil {
 		t.Fatalf("TransformSchema: %v", err)
 	}
 	if _, err := b.Build(); err != nil {
@@ -93,7 +93,7 @@ func TestUnaccentSurface(t *testing.T) {
 		t.Error("unaccent surface without the extension")
 	}
 
-	off := buildWith(t, withoutExtension(contribfixture.Catalog(), "fuzzystrmatch"), map[string]any{"filters": false}, false, true)
+	off := buildWith(t, withoutExtension(contribfixture.Catalog(), "fuzzystrmatch"), func(s *Settings) { s.Filters = false }, false, true)
 	if strings.Contains(off.SDL(), "Unaccent") {
 		t.Error("filters: false kept the unaccent operators")
 	}
@@ -104,7 +104,7 @@ func TestUnaccentInputNameTaken(t *testing.T) {
 		Logger: slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil)),
 	})
 	b.Inputs["StringTrgmUnaccentFilterOps"] = &schema.Input{Name: "StringTrgmUnaccentFilterOps"}
-	if err := New(nil).TransformSchema(context.Background(), b); err != nil {
+	if err := New(DefaultSettings()).TransformSchema(context.Background(), b); err != nil {
 		t.Fatal(err)
 	}
 	if got := fieldType(t, b, "DocumentFilter", "notes"); got != "StringTrgmFilterOps" {
@@ -211,7 +211,7 @@ func TestVectorOrdering(t *testing.T) {
 		t.Error("L1 ordering for pgvector 0.6")
 	}
 
-	noOrder := buildWith(t, contribfixture.Catalog(), map[string]any{"ordering": false}, true, true)
+	noOrder := buildWith(t, contribfixture.Catalog(), func(s *Settings) { s.Ordering = false }, true, true)
 	if len(enumValues(noOrder, "EmbeddingsOrderBy", "EMBEDDING_")) != 0 || hasArg(noOrder.Query.Field("allEmbeddings"), "nearVector") {
 		t.Error("ordering: false kept vector ordering")
 	}

@@ -19,7 +19,7 @@ var valuesAllow = map[string][]string{"public.documents": {"notes", "path", "att
 
 // buildValues applies the plugin (configured by settings) to cat under the
 // given policy and allowlist.
-func buildValues(t *testing.T, cat *introspect.Catalog, settings map[string]any, indexedOnly bool, allow map[string][]string) *schema.Builder {
+func buildValues(t *testing.T, cat *introspect.Catalog, settings func(*Settings), indexedOnly bool, allow map[string][]string) *schema.Builder {
 	t.Helper()
 	b := schema.New(cat, inflect.Next(inflect.Default), schema.Options{
 		Logger:            slog.New(slog.NewTextHandler(io.Discard, nil)),
@@ -27,7 +27,11 @@ func buildValues(t *testing.T, cat *introspect.Catalog, settings map[string]any,
 		FilterIndexedOnly: indexedOnly,
 		AllowColumns:      allow,
 	})
-	if err := New(settings).TransformSchema(context.Background(), b); err != nil {
+	s := DefaultSettings()
+	if settings != nil {
+		settings(&s)
+	}
+	if err := New(s).TransformSchema(context.Background(), b); err != nil {
 		t.Fatalf("TransformSchema: %v", err)
 	}
 	if _, err := b.Build(); err != nil {
@@ -154,11 +158,11 @@ func TestValueFiltersAndOrdering(t *testing.T) {
 		t.Error("@omit order on attrs: want the value filter kept, no value ordering")
 	}
 
-	noFilters := buildValues(t, contribfixture.Catalog(), map[string]any{"filters": false}, true, valuesAllow)
+	noFilters := buildValues(t, contribfixture.Catalog(), func(s *Settings) { s.Filters = false }, true, valuesAllow)
 	if fieldType(t, noFilters, "DocumentFilter", "pathNlevel") != "" || !hasEnumValue(noFilters, "DocumentsOrderBy", "PATH_NLEVEL_ASC") {
 		t.Error("filters: false must drop value filters only")
 	}
-	noOrdering := buildValues(t, contribfixture.Catalog(), map[string]any{"ordering": false}, true, valuesAllow)
+	noOrdering := buildValues(t, contribfixture.Catalog(), func(s *Settings) { s.Ordering = false }, true, valuesAllow)
 	if hasEnumValue(noOrdering, "DocumentsOrderBy", "PATH_NLEVEL_ASC") || noOrdering.Inputs["DocumentHstoreKeyInput"] != nil ||
 		fieldType(t, noOrdering, "DocumentFilter", "pathNlevel") == "" {
 		t.Error("ordering: false must drop value orderings only")
@@ -206,7 +210,7 @@ func TestIntarraySurface(t *testing.T) {
 	if got := fieldType(t, buildValues(t, cat, nil, true, valuesAllow), "DocumentFilter", "tagIds"); got != "IntListIntarrayFilterOps" {
 		t.Errorf("allowlisted tag_ids = %s", got)
 	}
-	if strings.Contains(buildValues(t, contribfixture.Catalog(), map[string]any{"filters": false}, true, nil).SDL(), "matchesQueryInt") {
+	if strings.Contains(buildValues(t, contribfixture.Catalog(), func(s *Settings) { s.Filters = false }, true, nil).SDL(), "matchesQueryInt") {
 		t.Error("filters: false kept matchesQueryInt")
 	}
 }

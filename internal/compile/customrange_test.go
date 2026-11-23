@@ -55,7 +55,7 @@ func buildCustomRanges(t *testing.T) *schema.Built {
 			{Name: "readings_slot_idx", Columns: []string{"slot"}, Method: "gist"},
 		},
 	})
-	return buildCatalog(t, cat, nil, contribplugin.New(nil))
+	return buildCatalog(t, cat, nil, contribplugin.New(contribplugin.DefaultSettings()))
 }
 
 func TestCustomRangeTypes(t *testing.T) {

@@ -18,3 +18,23 @@ func ExampleYAML() string {
 	b.WriteString(confx.ExampleYAML(DefaultConfig()))
 	return b.String()
 }
+
+// StarterYAML is the pdbq.yaml that `pdbq config init` writes: it runs
+// with only database.url filled in, without credentials and as the
+// connection role.
+const StarterYAML = `# pdbq configuration. Run "pdbq config example" for the full annotated reference.
+database:
+  # Fill in real credentials, or delete the url and set PDBQ_DATABASE_URL.
+  url: "postgres://USER:PASSWORD@HOST:5432/DB"
+server:
+  addr: ":8080"
+schema:
+  schemas: ["public"]
+# Starter identity: no credentials, every request runs as the connection
+# role. Configure auth (jwt or headers) and roles before production use;
+# see "pdbq config example" and docs/rls.md.
+auth:
+  mode: none
+roles:
+  switch: false
+`

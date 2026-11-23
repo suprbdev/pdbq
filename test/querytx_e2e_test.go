@@ -25,11 +25,11 @@ BEGIN
     RAISE EXCEPTION 'qtx failure' USING ERRCODE = '22012';
 END $$;
 CREATE FUNCTION qtx.qtx_whoami() RETURNS text STABLE LANGUAGE sql AS $$
-    SELECT current_user || ':' || coalesce(current_setting('pdbq.claims.user_id', true), '')
+    SELECT current_user || ':' || coalesce(current_setting('jwt.claims.user_id', true), '')
         || ':' || current_setting('transaction_isolation')
 $$;
 CREATE FUNCTION qtx.qtx_whoami_write() RETURNS text VOLATILE LANGUAGE sql AS $$
-    SELECT current_user || ':' || coalesce(current_setting('pdbq.claims.user_id', true), '')
+    SELECT current_user || ':' || coalesce(current_setting('jwt.claims.user_id', true), '')
         || ':' || current_setting('transaction_isolation')
 $$;
 CREATE FUNCTION qtx.qtx_serial() RETURNS integer STABLE LANGUAGE plpgsql AS $$
@@ -294,9 +294,7 @@ func TestTxRLSIdentity(t *testing.T) {
 		t.Run(tc.isolation, func(t *testing.T) {
 			url := qtxServer(t, func(c *config.Config) {
 				c.Database.MaxConns = 1
-				c.RLS.Enabled = true
-				c.RLS.Auth.Mode = "headers"
-				c.RLS.RoleClaim = "role"
+				headersIdentity(c)
 				c.TX.Isolation = tc.isolation
 			})
 			user := func(id string) map[string]string {

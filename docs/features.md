@@ -97,9 +97,9 @@ Checklist of PostgreSQL and GraphQL features pdbq supports. Checked = implemente
 - [x] `jsonb` path operators (`@?`/`@@` via `pathExists`/`pathMatch`)
 - [x] Range operators (`overlaps contains containsElement containedBy strictlyLeftOf strictlyRightOf notExtendsRightOf notExtendsLeftOf adjacentTo`), on multiranges too
 - [x] Contrib operator sets respect `filters.indexed_only` per index hint (no unindexable operators; trigram operators/ordering only on GIN/GiST-indexed columns; unaccent and fuzzystrmatch operators, vector/bit distance thresholds, the earthdistance `point` surface and the ltree, hstore and intarray value filters and orderings only on allowlisted columns; each vector distance ordering only on columns led by an HNSW/IVFFlat index built for its metric; index hints matched by operator class; cube and earth thresholds and orderings only on GiST-indexed columns)
-- [x] Filtering across relations (`posts: {some: {title: {equalTo: ...}}}`) — built-in `advanced-filters` plugin: forward FK takes the parent's filter, reverse FK a `{some|none|every}` wrapper, compiled to EXISTS subqueries
+- [x] Filtering across relations (`posts: {some: {title: {equalTo: ...}}}`) — built-in `advanced_filters` plugin: forward FK takes the parent's filter, reverse FK a `{some|none|every}` wrapper, compiled to EXISTS subqueries
 - [x] Filtering on relation existence (`postsExist: true`, `authorExists: false`) — Boolean variant per relation, compiled to a bare `(NOT) EXISTS`
-- [x] Filtering/ordering on computed columns — built-in `advanced-filters` plugin (single-row-argument stable functions; not index-backed)
+- [x] Filtering/ordering on computed columns — built-in `advanced_filters` plugin (single-row-argument stable functions; not index-backed)
 - [x] `distinctOn` (column-enum arg on connections → `SELECT DISTINCT ON`; distinct-aware `totalCount`; first/offset pagination only)
 
 ## Mutations
@@ -130,7 +130,7 @@ Checklist of PostgreSQL and GraphQL features pdbq supports. Checked = implemente
 - [x] `SETOF <table>` returns → list of the table's object type with full selection support
 - [x] `SETOF <scalar>` returns → scalar lists
 - [x] Single-row table returns with selection support
-- [x] Composite returns → the composite's object type (except `rls.auth.jwt_type`, minted into a token string)
+- [x] Composite returns → the composite's object type (except `auth.mint_type`, minted into a token string)
 - [x] Rows nested in other values (`<table>[]` results and columns, composite attributes, `RETURNS TABLE` columns and columns of a row type) → `<Type>Row`, the columns the table's type exposes (no `@omit read` or contract-hidden column, no raster), built with `json_build_object`; values of an omitted or contract-hidden table's row type have no field
 - [x] `OUT`/`RETURNS TABLE` record returns → `<Function>Record` object type (`[<Function>Record!]!` for `SETOF`), compiled in the same statement
 - [x] `void` returns → `Boolean`
@@ -143,15 +143,15 @@ Checklist of PostgreSQL and GraphQL features pdbq supports. Checked = implemente
 ## RLS & auth
 
 - [x] On by default; per-operation `SET LOCAL ROLE` (never plain `SET` on pooled connections)
-- [x] Claims via transaction-scoped `set_config('pdbq.claims.*', ...)`
-- [x] JWT claim source (HS256/384/512, issuer/audience checks)
-- [x] Trusted-header claim source for behind-gateway deployments
-- [x] Anonymous role for unauthenticated requests
+- [x] Claims via transaction-scoped `set_config('jwt.claims.*', ...)` (`claims.prefix`), plus every claim as one JSON setting (`claims.json_setting`, e.g. PostgREST's `request.jwt.claims`)
+- [x] JWT claim source (HS256/384/512, issuer/audience checks, `auth.jwt.secret_file`, `leeway`, role claim paths such as `app_metadata.role`; case-insensitive `Bearer`)
+- [x] Trusted-header claim source for behind-gateway deployments (`auth.headers.trusted_proxies` required; untrusted peers refused)
+- [x] Opt-in anonymous role for unauthenticated requests (`roles.anonymous`; otherwise 401 with `WWW-Authenticate`)
 - [x] Role claim configurable; default role fallback
 - [x] Role name validation before interpolation into `SET ROLE`
-- [x] `rls.enabled: false` escape hatch with loud startup warning
-- [x] JWKS / RS256 asymmetric JWT verification (`rls.auth.jwks_url` + `jwks_cache_ttl`; RS256/384/512 + ES256/384/512, kid-matched, rotation-aware cache)
-- [x] Per-request role allowlist (`rls.allowed_roles`; default/anonymous roles always allowed)
+- [x] `roles.switch: false` escape hatch (connection role, credentials still verified) with a startup warning
+- [x] JWKS / RS256 asymmetric JWT verification (`auth.jwt.jwks_url` + `jwks_cache_ttl`; RS256/384/512 + ES256/384/512, kid-matched, rotation-aware cache)
+- [x] Per-request role allowlist (`roles.allowed`; default/anonymous roles always allowed)
 - [x] Claim → GraphQL context exposure for plugins beyond `op.Claims` (`exec.OperationFromContext`/`ClaimsFromContext` — the operation rides the request context into CompileHooks)
 
 ## Transactions & execution
@@ -182,7 +182,7 @@ Checklist of PostgreSQL and GraphQL features pdbq supports. Checked = implemente
 - [x] `/metrics` (Prometheus) endpoint (opt-in `metrics.enabled`, optional separate `metrics.addr`; see [metrics.md](metrics.md))
 - [x] Persisted queries / APQ (`server.apq` Apollo protocol, `server.persisted_queries_path` allowlist file, `server.persisted_only` lockdown)
 - [x] `@defer` / `@stream` incremental delivery (opt-in `server.incremental_delivery`): `multipart/mixed` over HTTP (`incrementalSpec=v0.2` and `deferSpec=20220824` shapes), `next` messages over WebSocket; deferred fragments and stream batches run as their own statements in one repeatable read snapshot under the request's RLS identity — see [Incremental delivery](incremental.md)
-- [x] Schema contracts — named schema variants that hide tagged tables, columns, functions and relations per audience (e.g. `public`/`partner`/`internal`), each with its own SDL export (`schema print --contract`) and served endpoint; builds on the `@omit` machinery in smart-comments ([contracts.md](contracts.md))
+- [x] Schema contracts — named schema variants that hide tagged tables, columns, functions and relations per audience (e.g. `public`/`partner`/`internal`), each with its own SDL export (`schema print --contract`) and served endpoint; builds on the `@omit` machinery in `smart_comments` ([contracts.md](contracts.md))
 - [x] CORS configuration (`server.cors_origins`: exact-match allowlist or `*`)
 - [x] Response compression (gzip, opt-in via `server.compression`)
 
@@ -219,13 +219,13 @@ Checklist of PostgreSQL and GraphQL features pdbq supports. Checked = implemente
 - [x] Enable/disable/configure per plugin via `plugins.*` config
 - [x] Library embedding: `pdbq.New(cfg, pdbq.WithPlugins(...))`
 - [x] Collision detection with warnings at schema build
-- [x] Built-in: `simple-names`
-- [x] Built-in: `nested-mutations`
+- [x] Built-in: `simple_names`
+- [x] Built-in: `nested_mutations`
 - [x] Built-in: `contrib` (full-text, pg_trgm, unaccent, fuzzystrmatch, hstore, ltree, intarray, range, inet and cube operators; rank, similarity, Levenshtein, pgvector, cube and earthdistance distance ordering and scores, distance thresholds; ltree, hstore and intarray value fields, filters and ordering; `plugins.settings.contrib.{filters,ordering}`)
-- [x] Built-in: `advanced-filters` (relation filters + computed-column filtering/ordering; halves toggle via `plugins.settings.advanced-filters.{relations,computed}`)
+- [x] Built-in: `advanced_filters` (relation filters + computed-column filtering/ordering; halves toggle via `plugins.settings.advanced_filters.{relations,computed}`)
 - [x] Built-in: `aggregates` (connection, grouped, relational-order and relational-filter aggregates; off unless `plugins.settings.aggregates.enabled` or an `@aggregates` table tag; see [Aggregates](aggregates.md))
 - [ ] Out-of-process plugins (go-plugin gRPC or wasm) — the existing hook interfaces are the contract either way
-- [x] Built-in: smart-comments plugin (`docs/smart-comments.md`) — `@omit` (per-action on tables, columns, FKs, unique constraints, functions), `@name`, `@fieldName`/`@foreignFieldName`, `@deprecated`, `@notNull`/`@nullable`, `@filterable`/`@sortable`, and logical `@primaryKey`/`@unique`/`@foreignKey` on views; `advanced-filters` honors the tags per object (`@omit filter,order` on relations/computed functions) and gains `relations_opt_in`/`computed_opt_in` for explicit `@filterable` opt-in
+- [x] Built-in: smart_comments plugin (`docs/smart-comments.md`) — `@omit` (per-action on tables, columns, FKs, unique constraints, functions), `@name`, `@fieldName`/`@foreignFieldName`, `@deprecated`, `@notNull`/`@nullable`, `@filterable`/`@sortable`, and logical `@primaryKey`/`@unique`/`@foreignKey` on views; `advanced_filters` honors the tags per object (`@omit filter,order` on relations/computed functions) and gains `relations_opt_in`/`computed_opt_in` for explicit `@filterable` opt-in
 
 ## Ops & delivery
 

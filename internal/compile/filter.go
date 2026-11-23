@@ -108,7 +108,7 @@ func (s *stmt) filterCond(t *introspect.Table, filterType string, v any, alias s
 		default:
 			colName, ok := cols[key]
 			if !ok {
-				// Plugin-added filter fields (advanced-filters): relations
+				// Plugin-added filter fields (advanced_filters): relations
 				// compile to EXISTS subqueries, computed columns to function
 				// calls over the current row.
 				if rel := s.c.Built.FilterRelations[filterType][key]; rel != nil {

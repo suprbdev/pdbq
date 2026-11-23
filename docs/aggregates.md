@@ -202,15 +202,15 @@ pg-aggregates:
 | `<REL>_COUNT_ASC` / `_DESC` | the number of related rows |
 | `<REL>_<AGGREGATE>_<COLUMN>_ASC` / `_DESC` | an aggregate of a related column, e.g. `POSTS_BY_AUTHOR_ID_SUM_ID_DESC`, `POSTS_BY_AUTHOR_ID_DISTINCT_COUNT_TITLE_ASC` |
 
-With `simple-names` the relation is `posts`, so the values read
+With `simple_names` the relation is `posts`, so the values read
 `POSTS_COUNT_DESC` and `POSTS_SUM_ID_DESC`. Each value compiles to a
-correlated scalar subquery, like the advanced-filters relational ordering. It
+correlated scalar subquery, like the advanced_filters relational ordering. It
 works with keyset cursors, and descending values sort `NULL` (no related rows)
 last. The related table's aggregated columns are its orderable columns,
 those behind its own `orderBy` values, so `filters.indexed_only` and column
-`@omit order` apply as in advanced-filters. On the foreign key, `@omit order`
+`@omit order` apply as in advanced_filters. On the foreign key, `@omit order`
 and `@omit many` skip the relation, as does `@omit many` on the referencing
-table. In advanced-filters' `relations_opt_in`
+table. In advanced_filters' `relations_opt_in`
 mode, only keys tagged `@filterable`/`@sortable` get values.
 
 Keyset cursors over a floating-point aggregate (`sum`, `average`,
@@ -225,7 +225,7 @@ values), when this matters.
 
 ## Filtering by related aggregates
 
-With `advanced-filters` relation filters on (the default), the
+With `advanced_filters` relation filters on (the default), the
 `<Type>ToManyFilter` wrapper (`some`/`none`/`every`) gains an `aggregates`
 field, the pg-aggregates shape:
 
@@ -251,7 +251,7 @@ related rows, `sum` reads 0 and every other aggregate reads `NULL`, so a
 comparison on them is false. `not: {...}` around it is the exact complement.
 The aggregated columns are the related table's filterable columns, those of
 its `<Type>Filter`, so `filters.indexed_only` and column `@omit filter` apply.
-The field is reachable only through relation filters advanced-filters
+The field is reachable only through relation filters advanced_filters
 generated, so `@omit filter` on the foreign key and `relations_opt_in` govern
 it too. Spatial results have no filter.
 
@@ -267,7 +267,7 @@ it too. Spatial results have no filter.
 | `@behavior -aggregates:filterBy` | table | no `aggregates` field in the table's `<Type>ToManyFilter` |
 | `@omit aggregates`, `@aggregates off`, `@behavior -aggregate` | column | the column is aggregated nowhere |
 | `@behavior -groupBy` | column | the column is not a `groupBy` value |
-| `@omit order` | foreign key | no relational aggregate ordering over it (as advanced-filters) |
+| `@omit order` | foreign key | no relational aggregate ordering over it (as advanced_filters) |
 
 Columns hidden with `@omit read` are never aggregated. Column renames
 (`@name`) carry over to the aggregate fields, relation renames

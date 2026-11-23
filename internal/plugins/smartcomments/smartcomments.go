@@ -16,7 +16,7 @@
 //     order), composite type attributes (bare, read, create, update),
 //     foreign keys (bare, many, filter), unique constraints (bare), and
 //     functions (bare, plus filter/order for computed columns, honored by
-//     advanced-filters). Package omit decides which surface each action
+//     advanced_filters). Package omit decides which surface each action
 //     covers.
 //   - @name <new_name> — rename a table, column, enum, domain, or function;
 //     the value replaces the pg name at the start of the inflection
@@ -24,7 +24,7 @@
 //     follows.
 //   - @fieldName / @foreignFieldName <name> — on a foreign key: exact GraphQL
 //     name for the forward (child -> parent) / backward (parent -> children)
-//     relation field; also picked up by advanced-filters and nested-mutations.
+//     relation field; also picked up by advanced_filters and nested_mutations.
 //   - @resultFieldName <name> — on a volatile function: exact name of its
 //     payload's result field.
 //   - @deprecated [reason] — on columns and functions: marks the generated
@@ -33,7 +33,7 @@
 //     (views lose NOT NULL information).
 //   - @filterable / @sortable — on columns: opt in to filtering and ordering
 //     despite filters.indexed_only; on foreign keys / computed functions:
-//     opt in when advanced-filters runs in opt-in mode.
+//     opt in when advanced_filters runs in opt-in mode.
 //   - @primaryKey col[, col] — on a view (or PK-less table): declare a
 //     logical primary key, enabling nodeId, single-row lookups, and keyset
 //     pagination. Mutations stay gated by real privileges.
@@ -51,7 +51,7 @@
 // Tag lines are stripped from the GraphQL descriptions; the rest of the
 // comment remains the description. Everything happens at schema-build time —
 // the compiler is untouched, and disabling the plugin
-// (plugins.disabled: [smart-comments]) restores the raw schema.
+// (plugins.disabled: [smart_comments]) restores the raw schema.
 package smartcomments
 
 import (
@@ -80,10 +80,16 @@ type Plugin struct {
 
 func New() *Plugin { return &Plugin{Hook: catalog.New(), log: slog.Default()} }
 
+// Name is the plugin's name in plugins.disabled.
+const Name = "smart_comments"
+
+// Name returns [Name]; it overrides the embedded hook's name.
+func (p *Plugin) Name() string { return Name }
+
 // Priority 50: the CatalogHook shapes the catalog before other plugins read
-// it, the InflectionHook applies @name before naming plugins (simple-names,
+// it, the InflectionHook applies @name before naming plugins (simple_names,
 // 100) format, and the SchemaHook removes omitted filter/orderBy types before
-// advanced-filters (150) references them.
+// advanced_filters (150) references them.
 func (p *Plugin) Priority() int { return catalog.Priority }
 
 func tableKey(schema, name string) string { return schema + "." + name }
@@ -92,7 +98,7 @@ func tableKey(schema, name string) string { return schema + "." + name }
 
 // Inflect applies @name / @fieldName / @foreignFieldName at the start of the
 // naming pipeline: renames replace the pg identifier in the Input and the
-// chain continues, so downstream naming plugins (simple-names) and the
+// chain continues, so downstream naming plugins (simple_names) and the
 // default inflector all derive from the new name.
 func (p *Plugin) Inflect(kind inflect.Kind, in inflect.Input, next inflect.Next) string {
 	switch kind {
@@ -180,7 +186,7 @@ func (p *Plugin) applyTableOmits(b *schema.Builder, t *introspect.Table) {
 				(f.Meta.Kind == schema.KindConnectionQuery ||
 					(read && f.Meta.Kind == schema.KindRowByKey))
 			if read && f.Meta != nil && f.Meta.Kind == schema.KindFunction && returnsRowsOf(f.Meta.Function, t) {
-				p.log.Warn("smart-comments: function not exposed: it returns rows of a table tagged @omit read",
+				p.log.Warn("smart_comments: function not exposed: it returns rows of a table tagged @omit read",
 					"function", f.Meta.Function.Schema+"."+f.Meta.Function.Name, "table", tableKey(t.Schema, t.Name))
 				drop = true
 			}
@@ -297,7 +303,7 @@ func (p *Plugin) applyColumnTags(b *schema.Builder, t *introspect.Table) {
 }
 
 // applyRelationOmits handles @omit many on foreign keys (bare @omit is
-// resolved at the catalog level; filter omission is advanced-filters' side).
+// resolved at the catalog level; filter omission is advanced_filters' side).
 func (p *Plugin) applyRelationOmits(b *schema.Builder, t *introspect.Table) {
 	for _, fk := range t.ForeignKeys {
 		if omit.Hides(fk.Comment, omit.Many) {
@@ -326,7 +332,7 @@ func (p *Plugin) applyCompositeTags(b *schema.Builder) {
 			}
 		}
 		if in != nil && len(in.Fields) == 0 {
-			p.log.Warn("smart-comments: every attribute of the composite is omitted from input; columns of the type are not writable",
+			p.log.Warn("smart_comments: every attribute of the composite is omitted from input; columns of the type are not writable",
 				"type", key)
 			removeInputType(b, in.Name)
 		}
@@ -362,7 +368,7 @@ func (p *Plugin) removeColumnField(obj *schema.Object, c *introspect.Column) {
 	}
 	obj.RemoveField(f.Name)
 	if len(obj.Fields) == 0 {
-		p.log.Warn("smart-comments: @omit leaves the type without fields, adding a null placeholder",
+		p.log.Warn("smart_comments: @omit leaves the type without fields, adding a null placeholder",
 			"type", obj.Name, "field", f.Name)
 		obj.AddField(&schema.Field{
 			Name:        schema.PlaceholderField,
