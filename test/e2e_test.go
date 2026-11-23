@@ -1409,11 +1409,16 @@ func TestFunctionMutations(t *testing.T) {
 		t.Errorf("addNumbers: got %s", got)
 	}
 
-	// Omitted args arrive as SQL NULL; unsent clientMutationId is null.
-	res = post(t, hs.URL, `mutation { addNumbers(input: {a: 2}) { result clientMutationId } }`, nil)
+	// Explicit nulls arrive as SQL NULL; unsent clientMutationId is null.
+	res = post(t, hs.URL, `mutation { addNumbers(input: {a: 2, b: null}) { result clientMutationId } }`, nil)
 	requireNoErrors(t, res)
 	if got := normalize(t, res.Data["addNumbers"]); got != `{"clientMutationId":null,"result":null}` {
 		t.Errorf("addNumbers null arg: got %s", got)
+	}
+
+	res = post(t, hs.URL, `mutation { addNumbers(input: {a: 2}) { result } }`, nil)
+	if len(res.Errors) != 1 || !strings.Contains(res.Errors[0].Message, "missing required argument(s): b") {
+		t.Errorf("addNumbers omitted arg: errors = %+v", res.Errors)
 	}
 
 	// Table-returning function: result supports a full selection with relations.
@@ -1992,4 +1997,199 @@ func TestTypedGeometry(t *testing.T) {
 			t.Error("location must stay a GeoJSON scalar without typed_geometry")
 		}
 	})
+}
+
+// execAll runs each statement on the test database, failing the test on the
+// first error.
+func execAll(t *testing.T, conn *pgx.Conn, stmts ...string) {
+	t.Helper()
+	for _, q := range stmts {
+		if _, err := conn.Exec(context.Background(), q); err != nil {
+			t.Fatalf("%s: %v", q, err)
+		}
+	}
+}
+
+// testConn connects to the e2e database, skipping the test without one.
+func testConn(t *testing.T) *pgx.Conn {
+	t.Helper()
+	url := os.Getenv("PDBQ_TEST_DATABASE_URL")
+	if url == "" {
+		t.Skip("PDBQ_TEST_DATABASE_URL not set; run `make test-e2e`")
+	}
+	ctx := context.Background()
+	conn, err := pgx.Connect(ctx, url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = conn.Close(ctx) })
+	return conn
+}
+
+// TestFunctionCalls covers function parameters with DEFAULTs, VARIADIC
+// parameters, OUT/TABLE records, composite and PostGIS arguments and returns
+// against real function definitions (the same shapes as the golden
+// fixtures in internal/compile).
+func TestFunctionCalls(t *testing.T) {
+	conn := testConn(t)
+	execAll(t, conn,
+		`CREATE FUNCTION greet(name text, greeting text DEFAULT 'Hello') RETURNS text
+			LANGUAGE sql STABLE AS $$ SELECT coalesce(greeting, '(null)') || ', ' || name $$`,
+		`CREATE FUNCTION sum_all(scale integer DEFAULT 1, VARIADIC nums integer[] DEFAULT '{}') RETURNS bigint
+			LANGUAGE sql STABLE AS $$ SELECT scale * coalesce(sum(n), 0) FROM unnest(nums) AS n $$`,
+		`CREATE FUNCTION post_stats(min_id integer DEFAULT 0, OUT total bigint, OUT max_title text)
+			LANGUAGE sql STABLE AS $$ SELECT count(*), max(title) FROM posts WHERE id >= min_id $$`,
+		`CREATE FUNCTION post_titles() RETURNS TABLE (id integer, title text)
+			LANGUAGE sql STABLE AS $$ SELECT p.id, p.title FROM posts p ORDER BY p.id $$`,
+		`CREATE FUNCTION make_address(street text, city text) RETURNS address
+			LANGUAGE sql STABLE AS $$ SELECT ROW(street, city, 'happy')::address $$`,
+		`CREATE FUNCTION format_address(a address) RETURNS text
+			LANGUAGE sql STABLE AS $$ SELECT a.street || ', ' || a.city || ' (' || a.mood || ')' $$`,
+		`CREATE FUNCTION places_near(pt geometry, max_dist float8 DEFAULT 0.01) RETURNS SETOF places
+			LANGUAGE sql STABLE AS $$ SELECT * FROM places WHERE ST_DWithin(location, pt, max_dist) ORDER BY id $$`,
+		`CREATE FUNCTION record_visit(INOUT spot geometry, note jsonb DEFAULT NULL, OUT visit_id integer)
+			LANGUAGE sql VOLATILE AS $$ SELECT spot, coalesce((note->>'id')::integer, 7) $$`,
+		`CREATE FUNCTION users_greeting(u users, prefix text DEFAULT 'Hi') RETURNS text
+			LANGUAGE sql STABLE AS $$ SELECT prefix || ' ' || u.email $$`,
+		`CREATE FUNCTION users_home(u users) RETURNS address
+			LANGUAGE sql STABLE AS $$ SELECT u.address $$`,
+		`CREATE DOMAIN positive_int AS integer CHECK (VALUE > 0)`,
+		`CREATE DOMAIN small_positive AS positive_int CHECK (VALUE < 100)`,
+		`CREATE TABLE domain_rows (id integer PRIMARY KEY, n small_positive)`,
+		`INSERT INTO domain_rows VALUES (1, 42)`,
+	)
+	t.Cleanup(func() {
+		for _, q := range []string{
+			`DROP FUNCTION greet, sum_all, post_stats, post_titles, make_address, format_address,
+				places_near, record_visit, users_greeting, users_home`,
+			`DROP TABLE domain_rows`, `DROP DOMAIN small_positive`, `DROP DOMAIN positive_int`,
+		} {
+			_, _ = conn.Exec(context.Background(), q)
+		}
+	})
+	hs := testServer(t, func(c *config.Config) { c.Server.ExposeSchema = true })
+
+	cases := []struct {
+		name, query, want string
+	}{
+		{"defaults", `{
+			omitted: greet(name: "Ada")
+			given: greet(name: "Ada", greeting: "Hi")
+			explicitNull: greet(name: "Ada", greeting: null)
+		}`, `{"explicitNull":"(null), Ada","given":"Hi, Ada","omitted":"Hello, Ada"}`},
+		{"variadic", `{
+			both: sumAll(scale: 2, nums: [1, 2, 3])
+			scaleOnly: sumAll(scale: 3)
+			none: sumAll
+		}`, `{"both":"12","none":"0","scaleOnly":"0"}`},
+		{"out parameters", `{ postStats(minId: 3) { total maxTitle } }`,
+			`{"postStats":{"maxTitle":"On Computable Numbers","total":"2"}}`},
+		{"returns table", `{ postTitles { id title } }`,
+			`{"postTitles":[{"id":1,"title":"Notes on the Analytical Engine"},{"id":2,"title":"Unpublished draft"},{"id":3,"title":"Compilers 101"},{"id":4,"title":"On Computable Numbers"}]}`},
+		{"composite return and argument", `{
+			makeAddress(street: "1 Main St", city: "Springfield") { street city mood }
+			formatAddress(a: {street: "1 Main St", city: "Springfield", mood: SAD})
+		}`, `{"formatAddress":"1 Main St, Springfield (sad)","makeAddress":{"city":"Springfield","mood":"HAPPY","street":"1 Main St"}}`},
+		{"computed columns", `{ userById(id: 1) { greeting yo: greeting(prefix: "Yo") home { city mood } } }`,
+			`{"userById":{"greeting":"Hi ada@example.com","home":{"city":"London","mood":"HAPPY"},"yo":"Yo ada@example.com"}}`},
+		{"geometry arguments", `{
+			geojson: placesNear(pt: {type: "Point", coordinates: [-0.1281, 51.508]}) { name }
+			ewkt: placesNear(pt: "SRID=4326;POINT(-0.1270 51.5194)", maxDist: 0.001) { name }
+		}`, `{"ewkt":[{"name":"British Museum"}],"geojson":[{"name":"Trafalgar Square"}]}`},
+		{"domain over domain", `{ domainRowById(id: 1) { n } }`, `{"domainRowById":{"n":42}}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			res := post(t, hs.URL, tc.query, nil)
+			requireNoErrors(t, res)
+			b, _ := json.Marshal(res.Data)
+			if got := normalize(t, b); got != tc.want {
+				t.Errorf("got  %s\nwant %s", got, tc.want)
+			}
+		})
+	}
+
+	t.Run("geometry argument in a mutation", func(t *testing.T) {
+		res := post(t, hs.URL, `mutation {
+			recordVisit(input: {spot: {type: "Point", coordinates: [1, 2]}, note: {id: 9}}) {
+				result { visitId spot }
+			}
+		}`, nil)
+		requireNoErrors(t, res)
+		if got := normalize(t, res.Data["recordVisit"]); got != `{"result":{"spot":{"coordinates":[1,2],"type":"Point"},"visitId":9}}` {
+			t.Errorf("recordVisit: got %s", got)
+		}
+	})
+
+	t.Run("schema", func(t *testing.T) {
+		sdl, err := httpGet(hs.URL + "/schema.graphql")
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, want := range []string{
+			"postTitles: [PostTitlesRecord!]!", "type PostStatsRecord {", "n: Int\n",
+			"Optional; defaults to `'Hello'::text` when omitted.",
+		} {
+			if !strings.Contains(string(sdl), want) {
+				t.Errorf("SDL missing %q", want)
+			}
+		}
+	})
+
+	t.Run("missing argument", func(t *testing.T) {
+		res := post(t, hs.URL, `{ sumAll(nums: [1]) }`, nil)
+		if len(res.Errors) != 1 || !strings.Contains(res.Errors[0].Message, "missing required argument(s): scale") {
+			t.Errorf("errors = %+v", res.Errors)
+		}
+	})
+
+	t.Run("spatial operands and postgis input errors", func(t *testing.T) {
+		prod := testServer(t, func(c *config.Config) { c.Errors.Detail = "prod" })
+		res := post(t, prod.URL, `{ allPlaces(filter: {location: {intersects: "SRID=3857;POINT(-0.1281 51.508)"}}) { nodes { id } } }`, nil)
+		if len(res.Errors) != 1 || res.Errors[0].Message != "invalid geometry" {
+			t.Errorf("mixed SRID: errors = %+v, want invalid geometry", res.Errors)
+		}
+		res = post(t, prod.URL, `{ allPlaces(filter: {location: {intersects: "POINT(-0.1281 51.508)"}}) { nodes { name } } }`, nil)
+		requireNoErrors(t, res)
+		if got := normalize(t, res.Data["allPlaces"]); got != `{"nodes":[{"name":"Trafalgar Square"}]}` {
+			t.Errorf("bare WKT takes the column SRID: got %s", got)
+		}
+	})
+}
+
+// TestPartitions covers schema.expose_partitions: a partitioned table is
+// exposed like any other, its partitions only on request.
+func TestPartitions(t *testing.T) {
+	conn := testConn(t)
+	execAll(t, conn,
+		`CREATE TABLE readings (id integer, at date, v integer, PRIMARY KEY (id, at)) PARTITION BY RANGE (at)`,
+		`CREATE TABLE readings_2025 PARTITION OF readings FOR VALUES FROM ('2025-01-01') TO ('2026-01-01')`,
+		`CREATE TABLE readings_2026 PARTITION OF readings FOR VALUES FROM ('2026-01-01') TO ('2027-01-01')`,
+		`INSERT INTO readings VALUES (1, '2025-06-01', 10)`,
+	)
+	t.Cleanup(func() { _, _ = conn.Exec(context.Background(), `DROP TABLE readings`) })
+
+	hs := testServer(t, func(c *config.Config) { c.Server.ExposeSchema = true })
+	sdl, err := httpGet(hs.URL + "/schema.graphql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(sdl), "Readings2025") || strings.Contains(string(sdl), "Readings2026") {
+		t.Error("partitions exposed by default")
+	}
+	res := post(t, hs.URL, `mutation { createReading(input: {id: 2, at: "2026-03-01", v: 20}) { reading { id v } } }`, nil)
+	requireNoErrors(t, res)
+	res = post(t, hs.URL, `{ allReadings(orderBy: ID_ASC) { nodes { id at v } } readingByIdAndAt(id: 2, at: "2026-03-01") { v } }`, nil)
+	requireNoErrors(t, res)
+	b, _ := json.Marshal(res.Data)
+	if got := normalize(t, b); got != `{"allReadings":{"nodes":[{"at":"2025-06-01","id":1,"v":10},{"at":"2026-03-01","id":2,"v":20}]},"readingByIdAndAt":{"v":20}}` {
+		t.Errorf("partitioned parent: got %s", got)
+	}
+
+	exposed := testServer(t, func(c *config.Config) { c.Schema.ExposePartitions = true })
+	res = post(t, exposed.URL, `{ allReadings2026s { nodes { id } } }`, nil)
+	requireNoErrors(t, res)
+	if got := normalize(t, res.Data["allReadings2026s"]); got != `{"nodes":[{"id":2}]}` {
+		t.Errorf("exposed partition: got %s", got)
+	}
 }

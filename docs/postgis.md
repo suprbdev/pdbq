@@ -57,6 +57,24 @@ EWKT (`SRID=3857;POINT(...)`) carries its own SRID and is passed through
 unchanged. Bare WKT on a `geography` column is tagged 4326, since geography
 requires a real CRS.
 
+When the column's type modifier fixes an SRID (`geometry(Point, 3857)`), every
+value bound for that column (mutation inputs, filter operands, the `near:`
+geometry) follows it:
+
+| input | on `geometry(..., 3857)` |
+|---|---|
+| bare WKT `POINT(1 2)` | tagged 3857 (`ST_SetSRID(..., 3857)`) |
+| EWKT `SRID=4326;POINT(1 2)` | keeps 4326; PostgreSQL rejects the mismatch |
+| GeoJSON (4326, or its `crs`) | reprojected: `ST_Transform(..., 3857)` |
+| bounding box without `srid` | built in 3857 |
+
+An unconstrained `geometry` column (SRID 0) gets the plain rules above.
+Geography columns are always 4326, so nothing is reprojected for them.
+Function arguments have no type modifier, so they get the plain rules too. A
+geometry that PostgreSQL rejects (mixed SRIDs in one operation, an invalid
+shape) is reported to clients as `invalid geometry` (`invalid input value`
+with `errors.detail: strict`).
+
 ## Filtering
 
 Every spatial column takes a `GeometryFilterOps` operand set. Operators marked
@@ -113,7 +131,8 @@ columns never appear in `condition:` or `distinctOn:`.
 
 ### Bounding box (viewport queries)
 
-`BBoxInput` is `{minX, minY, maxX, maxY, srid}` — `srid` defaults to 4326.
+`BBoxInput` is `{minX, minY, maxX, maxY, srid}` — `srid` defaults to the
+column's typmod SRID, or 4326 for an unconstrained column.
 This is the cheap first pass for "what is on screen":
 
 ```graphql
@@ -390,7 +409,8 @@ COMMENT ON COLUMN places.secret_location IS '@omit filter,order';
 ## Notes and limits
 
 - **Injection safety.** Geometries, bounding-box corners and distances are all
-  bind parameters; the compiled SQL text is a pure function of the query shape.
+  bind parameters; the compiled SQL text is a pure function of the query shape
+  and of the input's form (GeoJSON, bare WKT or EWKT), never of its content.
   This is enforced by `FuzzSpatial` in `internal/compile`, the spatial twin of
   the `FuzzFilter` invariant.
 - **Malformed input fails fast.** A value that is neither valid GeoJSON nor
