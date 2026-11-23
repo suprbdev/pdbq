@@ -253,11 +253,11 @@ func TestNestedMutationsSchema(t *testing.T) {
 		t.Error("authorId should be optional once nested input exists")
 	}
 	userCreate := sdlType(built.SDL, "input UserCreateInput")
-	if !strings.Contains(userCreate, "postsByAuthorId: PostPostsByAuthorIdNestedChildrenInput") {
+	if !strings.Contains(userCreate, "postsByAuthorId: UserPostsByAuthorIdNestedInput") {
 		t.Errorf("UserCreateInput missing nested children field:\n%s", userCreate)
 	}
-	if !strings.Contains(built.SDL, "input UserConnectInput") {
-		t.Error("missing UserConnectInput")
+	if !strings.Contains(built.SDL, "input UserConnectByIdInput") {
+		t.Error("missing UserConnectByIdInput")
 	}
 }
 

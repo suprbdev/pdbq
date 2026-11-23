@@ -617,7 +617,7 @@ func TestContrib(t *testing.T) {
 		if got, want := normalize(t, res.Data["slugRefById"]), normalizeStr(t, `{"handleId":"ADA","handle":{"name":"Ada"}}`); got != want {
 			t.Errorf("relation over citext FK: %s", got)
 		}
-		res = post(t, url, `mutation { createSlugRef(input: {id: 2, handle: {connect: {name: "gRACE"}}}) {
+		res = post(t, url, `mutation { createSlugRef(input: {id: 2, handle: {connectByName: {name: "gRACE"}}}) {
 			slugRef { handleId handle { name } } } }`, nil)
 		requireNoErrors(t, res)
 		if got, want := normalize(t, res.Data["createSlugRef"]), normalizeStr(t, `{"slugRef":{"handleId":"Grace","handle":{"name":"Grace"}}}`); got != want {
@@ -626,13 +626,13 @@ func TestContrib(t *testing.T) {
 	})
 
 	t.Run("nested connect per referenced key", func(t *testing.T) {
-		res := post(t, url, `mutation { createDocNote(input: {document: {connect: {id: 1}}}) {
+		res := post(t, url, `mutation { createDocNote(input: {document: {connectById: {id: 1}}}) {
 			docNote { documentId } } }`, nil)
 		requireNoErrors(t, res)
 		if got, want := normalize(t, res.Data["createDocNote"]), normalizeStr(t, `{"docNote":{"documentId":1}}`); got != want {
 			t.Errorf("connect by primary key: %s", got)
 		}
-		res = post(t, url, `mutation { createDocRef(input: {id: 1, doc: {connect: {slug: "hELLO"}}}) {
+		res = post(t, url, `mutation { createDocRef(input: {id: 1, doc: {connectBySlug: {slug: "hELLO"}}}) {
 			docRef { docId doc { id } } } }`, nil)
 		requireNoErrors(t, res)
 		if got, want := normalize(t, res.Data["createDocRef"]), normalizeStr(t, `{"docRef":{"docId":"Hello","doc":{"id":1}}}`); got != want {

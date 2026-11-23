@@ -85,12 +85,17 @@ and the period pair by overlap (`&&`):
   wrapper (`roomBookingsByRoomIdAndValidAt: {some: {guest: {equalTo:
   "Grace"}}}`) and a `<rel>Exist` Boolean, and its relational `orderBy`
   values aggregate (`MIN`/`MAX`) like reverse relations.
-- **nested-mutations**: `connect` on the forward relation takes the
-  equality columns only (`{connect: {roomId: 1}}`) and links the child to
-  that entity; the child supplies its own period, which PostgreSQL checks
-  for coverage at the end of the statement (`23503` when uncovered). Nested
-  child `create` copies only the equality columns from the new parent, so
-  each child keeps its own period.
+- **nested-mutations**: the forward relation gets an extra
+  `connectBy<EqualityColumns>` taking the equality columns only
+  (`{connectByRoomId: {roomId: 1}}`), which links the child to that entity;
+  `connectByRoomIdAndValidAt` (the full key, exact period) and
+  `connectByNodeId` link to one version, of which the child also copies only
+  the equality columns. The child supplies its own period, which PostgreSQL
+  checks for coverage at the end of the statement (`23503` when uncovered).
+  Nested child `create` copies only the equality columns from the new
+  parent, so each child keeps its own period; backward
+  `updateBy…`/`deleteBy…`/`disconnectBy…` reach the children whose period
+  overlaps the parent's.
 
 ## `NOT ENFORCED` foreign keys
 

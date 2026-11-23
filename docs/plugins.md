@@ -156,29 +156,122 @@ per-object filter tuning works even with `smart-comments` disabled.
 
 ## Worked example 4: nested-mutations
 
-`internal/plugins/nestedmutations` exercises every hook surface:
+`internal/plugins/nestedmutations` exercises every hook surface. Its input
+shapes follow
+[postgraphile-plugin-nested-mutations](https://github.com/mlipscombe/postgraphile-plugin-nested-mutations).
 
-- **SchemaHook** — walks foreign keys and adds nested input fields:
-  `PostCreateInput.author: {create | connect}` (FK on the table) and
-  `UserCreateInput.postsByAuthorId: {create: [...]}` (FKs pointing at it),
-  relaxing now-optional FK columns.
-- **CompileHook** — when a create mutation actually uses a nested field, it
-  replaces the DML with a multi-CTE statement (parents inserted/looked-up
-  first, then the main row, then children), and hands the CTE chain to
-  `compile.MutationWithCTEs`, which reuses the core payload compiler. Rows
-  inserted in CTEs are invisible to same-statement table scans, so it also
-  passes row-source overrides mapping every table that received an insert
-  (created parents, the main row, children) to a visibility CTE,
-  `__vis_n AS NOT MATERIALIZED (SELECT * FROM <table> UNION ALL SELECT *
-  FROM <insert CTE> …)`. Every payload relation, connection, `totalCount`,
-  relation filter and relational `orderBy` over that table reads the CTE, so
-  the payload sees the table as it stands after the statement. The table
-  half stays subject to the role's RLS policies, and the `RETURNING` rows
-  already passed them (an `INSERT … RETURNING` whose new row fails a
-  `SELECT` policy is an error, rolling back the whole statement).
-- **RequestHook** — detects nested inputs in the operation and sets
-  `op.ForceTx`, so nested mutations are atomic even when
-  `transactions.mutations: false`
+### Input shape
+
+Every create input (`PostCreateInput`) and patch (`PostUpdateInput`) gets one
+field per foreign key, in both directions, named like the relation field of
+the row type (`author`, `postsByAuthorId`; `@fieldName`/`@foreignFieldName`
+rename both). Its type lists the operations on the related rows:
+
+| Operation | Forward (`post.author`, the FK is on this row) | Backward (`user.postsByAuthorId`, the FK points here) |
+|---|---|---|
+| `connectBy<Key>`, `connectByNodeId` | look the row up and point this row's FK at it | point the row's FK at this row |
+| `create` | insert the row and point this row's FK at it | insert rows referencing this row |
+| `updateBy<Key>`, `updateByNodeId` | patch the row and point this row's FK at it | patch rows that reference this row |
+| `deleteBy<Key>`, `deleteByNodeId` | delete the row | delete rows that reference this row |
+| `disconnectBy<Key>`, `disconnectByNodeId` | clear this row's FK if it references the row (update mutations only) | clear the FK of rows that reference this row |
+
+`<Key>` is each primary key and unique constraint of the related table
+(`connectById`, `connectByEmail`, `connectByRoomIdAndValidAt`); the
+`ByNodeId` variants exist when its type implements `Node`. A forward
+operation takes one input, a backward one a list (a single object is
+coerced to a one-element list):
+
+```graphql
+mutation {
+  updateUserById(id: 1, patch: {
+    fullName: "Ada"
+    postsByAuthorId: {
+      connectById: [{id: 7}]
+      create: [{title: "New"}]
+      updateById: [{id: 3, postPatch: {title: "Renamed"}}]
+      deleteByNodeId: [{nodeId: "WyJQb3N0IiwgNF0="}]
+    }
+  }) { user { postsByAuthorId { totalCount nodes { title } } } }
+  createPost(input: {title: "Hi", author: {connectByEmail: {email: "ada@example.com"}}}) {
+    post { author { fullName } }
+  }
+}
+```
+
+- Key inputs are `<Type><Verb>By<Key>Input` (`UserConnectByEmailInput {
+  email }`, `UserDeleteByIdInput { id }`) and `<Type><Verb>ByNodeIdInput {
+  nodeId }`; update inputs add the patch as `<type>Patch`
+  (`UserUpdateByIdInput { id, userPatch: UserUpdateInput! }`), which may
+  carry nested fields itself. The nested inputs are
+  `<Type><Relation>NestedInput` (`PostAuthorNestedInput`,
+  `UserPostsByAuthorIdNestedInput`).
+- An operation is only offered when the role may run it: `create` needs the
+  related create input, `update` its patch, `delete` the `DELETE` privilege,
+  backward `connect` the `UPDATE` privilege on the referencing table, and
+  `disconnect` an FK whose columns are all nullable (a `NOT NULL` FK has no
+  disconnect fields).
+- A forward field takes at most one of `create`, `connect…`, `update…` and
+  `disconnect…` (they all set this row's FK), plus any `delete…`. Forward
+  delete leaves the FK alone, so the database's `ON DELETE` action applies;
+  pair it with `disconnect…` to clear a nullable FK in the same mutation.
+  Backward fields take any combination.
+- Backward `update…`, `delete…` and `disconnect…` only reach rows that
+  reference this row (on a create mutation there are none yet).
+- `connect…`, `update…` and `delete…` must match a row: a key that matches
+  nothing (missing, or filtered out by RLS) fails the whole mutation with
+  `nested-mutations: <path> matched 0 rows` (SQLSTATE `22P02`, e.g.
+  `postsByAuthorId.updateById[0]`). `disconnect…` of a row that is not
+  linked does nothing. An update mutation whose own key matches nothing
+  fails as usual (`no row matched`), rolling back its nested operations.
+- The bulk mutations (`createUsers`, `updateUsers`) and upserts take no
+  nested fields; using one is an error.
+- A row may be modified only once per statement (a PostgreSQL rule for
+  data-modifying CTEs): two operations updating the same row leave only one
+  change, and an operation then reports `matched 0 rows`.
+
+Differences from the PostGraphile plugin: the relation fields keep pdbq's
+relation names instead of `<table>To<Columns>`/`<tables>Using<Columns>`,
+the root mutations keep pdbq's argument shapes (`createPost(input: {…})`,
+`updatePostById(id:, patch:)`), and there is no `deleteOthers`.
+
+### Hooks
+
+- **SchemaHook** — walks foreign keys and adds the nested fields above to
+  create inputs and patches, relaxing FK columns a nested operation can
+  supply to optional in create inputs (the database still enforces `NOT
+  NULL`).
+- **CompileHook** — when a create or update mutation actually uses a nested
+  field, it replaces the DML with one multi-CTE statement: forward
+  operations (lookups, inserts, `UPDATE … RETURNING`, `DELETE … RETURNING`)
+  first, then the main row's `INSERT` or `UPDATE … FROM <parent CTEs>` (a
+  patch setting no column selects the row instead), then the backward
+  operations joined to the main row's CTE. Each operation that must match a
+  row adds a guard, `(SELECT CASE WHEN count(*) > 0 THEN true ELSE
+  concat('nested-mutations: …', count(*), ' rows')::boolean END FROM
+  <cte>)`, which `compile.MutationWithCTEs` puts in the `WHERE` of the
+  statement's final `SELECT`: a failing guard raises inside the statement,
+  so it is atomic even without a transaction. Values go through
+  `compile.ParamSet.Value`/`KeyValue` (enum labels, contrib and PostGIS
+  constructors) and key comparisons through `compile.EqualOperator`
+  (citext). The chain is handed to `compile.MutationWithCTEs`, which reuses
+  the core payload compiler. Rows written by CTEs are invisible to
+  same-statement table scans, so it also passes row-source overrides
+  mapping every table the chain wrote to a visibility CTE: `__vis_n AS NOT
+  MATERIALIZED (SELECT * FROM <table> WHERE <not replaced or deleted> UNION
+  ALL SELECT * FROM <insert and update CTEs> …)`. Replaced and deleted rows
+  are excluded by a `NOT NULL` key the operation leaves alone, matched
+  against its `RETURNING` rows (or by the operation's key lookup when it
+  patches every such key). Every payload relation, connection,
+  `totalCount`, relation filter and relational `orderBy` over that table
+  reads the CTE, so the payload sees the table as it stands after the
+  statement. The table half stays subject to the role's RLS policies, and
+  the `RETURNING` rows already passed them (an `INSERT`/`UPDATE …
+  RETURNING` whose new row fails a `SELECT` policy is an error, rolling
+  back the whole statement). Every operation runs as the request's role, so
+  `UPDATE`/`DELETE` policies narrow what it can match.
+- **RequestHook** — detects nested fields in a mutation's `input` or
+  `patch` and sets `op.ForceTx`, so nested mutations (and the other fields
+  of the operation) are atomic even when `transactions.mutations: false`
   (`plugins.settings.nested-mutations.force_transactions: false` opts out).
 
 Nesting depth is bounded (`plugins.settings.nested-mutations.max_depth`,

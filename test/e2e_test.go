@@ -2210,7 +2210,7 @@ func TestRelationNameFallback(t *testing.T) {
 	})
 	hs := testServer(t, nil)
 
-	res := post(t, hs.URL, `mutation { createRnMemo(input: {id: 1, body: "x", rnUserByUserEmail: {connect: {email: "a@b.c"}}}) { rnMemo { userEmail rnUserByUserEmail { name } } } }`, nil)
+	res := post(t, hs.URL, `mutation { createRnMemo(input: {id: 1, body: "x", rnUserByUserEmail: {connectByEmail: {email: "a@b.c"}}}) { rnMemo { userEmail rnUserByUserEmail { name } } } }`, nil)
 	requireNoErrors(t, res)
 	if got, want := normalize(t, res.Data["createRnMemo"]), normalizeStr(t, `{"rnMemo": {"userEmail": "a@b.c", "rnUserByUserEmail": {"name": "Ann"}}}`); got != want {
 		t.Errorf("nested connect: got %s want %s", got, want)

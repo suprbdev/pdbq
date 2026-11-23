@@ -132,7 +132,7 @@ FROM (
 
 -- field: createPost
 WITH __p_1 AS (
-  SELECT * FROM "public"."users" WHERE "id" = $2
+  SELECT "id" FROM "public"."users" WHERE "public"."users"."id" = $2
 ),
 __mut AS (
   INSERT INTO "public"."posts" ("title", "author_id") SELECT $1, __p_1."id" FROM __p_1 RETURNING *
@@ -148,39 +148,43 @@ __vis_4 AS NOT MATERIALIZED (
   SELECT * FROM "public"."comments"
   UNION ALL SELECT * FROM __c_2
 )
-SELECT json_build_object('post', __row.data) AS data
+SELECT __guarded.data
 FROM (
-  SELECT json_build_object('title', __t_1."title", 'author', __l_7.data, 'commentsByPostId', __l_10.data) AS data
-  FROM __mut AS __t_1
-  LEFT JOIN LATERAL (
-    SELECT json_build_object('email', __t_2."email", 'postsByAuthorId', __l_6.data) AS data
-    FROM "public"."users" AS __t_2
+  SELECT json_build_object('post', __row.data) AS data
+  FROM (
+    SELECT json_build_object('title', __t_1."title", 'author', __l_7.data, 'commentsByPostId', __l_10.data) AS data
+    FROM __mut AS __t_1
     LEFT JOIN LATERAL (
-      SELECT json_build_object('totalCount', (SELECT count(*) FROM __vis_3 AS __c_5
-      WHERE __c_5."author_id" = __t_2."id")::int) AS data
+      SELECT json_build_object('email', __t_2."email", 'postsByAuthorId', __l_6.data) AS data
+      FROM "public"."users" AS __t_2
+      LEFT JOIN LATERAL (
+        SELECT json_build_object('totalCount', (SELECT count(*) FROM __vis_3 AS __c_5
+        WHERE __c_5."author_id" = __t_2."id")::int) AS data
+        FROM (
+          SELECT row_number() OVER (ORDER BY __t_3."id" ASC) AS __rn
+          FROM __vis_3 AS __t_3
+          WHERE __t_3."author_id" = __t_2."id"
+          ORDER BY __t_3."id" ASC
+          LIMIT $4
+        ) AS __s_4
+        GROUP BY ()
+      ) AS __l_6 ON true
+      WHERE __t_2."id" = __t_1."author_id"
+      LIMIT 1
+    ) AS __l_7 ON true
+    LEFT JOIN LATERAL (
+      SELECT json_build_object('nodes', coalesce(json_agg(__s_9.ndata ORDER BY __s_9.__rn ASC) FILTER (WHERE __s_9.__rn <= $6), '[]'::json)) AS data
       FROM (
-        SELECT row_number() OVER (ORDER BY __t_3."id" ASC) AS __rn
-        FROM __vis_3 AS __t_3
-        WHERE __t_3."author_id" = __t_2."id"
-        ORDER BY __t_3."id" ASC
-        LIMIT $4
-      ) AS __s_4
+        SELECT json_build_object('body', __t_8."body") AS ndata, row_number() OVER (ORDER BY __t_8."id" ASC) AS __rn
+        FROM __vis_4 AS __t_8
+        WHERE __t_8."post_id" = __t_1."id"
+        ORDER BY __t_8."id" ASC
+        LIMIT $5
+      ) AS __s_9
       GROUP BY ()
-    ) AS __l_6 ON true
-    WHERE __t_2."id" = __t_1."author_id"
-    LIMIT 1
-  ) AS __l_7 ON true
-  LEFT JOIN LATERAL (
-    SELECT json_build_object('nodes', coalesce(json_agg(__s_9.ndata ORDER BY __s_9.__rn ASC) FILTER (WHERE __s_9.__rn <= $6), '[]'::json)) AS data
-    FROM (
-      SELECT json_build_object('body', __t_8."body") AS ndata, row_number() OVER (ORDER BY __t_8."id" ASC) AS __rn
-      FROM __vis_4 AS __t_8
-      WHERE __t_8."post_id" = __t_1."id"
-      ORDER BY __t_8."id" ASC
-      LIMIT $5
-    ) AS __s_9
-    GROUP BY ()
-  ) AS __l_10 ON true
-) AS __row
+    ) AS __l_10 ON true
+  ) AS __row
+) AS __guarded
+WHERE (SELECT CASE WHEN count(*) > 0 THEN true ELSE concat('nested-mutations: author.connectById matched ', count(*), ' rows')::boolean END FROM __p_1)
 -- args: ["Connected",1,"c",101,101,100]
 

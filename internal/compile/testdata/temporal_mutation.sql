@@ -1,6 +1,6 @@
 -- field: createBookingNote
 WITH __p_1 AS (
-  SELECT DISTINCT "room_id" FROM "public"."room_bookings" WHERE "room_id" = $6
+  SELECT DISTINCT "room_id" FROM "public"."room_bookings" WHERE "public"."room_bookings"."room_id" = $6
 ),
 __mut AS (
   INSERT INTO "public"."booking_notes" ("author_id", "note", "valid_at", "room_id") SELECT $1, $2, daterange($3::date, $4::date, $5::text), __p_1."room_id" FROM __p_1 RETURNING *
@@ -9,22 +9,26 @@ __vis_2 AS NOT MATERIALIZED (
   SELECT * FROM "public"."booking_notes"
   UNION ALL SELECT * FROM __mut
 )
-SELECT json_build_object('bookingNote', __row.data) AS data
+SELECT __guarded.data
 FROM (
-  SELECT json_build_object('id', __t_1."id", 'roomBookingsByRoomIdAndValidAt', __l_4.data) AS data
-  FROM __mut AS __t_1
-  LEFT JOIN LATERAL (
-    SELECT json_build_object('nodes', coalesce(json_agg(__s_3.ndata ORDER BY __s_3.__rn ASC) FILTER (WHERE __s_3.__rn <= $8), '[]'::json)) AS data
-    FROM (
-      SELECT json_build_object('guest', __t_2."guest") AS ndata, row_number() OVER (ORDER BY __t_2."room_id" ASC, __t_2."valid_at" ASC) AS __rn
-      FROM "public"."room_bookings" AS __t_2
-      WHERE __t_2."room_id" = __t_1."room_id" AND __t_2."valid_at" && __t_1."valid_at"
-      ORDER BY __t_2."room_id" ASC, __t_2."valid_at" ASC
-      LIMIT $7
-    ) AS __s_3
-    GROUP BY ()
-  ) AS __l_4 ON true
-) AS __row
+  SELECT json_build_object('bookingNote', __row.data) AS data
+  FROM (
+    SELECT json_build_object('id', __t_1."id", 'roomBookingsByRoomIdAndValidAt', __l_4.data) AS data
+    FROM __mut AS __t_1
+    LEFT JOIN LATERAL (
+      SELECT json_build_object('nodes', coalesce(json_agg(__s_3.ndata ORDER BY __s_3.__rn ASC) FILTER (WHERE __s_3.__rn <= $8), '[]'::json)) AS data
+      FROM (
+        SELECT json_build_object('guest', __t_2."guest") AS ndata, row_number() OVER (ORDER BY __t_2."room_id" ASC, __t_2."valid_at" ASC) AS __rn
+        FROM "public"."room_bookings" AS __t_2
+        WHERE __t_2."room_id" = __t_1."room_id" AND __t_2."valid_at" && __t_1."valid_at"
+        ORDER BY __t_2."room_id" ASC, __t_2."valid_at" ASC
+        LIMIT $7
+      ) AS __s_3
+      GROUP BY ()
+    ) AS __l_4 ON true
+  ) AS __row
+) AS __guarded
+WHERE (SELECT CASE WHEN count(*) > 0 THEN true ELSE concat('nested-mutations: roomBookingsByRoomIdAndValidAt.connectByRoomId matched ', count(*), ' rows')::boolean END FROM __p_1)
 -- args: [1,"Late arrival","2026-03-02","2026-03-04","[)",1,101,100]
 
 -- field: createRoomBooking

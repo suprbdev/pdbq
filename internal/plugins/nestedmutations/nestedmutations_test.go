@@ -89,11 +89,11 @@ func TestNestedConnectAndChildren(t *testing.T) {
 	}
 
 	stmt = compileRoot(t, reg, built, `mutation {
-		createPost(input: {title: "Hi", author: {connect: {id: 7}}}) {
+		createPost(input: {title: "Hi", author: {connectById: {id: 7}}}) {
 			post { id }
 		}
 	}`)
-	if !strings.Contains(stmt.SQL, `SELECT * FROM "public"."users" WHERE "id" = $2`) {
+	if !strings.Contains(stmt.SQL, `SELECT "id" FROM "public"."users" WHERE "public"."users"."id" = $2`) {
 		t.Errorf("connect lookup missing:\n%s", stmt.SQL)
 	}
 }
@@ -123,7 +123,8 @@ func TestConnectInputPerReferencedKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		"input UserConnectInput {\n  id: Int!\n}",
+		"input MemoOwnerNestedInput {\n  connectById: UserConnectByIdInput\n  connectByEmail: UserConnectByEmailInput\n",
+		"input UserConnectByIdInput {\n  id: Int!\n}",
 		"input UserConnectByEmailInput {\n  email: String!\n}",
 	} {
 		if !strings.Contains(built.SDL, want) {
@@ -132,16 +133,16 @@ func TestConnectInputPerReferencedKey(t *testing.T) {
 	}
 
 	stmt := compileRoot(t, reg, built, `mutation {
-		createMemo(input: {id: 1, owner: {connect: {email: "a@b.c"}}}) { memo { id } }
+		createMemo(input: {id: 1, owner: {connectByEmail: {email: "a@b.c"}}}) { memo { id } }
 	}`)
-	if !strings.Contains(stmt.SQL, `WHERE "email" = $`) {
+	if !strings.Contains(stmt.SQL, `SELECT "email" FROM "public"."users" WHERE "public"."users"."email" = $`) {
 		t.Errorf("connect must match on email:\n%s", stmt.SQL)
 	}
 	stmt = compileRoot(t, reg, built, `mutation {
-		createPost(input: {title: "Hi", author: {connect: {id: 7}}}) { post { id } }
+		createMemo(input: {id: 1, owner: {connectById: {id: 7}}}) { memo { id } }
 	}`)
-	if !strings.Contains(stmt.SQL, `WHERE "id" = $`) {
-		t.Errorf("connect must match on id:\n%s", stmt.SQL)
+	if !strings.Contains(stmt.SQL, `SELECT "email" FROM "public"."users" WHERE "public"."users"."id" = $`) {
+		t.Errorf("connect by another key must project the referenced key:\n%s", stmt.SQL)
 	}
 }
 
@@ -244,9 +245,9 @@ func TestNestedForwardRelationNameCollidesWithColumn(t *testing.T) {
 		t.Errorf("nested forward field missing from MemoCreateInput:\n%s", built.SDL)
 	}
 	stmt := compileRoot(t, reg, built, `mutation {
-		createMemo(input: {id: 1, userByUserEmail: {connect: {email: "a@b.c"}}}) { memo { id } }
+		createMemo(input: {id: 1, userByUserEmail: {connectByEmail: {email: "a@b.c"}}}) { memo { id } }
 	}`)
-	if !strings.Contains(stmt.SQL, `WHERE "email" = $`) {
+	if !strings.Contains(stmt.SQL, `WHERE "public"."users"."email" = $`) {
 		t.Errorf("connect must match on email:\n%s", stmt.SQL)
 	}
 }
@@ -292,7 +293,7 @@ func TestPayloadReadsVisibilityCTEs(t *testing.T) {
 func TestConnectGetsNoVisibilityCTE(t *testing.T) {
 	reg, built := setupWith(t, plugin.NewRegistry(nestedmutations.New(nil)))
 	sql := compileRoot(t, reg, built, `mutation {
-		createPost(input: {title: "Hi", author: {connect: {id: 7}}}) {
+		createPost(input: {title: "Hi", author: {connectById: {id: 7}}}) {
 			post { author { email } }
 		}
 	}`).SQL

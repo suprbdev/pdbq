@@ -44,8 +44,8 @@ time=... msg=listening addr=:8080 graphiql=true
   [docs/smart-comments.md](docs/smart-comments.md)), `simple-names` (`users`
   instead of `allUsers`), `advanced-filters` (filter across relations and
   filter/order by computed columns), and `nested-mutations` (nested
-  `create`/`connect` inputs compiled to multi-CTE statements in a forced
-  transaction). The opt-in `aggregates` plugin adds
+  connect/create/update/delete/disconnect inputs on create and update
+  mutations, compiled to multi-CTE statements in a forced transaction). The opt-in `aggregates` plugin adds
   `@graphile/pg-aggregates`-style `aggregates`/`groupedAggregates` on
   connections, see [docs/aggregates.md](docs/aggregates.md).
 - **Pipe-friendly CLI** — `echo '{users {email}}' | pdbq query -` prints

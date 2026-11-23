@@ -74,7 +74,8 @@ citext's schema is off the path, so pdbq compiles `citext` comparisons as
 `email OPERATOR("ext".=) $1::"ext".citext` and `like`/`likeInsensitive`/
 `startsWith`/`endsWith` as `OPERATOR("ext".~~)`/`~~*`. Conditions, unique
 lookups (`accountByEmail`), `updateAccountByEmail` keys, `node(nodeId:)`
-lookups, keyset cursors, foreign key joins and nested `connect` do the same;
+lookups, keyset cursors, foreign key joins and nested `connectBy<Key>`/`updateBy<Key>`/`deleteBy<Key>`
+keys do the same;
 keyset cursors over an `hstore` ordering compare with hstore's btree
 operators (`#<#`, `#>#`).
 
