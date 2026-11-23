@@ -173,11 +173,19 @@ func (a *App) buildServer(ctx context.Context) (*server.Server, error) {
 		done := make(chan struct{})
 		go func() {
 			defer close(done)
+			go func() {
+				select {
+				case <-w.Ready():
+					a.Log.Info("watch: ready")
+				case <-wctx.Done():
+				}
+			}()
 			if err := w.Run(wctx); err != nil {
 				a.Log.Error("watch: stopped", "err", err)
 			}
 		}()
 		a.watchMu.Lock()
+		a.watchReady = w.Ready()
 		a.stops = append(a.stops, func() {
 			cancel()
 			<-done

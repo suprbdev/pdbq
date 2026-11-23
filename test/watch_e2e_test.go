@@ -83,22 +83,10 @@ func TestWatchHotSwap(t *testing.T) {
 	}
 	waitFor(`{ allFirsts { totalCount } }`)
 
-	// The watcher installs its event trigger asynchronously after Handler
-	// returns; DDL committed while it installs can be missed by both the
-	// notification and the initial re-introspection.
-	triggerDeadline := time.Now().Add(watchDeadline)
-	for {
-		var n int
-		if err := conn.QueryRow(context.Background(), `SELECT count(*) FROM pg_event_trigger WHERE evtname = 'pdbq_watch'`).Scan(&n); err != nil {
-			t.Fatal(err)
-		}
-		if n > 0 {
-			break
-		}
-		if time.Now().After(triggerDeadline) {
-			t.Fatal("watcher never installed its event trigger")
-		}
-		time.Sleep(50 * time.Millisecond)
+	select {
+	case <-app.WatchReady():
+	case <-time.After(watchDeadline):
+		t.Fatal("watcher never became ready")
 	}
 
 	exec(`CREATE TABLE ` + watchSchema + `.second (id int PRIMARY KEY)`)

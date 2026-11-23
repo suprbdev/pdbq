@@ -47,6 +47,8 @@ type App struct {
 	watchMu sync.Mutex
 	stops   []func()
 
+	watchReady <-chan struct{}
+
 	metrics     *metrics.Metrics
 	metricsErr  error
 	metricsOnce sync.Once
@@ -193,6 +195,21 @@ func (a *App) Connect(ctx context.Context) error {
 
 // Pool exposes the connection pool (nil before Connect).
 func (a *App) Pool() *pgxpool.Pool { return a.pool }
+
+// WatchReady returns a channel closed once the schema watcher started by the
+// last Handler or Serve call is listening for DDL; changes committed after it
+// closes are never missed. It is already closed when watch mode is off or no
+// server has been built.
+func (a *App) WatchReady() <-chan struct{} {
+	a.watchMu.Lock()
+	defer a.watchMu.Unlock()
+	if a.watchReady == nil {
+		c := make(chan struct{})
+		close(c)
+		return c
+	}
+	return a.watchReady
+}
 
 // Close stops any running schema watcher and waits for it to release its
 // connection, closes subscription WebSockets and the LISTEN connection, then
