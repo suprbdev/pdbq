@@ -8,6 +8,7 @@ import (
 
 	"github.com/vektah/gqlparser/v2/ast"
 
+	"github.com/suprbdev/pdbcore/postgis"
 	"github.com/suprbdev/pdbq/internal/geotype"
 )
 
@@ -76,8 +77,20 @@ func (s *stmt) typedGeometry(typeName, fieldName string) (geotype.Type, bool) {
 // rather than allocated, so the arms of an interface dispatch that select the
 // same fields render identically and can share one CASE arm.
 func (s *stmt) typedGeometrySQL(expr string, t geotype.Type, sel ast.SelectionSet, depth int) (string, error) {
+	return s.typedGeometryDigitsSQL(expr, "", t, sel, depth)
+}
+
+// typedGeometryDigitsSQL is [stmt.typedGeometrySQL] with the GeoJSON the
+// object is read from rounded to the decimal digits bound at placeholder
+// digits ("" keeps PostGIS's default), so every coordinate field of the
+// object (x, y, points, geojson, ...) carries the same precision.
+func (s *stmt) typedGeometryDigitsSQL(expr, digits string, t geotype.Type, sel ast.SelectionSet, depth int) (string, error) {
 	ctx := geoCtx{dims: quoteLiteral(t.Dims.Suffix())}
-	cols := fmt.Sprintf("ST_AsGeoJSON(%s.g)::json AS j, ST_SRID(%s.g) AS srid", geoValue, geoValue)
+	geojson := postgis.OutputJSONSQL(geoValue + ".g")
+	if digits != "" {
+		geojson = postgis.OutputJSONPrecisionSQL(geoValue+".g", digits)
+	}
+	cols := fmt.Sprintf("%s AS j, ST_SRID(%s.g) AS srid", geojson, geoValue)
 	if t.AnyDims {
 		ctx.dims = geoTop + ".dims"
 		cols += fmt.Sprintf(", CASE ST_Zmflag(%s.g::geometry) WHEN 1 THEN 'M' WHEN 2 THEN 'Z' WHEN 3 THEN 'ZM' ELSE '' END AS dims", geoValue)

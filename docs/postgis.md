@@ -249,11 +249,21 @@ they are not generated at all:
 | `geometry(Polygon, 4326)` | — | all six |
 | `geography` | all six | — |
 
-## Reprojection and simplification
+## Projection arguments
 
-Spatial fields take `transform:` (an SRID) and `simplify:` (a tolerance),
-applied before the value is encoded as GeoJSON. Aliases let you fetch several
-representations at once:
+Spatial column fields take four projection arguments, applied before the
+value is encoded as GeoJSON. Aliases let you fetch several representations
+at once:
+
+| Argument | SQL | Notes |
+|---|---|---|
+| `buffer: Float` | `ST_Buffer(col, $n::float8)` | the area within that distance: metres on `geography` (the value stays geography), SRID units on `geometry`; negative distances shrink polygons and erase points and lines |
+| `simplify: Float` | `ST_SimplifyPreserveTopology(col, $n)` | vertex reduction that never yields an invalid geometry (geography is cast to geometry first) |
+| `transform: Int` | `ST_Transform(col, <srid>)` | reproject; the SRID is an integer literal of the query shape |
+| `precision: Int` | `ST_AsGeoJSON(col, $n::int4)` | decimal digits of every coordinate, 0 to 15; PostGIS's default is 9, and 6 (about 10 cm on lon/lat data) shrinks payloads substantially |
+
+They apply in that order: buffer, then simplify, then transform, then the
+GeoJSON encoding with the given precision.
 
 ```graphql
 {
@@ -261,13 +271,23 @@ representations at once:
     nodes {
       webMercator: location(transform: 3857)
       coarse:      location(simplify: 0.01)
+      compact:     location(precision: 6)
+      around:      area(buffer: 250, precision: 6)
     }
   }
 }
 ```
 
-`simplify` uses `ST_SimplifyPreserveTopology`, so the result is never an
-invalid geometry.
+The buffer distance, the tolerance and the precision are bind parameters, so
+the SQL text depends only on which arguments a field has (a `null` argument
+counts as absent). An out-of-range precision, a non-integer precision or a
+non-finite buffer is a GraphQL error. With [typed geometry](#typed-geometry)
+the arguments apply the same way, and `precision:` rounds every coordinate
+field of the object (`x`, `y`, `points`, `geojson`, ...), which is read back
+out of the one rounded encoding. `ST_Buffer` builds a new polygon around
+every vertex of the value, so the cost estimator charges each buffered field
+5 per row on top of the column read (pdbcore's `postgis.BufferCost`); the
+other arguments cost nothing extra.
 
 ## Distance ordering
 
@@ -498,8 +518,8 @@ point of the client's choosing. A bare `@omit` hides all of it.
 
 ## Notes and limits
 
-- **Injection safety.** Geometries, bounding-box corners and distances are all
-  bind parameters; the compiled SQL text is a pure function of the query shape
+- **Injection safety.** Geometries, bounding-box corners, distances and the
+  buffer, simplify and precision projection arguments are all bind parameters; the compiled SQL text is a pure function of the query shape
   and of the input's form (GeoJSON, bare WKT or EWKT), never of its content.
   This is enforced by `FuzzSpatial` in `internal/compile`, the spatial twin of
   the `FuzzFilter` invariant.

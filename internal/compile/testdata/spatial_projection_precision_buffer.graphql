@@ -1,0 +1,17 @@
+# variables: {"digits": 6, "nothing": null}
+# Projection arguments: buffer: (ST_Buffer, bound distance; geography stays
+# geography, so a later transform: still casts it), simplify:, transform:
+# and precision: (ST_AsGeoJSON maxdecimaldigits, bound). A null argument is
+# absent; the values never change the SQL text.
+query ($digits: Int, $nothing: Float) {
+  allPlaces {
+    nodes {
+      compact: location(precision: 6)
+      fromVar: location(precision: $digits)
+      buffered: area(buffer: 500)
+      everything: area(buffer: 500, simplify: 0.001, transform: 3857, precision: 2)
+      bufferedPoint: location(buffer: 0.01, transform: 3857)
+      none: location(buffer: $nothing)
+    }
+  }
+}

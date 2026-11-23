@@ -134,9 +134,12 @@ projection arguments and distance-ordering enum values plus their bindings,
 and the core compiler reads the bindings without a `CompileHook`. See
 [PostGIS](postgis.md). The `contrib` plugin (priority 170) does the same for
 full-text, pg_trgm, unaccent, hstore, ltree, range, inet and pgvector
-columns (vocabulary operators, `<field>Rank` fields, rank, similarity and
-vector distance ordering); see
-[Contrib types](contrib.md). The `aggregates` plugin (priority 180, opt-in)
+columns (vocabulary operators, `<field>Rank` and `<field>Headline` fields,
+rank, similarity and vector distance ordering); see
+[Contrib types](contrib.md). Fields whose values are expensive to compute
+declare it on their binding: `FieldMeta.RowCost` is charged each time the
+field is evaluated (headlines) and `FieldMeta.ArgCost` per argument given a
+non-null value (the spatial `buffer:`), both in the cost estimate. The `aggregates` plugin (priority 180, opt-in)
 adds `@graphile/pg-aggregates`-style connection, grouped, relational-order and
 relational-filter aggregates the same way: `FieldMeta.Aggregate`,
 `InputField.Aggregate`, `EnumValue.GroupBy` and `OrderRelation.Aggregate`

@@ -1,0 +1,8 @@
+# variables: {"after": "WyJEb2N1bWVudCIsIDNd"}
+# A headline next to a keyset page over rank: the headline is a projection
+# of the page rows and takes no part in the cursor predicate.
+query ($after: Cursor) {
+  allDocuments(filter: {search: {matches: "cat"}}, orderBy: [SEARCH_RANK_DESC], after: $after, first: 2) {
+    edges { cursor node { id searchHeadline(document: NOTES, options: {maxWords: 5, minWords: 1}) } }
+  }
+}

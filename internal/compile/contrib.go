@@ -259,6 +259,11 @@ type rankRef struct {
 	// order is the orderBy value requiring the match; empty for rank
 	// fields, which render NULL without one.
 	order string
+	// headline marks a headline field: render is then the document column
+	// and options the ts_headline options text, bound when the match
+	// exists (an unreferenced parameter would have no type).
+	headline bool
+	options  string
 }
 
 // rankMarker returns a placeholder for a rank expression. A row's rank
@@ -272,14 +277,49 @@ func (s *stmt) rankMarker(r rankRef) string {
 
 func rankMarkerText(i int) string { return "%%RANK_" + strconv.Itoa(i) + "%%" }
 
+// headlineMarker renders a <field>Headline field: a rank marker over the
+// document column the document: argument names, resolved like the rank of
+// the same tsvector column, with the validated options bound as one text
+// parameter whether or not any were given (none without the match).
+func (s *stmt) headlineMarker(meta *schema.FieldMeta, f *ast.Field, alias string) (string, error) {
+	docs, _ := meta.Nested["documents"].(map[string]*introspect.Column)
+	v, _ := s.argValue(f, "document")
+	name, _ := v.(string)
+	doc := docs[name]
+	if doc == nil {
+		return "", errUser("%s: unknown document %q", f.Name, name)
+	}
+	opts, _ := s.argValue(f, "options")
+	h, err := pgcontrib.ParseHeadlineOptions(opts)
+	if err != nil {
+		return "", errUser("%s: %s", f.Name, err.Error())
+	}
+	return s.rankMarker(rankRef{
+		key:      alias + "." + quoteIdent(meta.Column.Name),
+		render:   alias + "." + quoteIdent(doc.Name),
+		headline: true,
+		options:  h.String(),
+	}), nil
+}
+
 // resolveRanks replaces rank markers with ts_rank over the matched query,
 // NULL for rank fields without a match, and fails rank ordering without
 // one.
 func (s *stmt) resolveRanks(sql string) (string, error) {
 	for i, r := range s.rankRefs {
 		expr := "NULL::float4"
+		if r.headline {
+			expr = "NULL::text"
+		}
 		if src, ok := s.ranks[r.key]; ok {
-			expr = src.op.RankSQL(pgcontrib.RankFrequency, r.render, src.phs...)
+			if r.headline {
+				if !strings.Contains(sql, rankMarkerText(i)) {
+					continue
+				}
+				expr = src.op.HeadlineSQL(r.render, s.param(r.options), src.phs...)
+			} else {
+				expr = src.op.RankSQL(pgcontrib.RankFrequency, r.render, src.phs...)
+			}
 		} else if r.order != "" {
 			return "", errUser("orderBy %s requires a matches filter on the same column", r.order)
 		}

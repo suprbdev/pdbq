@@ -3,6 +3,7 @@ package compile
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"strconv"
 
 	"github.com/vektah/gqlparser/v2/ast"
@@ -223,14 +224,26 @@ func columnSRID(c *introspect.Column) int {
 }
 
 // spatialFieldSQL renders a selected spatial column, applying the optional
-// per-field `transform:` (reproject) and `simplify:` (vertex reduction)
-// arguments before the value is encoded as GeoJSON — or, when the field is
-// typed as a geometry object (typed_geometry), as that object's selection.
+// per-field projection arguments before the value is encoded as GeoJSON —
+// or, when the field is typed as a geometry object (typed_geometry), as that
+// object's selection: `buffer:` (ST_Buffer, metres on geography), then
+// `simplify:` (vertex reduction), then `transform:` (reproject), and
+// `precision:` (decimal digits of the encoded coordinates). Buffer distance,
+// tolerance and precision are bind parameters.
 func (s *stmt) spatialFieldSQL(alias string, c *introspect.Column, f *ast.Field, typeName string, depth int) (string, error) {
 	flavour := postgis.FlavourOf(c.PGType)
-	ref := alias + "." + quoteIdent(c.Name)
-	expr := ref
-	if v, ok := s.argValue(f, "simplify"); ok && v != nil {
+	expr := alias + "." + quoteIdent(c.Name)
+	if v, ok := s.argValue(f, "buffer"); ok {
+		d, err := toFloat(v)
+		if err == nil {
+			err = postgis.CheckBuffer(d)
+		}
+		if err != nil {
+			return "", errUser("buffer must be a finite number")
+		}
+		expr = postgis.BufferSQL(expr, s.param(d))
+	}
+	if v, ok := s.argValue(f, "simplify"); ok {
 		tol, err := toFloat(v)
 		if err != nil {
 			return "", errUser("simplify must be a number")
@@ -239,21 +252,34 @@ func (s *stmt) spatialFieldSQL(alias string, c *introspect.Column, f *ast.Field,
 			return "", errUser("simplify must be >= 0")
 		}
 		expr = postgis.SimplifySQL(expr, s.param(tol), flavour)
+		flavour = postgis.Geometry
 	}
-	if v, ok := s.argValue(f, "transform"); ok && v != nil {
+	if v, ok := s.argValue(f, "transform"); ok {
 		srid, err := toFloat(v)
 		if err != nil || srid <= 0 {
 			return "", errUser("transform must be a positive SRID")
 		}
-		// Simplify already produced a geometry; keep the cast consistent.
-		flavourForTransform := flavour
-		if expr != ref {
-			flavourForTransform = postgis.Geometry
+		expr = postgis.TransformSQL(expr, int(srid), flavour)
+	}
+	digits := ""
+	if v, ok := s.argValue(f, "precision"); ok {
+		n, err := toFloat(v)
+		if err == nil && n != math.Trunc(n) {
+			err = fmt.Errorf("not an integer")
 		}
-		expr = postgis.TransformSQL(expr, int(srid), flavourForTransform)
+		if err == nil {
+			err = postgis.CheckPrecision(int64(n))
+		}
+		if err != nil {
+			return "", errUser("precision must be an integer between 0 and %d", postgis.MaxPrecision)
+		}
+		digits = s.param(int64(n))
 	}
 	if gt, ok := s.typedGeometry(typeName, f.Name); ok {
-		return s.typedGeometrySQL(expr, gt, f.SelectionSet, depth)
+		return s.typedGeometryDigitsSQL(expr, digits, gt, f.SelectionSet, depth)
+	}
+	if digits != "" {
+		return postgis.OutputJSONPrecisionSQL(expr, digits), nil
 	}
 	return postgis.OutputJSONSQL(expr), nil
 }

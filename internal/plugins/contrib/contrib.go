@@ -54,7 +54,10 @@
 //   - full-text rank: a <field>Rank: Float sibling of every filterable
 //     tsvector column and <COLUMN>_RANK_ASC/_DESC orderBy values, both
 //     computed (ts_rank) against the first matches* operator on that column
-//     in the list field's filter;
+//     in the list field's filter, and a <field>Headline(document:, options:)
+//     snippet (ts_headline of a text column of the table, named by the
+//     <Type>HeadlineDocument enum, with FullTextHeadlineOptions) against the
+//     same match;
 //
 //   - trigram ordering: <COLUMN>_SIMILARITY_ASC/_DESC (and _WORD_SIMILARITY_,
 //     _STRICT_WORD_SIMILARITY_) orderBy values plus a similarTo:
@@ -101,8 +104,8 @@
 // the plugin (plugins.disabled: [contrib]) removes the surface while plain
 // reads, writes and comparisons keep working. "@omit filter" / "@omit order"
 // on a column skips its filter / ordering surface; "@omit read" also skips
-// its rank field, its score and value fields and its rank, similarity,
-// distance and value orderings, which read the value back against a
+// its rank and headline fields, its score and value fields and its rank,
+// similarity, distance and value orderings, which read the value back against a
 // client-chosen reference (package omit). The value fields come with the
 // plugin regardless of the filters and ordering settings.
 package contrib
@@ -165,11 +168,14 @@ type build struct {
 	b        *schema.Builder
 	extended map[string]bool
 	orderBy  map[string][]*schema.Field
+	// documents maps each declared <Type>HeadlineDocument enum to the
+	// columns its values name.
+	documents map[string]map[string]*introspect.Column
 }
 
 // TransformSchema implements plugin.SchemaHook.
 func (p *Plugin) TransformSchema(_ context.Context, b *schema.Builder) error {
-	st := &build{b: b, extended: map[string]bool{}, orderBy: b.FieldsByOrderBy()}
+	st := &build{b: b, extended: map[string]bool{}, orderBy: b.FieldsByOrderBy(), documents: map[string]map[string]*introspect.Column{}}
 	for _, t := range b.Catalog.Tables {
 		var cols []column
 		for _, c := range t.Columns {
@@ -233,6 +239,7 @@ func (st *build) addFilters(t *introspect.Table, cols []column) {
 			st.extendOps(cc.ci)
 			if cc.ci.Kind == contribtype.FullText && !omit.Column(cc.col, omit.Read) {
 				st.addRankField(t, cc.col)
+				st.addHeadlineField(t, cc.col)
 			}
 		}
 		if trgm, ok := cc.ci.Trgm(); ok && f.Type == "StringFilterOps" && st.served(t, cc.col, trgm.Ops[0].Index) {
@@ -565,6 +572,116 @@ func (st *build) addRankField(t *introspect.Table, c *introspect.Column) {
 		Description: "Full-text rank (ts_rank) of " + c.Name + " against the first matches* operator on it in " +
 			"the filter of the list this row was read through; null without one.",
 		Meta: &schema.FieldMeta{Kind: schema.KindFullTextRank, Table: t, Column: c},
+	})
+}
+
+// headlineOptionsInput names the shared input of the headline options.
+const headlineOptionsInput = "FullTextHeadlineOptions"
+
+// headlineOptionFields are the fields of FullTextHeadlineOptions, keyed as
+// pdbcore's contrib.ParseHeadlineOptions reads them.
+var headlineOptionFields = []*schema.InputField{
+	{Name: "maxWords", Type: "Int", Description: "Longest headline, in words (1 to 100; default 35)."},
+	{Name: "minWords", Type: "Int", Description: "Shortest headline, in words (1 to 100, less than maxWords; default 15)."},
+	{Name: "shortWord", Type: "Int", Description: "Words of at most this many characters are dropped at the start and end of a headline (0 to 100; default 3)."},
+	{Name: "maxFragments", Type: "Int", Description: "Number of fragments to show (0 to 10); 0, the default, shows one headline instead of fragments."},
+	{Name: "highlightAll", Type: "Boolean", Description: "Highlight the whole document instead of a headline, ignoring the word and fragment limits."},
+	{Name: "startSel", Type: "String", Description: "Markup before each match (1 to 32 bytes, no double quotes, backslashes or control characters; default <b>)."},
+	{Name: "stopSel", Type: "String", Description: "Markup after each match (same limits; default </b>)."},
+	{Name: "fragmentDelimiter", Type: "String", Description: "Markup between fragments (same limits; default \" ... \")."},
+}
+
+// ensureHeadlineOptions declares FullTextHeadlineOptions, reporting false
+// when the name is taken.
+func (st *build) ensureHeadlineOptions() bool {
+	if st.extended[headlineOptionsInput] {
+		return true
+	}
+	if st.nameTaken(headlineOptionsInput) {
+		st.b.Options.Logger.Warn("contrib: type name already taken, full-text headlines disabled", "type", headlineOptionsInput)
+		return false
+	}
+	st.extended[headlineOptionsInput] = true
+	in := &schema.Input{
+		Name:        headlineOptionsInput,
+		Description: "ts_headline options of a full-text headline; omitted fields keep PostgreSQL's defaults.",
+	}
+	for _, f := range headlineOptionFields {
+		cp := *f
+		in.Fields = append(in.Fields, &cp)
+	}
+	st.b.Inputs[headlineOptionsInput] = in
+	return true
+}
+
+// addHeadlineField adds <field>Headline(document:, options:): String next
+// to a tsvector column, over an enum of the text columns the table's object
+// type exposes (<Type>HeadlineDocument). Nothing is added when the table has no such
+// column or a name is taken.
+func (st *build) addHeadlineField(t *introspect.Table, c *introspect.Column) {
+	b := st.b
+	typeName := b.TypeForTable[t.Schema+"."+t.Name]
+	obj := b.Objects[typeName]
+	if obj == nil {
+		return
+	}
+	name := b.Inflect(inflect.KindFieldName, inflect.Input{Schema: t.Schema, Table: t.Name, Column: c.Name}) + "Headline"
+	if obj.Field(name) != nil {
+		return
+	}
+	enumName := typeName + "HeadlineDocument"
+	if !st.extended[enumName] {
+		docs := map[string]*introspect.Column{}
+		en := &schema.Enum{Name: enumName, Description: "Text columns of " + typeName + " a full-text headline can highlight."}
+		readable := map[*introspect.Column]bool{}
+		for _, f := range obj.Fields {
+			if f.Meta != nil && f.Meta.Kind == schema.KindColumn && f.Meta.Column != nil {
+				readable[f.Meta.Column] = true
+			}
+		}
+		for _, d := range t.Columns {
+			if !readable[d] || !pgcontrib.IsText(d.PGType) || d.IsArray || d.EnumRef != "" || omit.Column(d, omit.Read) {
+				continue
+			}
+			v := coreinflect.EnumValue(d.Name)
+			if _, dup := docs[v]; dup {
+				continue
+			}
+			docs[v] = d
+			en.Values = append(en.Values, schema.EnumValue{Name: v, Column: d.Name, Description: "The " + d.Name + " column."})
+		}
+		if len(en.Values) == 0 {
+			return
+		}
+		if st.nameTaken(enumName) {
+			b.Options.Logger.Warn("contrib: type name already taken, full-text headlines skipped", "type", enumName)
+			return
+		}
+		if !st.ensureHeadlineOptions() {
+			return
+		}
+		st.extended[enumName] = true
+		b.Enums[enumName] = en
+		st.documents[enumName] = docs
+	}
+	docs := st.documents[enumName]
+	if docs == nil {
+		return
+	}
+	obj.AddField(&schema.Field{
+		Name: name,
+		Type: "String",
+		Args: []schema.Arg{
+			{Name: "document", Type: enumName + "!", Description: "The text column to highlight."},
+			{Name: "options", Type: headlineOptionsInput, Description: "ts_headline options; PostgreSQL's defaults when omitted."},
+		},
+		Description: "Highlighted snippet (ts_headline) of the document column against the first matches* operator on " + c.Name +
+			" in the filter of the list this row was read through, the same match " + strings.TrimSuffix(name, "Headline") + "Rank ranks against; null without one.",
+		Meta: &schema.FieldMeta{
+			Kind: schema.KindFullTextHeadline, Table: t, Column: c,
+			Nested:  map[string]any{"documents": docs},
+			RowCost: pgcontrib.HeadlineCost,
+		},
 	})
 }
 

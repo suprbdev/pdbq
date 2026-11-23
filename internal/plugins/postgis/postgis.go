@@ -27,9 +27,11 @@
 //     column whose typmod rules them out (no locationX on a LineString
 //     column, no locationZ on a 2D Point column).
 //
-//   - projection arguments: spatial fields accept transform: (reproject to an
-//     SRID) and simplify: (ST_SimplifyPreserveTopology tolerance), so clients
-//     can pull web-mercator or low-vertex geometry without a second query.
+//   - projection arguments: spatial fields accept buffer: (ST_Buffer
+//     distance, metres on geography), simplify: (ST_SimplifyPreserveTopology
+//     tolerance), transform: (reproject to an SRID) and precision: (decimal
+//     digits of the GeoJSON coordinates), so clients can pull buffered,
+//     web-mercator, low-vertex or compact geometry without a second query.
 //
 //   - distance ordering: <COLUMN>_DISTANCE_ASC/_DESC orderBy values plus a
 //     `near:` argument on list and connection fields, compiled to the
@@ -431,7 +433,8 @@ func geometryObject(gt geotype.Type) *schema.Object {
 	return obj
 }
 
-// addProjectionArgs adds transform:/simplify: to each spatial column field.
+// addProjectionArgs adds transform:, simplify:, buffer: and precision: to
+// each spatial column field, and prices buffer: in the cost estimate.
 func (p *Plugin) addProjectionArgs(b *schema.Builder, t *introspect.Table, cols []*introspect.Column) {
 	typeName := b.TypeForTable[t.Schema+"."+t.Name]
 	obj, ok := b.Objects[typeName]
@@ -447,7 +450,13 @@ func (p *Plugin) addProjectionArgs(b *schema.Builder, t *introspect.Table, cols 
 		f.Args = append(f.Args,
 			schema.Arg{Name: "transform", Type: "Int"},
 			schema.Arg{Name: "simplify", Type: "Float"},
+			schema.Arg{Name: "buffer", Type: "Float", Description: "Return the area within this distance of the value (ST_Buffer): metres on geography, SRID units on geometry; negative distances shrink polygons. Applied before simplify: and transform:."},
+			schema.Arg{Name: "precision", Type: "Int", Description: "Round the GeoJSON coordinates to this many decimal places (0 to 15; PostGIS's default is 9, 6 is about 10 cm on lon/lat data)."},
 		)
+		if f.Meta.ArgCost == nil {
+			f.Meta.ArgCost = map[string]int{}
+		}
+		f.Meta.ArgCost["buffer"] = postgis.BufferCost
 	}
 }
 

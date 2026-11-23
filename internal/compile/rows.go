@@ -61,7 +61,7 @@ func (s *stmt) rowJSONAs(typeName string, sel ast.SelectionSet, alias string, de
 				continue
 			}
 			if postgis.IsSpatial(meta.Column.PGType) && !meta.Column.IsArray {
-				// transform:/simplify: arguments apply before GeoJSON encoding.
+				// Projection arguments apply before GeoJSON encoding.
 				expr, err := s.spatialFieldSQL(alias, meta.Column, f, typeName, depth+1)
 				if err != nil {
 					return "", nil, err
@@ -77,6 +77,12 @@ func (s *stmt) rowJSONAs(typeName string, sel ast.SelectionSet, alias string, de
 		case schema.KindFullTextRank:
 			ref := alias + "." + quoteIdent(meta.Column.Name)
 			pairs = append(pairs, key, s.rankMarker(rankRef{key: ref, render: ref}))
+		case schema.KindFullTextHeadline:
+			expr, err := s.headlineMarker(meta, f, alias)
+			if err != nil {
+				return "", nil, err
+			}
+			pairs = append(pairs, key, expr)
 		case schema.KindScore:
 			expr, err := s.scoreSQL(meta, f, alias)
 			if err != nil {
