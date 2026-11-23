@@ -255,7 +255,7 @@ func (s *stmt) spatialFieldSQL(alias string, c *introspect.Column, f *ast.Field,
 	if gt, ok := s.typedGeometry(typeName, f.Name); ok {
 		return s.typedGeometrySQL(expr, gt, f.SelectionSet, depth)
 	}
-	return postgis.OutputSQL(expr), nil
+	return postgis.OutputJSONSQL(expr), nil
 }
 
 // spatialDerivedSQL renders a derived spatial accessor field (locationArea,
@@ -265,5 +265,5 @@ func (s *stmt) spatialDerivedSQL(alias string, c *introspect.Column, suffix stri
 	if !ok {
 		return "", fmt.Errorf("compile: unknown spatial accessor %q", suffix)
 	}
-	return d.SQL(alias+"."+quoteIdent(c.Name), postgis.FlavourOf(c.PGType)), nil
+	return d.JSONSQL(alias+"."+quoteIdent(c.Name), postgis.FlavourOf(c.PGType)), nil
 }

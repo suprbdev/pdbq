@@ -1,5 +1,5 @@
 -- field: recordVisit
-SELECT json_build_object('result', CASE WHEN __t_1 IS NULL THEN NULL ELSE json_build_object('visitId', __t_1."visit_id", 'spot', ST_AsGeoJSON(__t_1."spot")::jsonb) END) AS data
+SELECT json_build_object('result', CASE WHEN __t_1 IS NULL THEN NULL ELSE json_build_object('visitId', __t_1."visit_id", 'spot', ST_AsGeoJSON(__t_1."spot")::json) END) AS data
 FROM "public"."record_visit"("spot" => CASE WHEN left($1, 1) = '{' THEN ST_GeomFromGeoJSON($1) ELSE ST_GeomFromEWKT($1) END::"public"."geometry") AS __t_1
 -- args: ["{\"coordinates\":[1,2],\"type\":\"Point\"}"]
 

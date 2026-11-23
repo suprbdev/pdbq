@@ -228,9 +228,19 @@ func withoutPartitions(cat *introspect.Catalog) (*introspect.Catalog, map[string
 	if len(hidden) == 0 {
 		return cat, hidden
 	}
-	cp := *cat
-	cp.Tables = kept
-	return &cp, hidden
+	cp := &introspect.Catalog{
+		FormatVersion:    cat.FormatVersion,
+		ServerVersion:    cat.ServerVersion,
+		ServerVersionNum: cat.ServerVersionNum,
+		Schemas:          cat.Schemas,
+		Tables:           kept,
+		Enums:            cat.Enums,
+		Composites:       cat.Composites,
+		Functions:        cat.Functions,
+		Extensions:       cat.Extensions,
+		Ranges:           cat.Ranges,
+	}
+	return cp, hidden
 }
 
 // addNode declares the Relay Node interface and the node(nodeId:) global
