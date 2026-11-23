@@ -40,7 +40,13 @@ $ pdbq config example   # print the full annotated reference
 | `server.max_body_bytes` | 1048576 | maximum request body size (1 MiB) |
 | `server.max_depth` / `max_cost` | 15 / 10000 | per-operation limits; recursive relations can tune the cost estimate with `@costMultiplier` (see [smart comments](smart-comments.md#cost-estimation-for-recursive-relations)) |
 | `server.max_page_size` | 100 | largest accepted `first`/`last` (a larger value errors); also the default page size when neither is given |
-| `server.document_cache_size` | 1000 | parsed and validated documents cached by query text (LRU, at most 32 MiB of query text; validation errors are cached too); `0` disables; dropped with the schema on a watch-mode swap |
+| `server.max_query_tokens` | 15000 | lexical tokens per GraphQL document (names, punctuation, values, comments); parsing stops at the first one beyond it, bounding the parse and validation work of one request |
+| `server.max_input_depth` | 32 | nesting of input values: list and input object literals, and variables of list or input object types (`not`/`and`/`or` filter chains, nested mutation inputs); JSON scalar values are not counted |
+| `server.max_selections` | 10000 | selections (fields, fragment spreads, inline fragments) of a document with every fragment spread expanded; rejects fragment bombs before anything walks them |
+| `server.max_field_comparisons` | 100000 | field pairs validation compares to check that fields sharing a response key at one position (fragments expanded) can be merged; the check is quadratic in such repeated fields |
+| `server.document_cache_size` | 1000 | parsed and validated documents cached by query text (LRU; validation errors are cached too); `0` disables; dropped with the schema on a watch-mode swap |
+| `server.document_cache_bytes` | 67108864 | estimated memory the document cache retains (query text plus parsed and validated AST, 64 MiB); least recently used documents are evicted beyond it |
+| `server.document_cache_max_entry_bytes` | 1048576 | estimated size above which a document is not cached (1 MiB) |
 | `server.cors_origins` | `[]` | allowed CORS origins (exact match, or `*`); empty disables CORS headers |
 | `server.compression` | `false` | gzip responses when the client sends `Accept-Encoding: gzip` |
 | `server.apq` | `false` | Apollo automatic persisted queries (in-memory, register-on-miss) |
@@ -49,7 +55,10 @@ $ pdbq config example   # print the full annotated reference
 | `server.read_only` | `false` | reject every mutation (maintenance, demos, defense in depth) |
 | `server.disable_introspection` | `false` | reject `__schema`/`__type` queries and leave "Did you mean …" suggestions out of validation errors, so guessed names don't reveal real ones (`__typename` keeps working) |
 | `server.subscriptions` | `false` | serve `Subscription.listen` over WebSocket on `/graphql` (`graphql-transport-ws`, legacy `graphql-ws`); off leaves the schema without a `Subscription` type — see [Subscriptions](subscriptions.md) |
-| `server.subscriptions_max_per_connection` | 100 | operations running at once per WebSocket; one more gets an `error` message |
+| `server.subscriptions_max_per_connection` | 100 | operations running at once per WebSocket, counted until each has stopped; one more gets an `error` message, or waits while completed operations are still stopping |
+| `server.subscriptions_max_connections` | 1000 | WebSocket connections at once; further upgrades get `503` |
+| `server.subscriptions_max_operations` | 10000 | operations running at once over all WebSocket connections; one more gets an `error` message |
+| `server.subscriptions_subscribe_rate` | 100 | subscribe messages started per second per WebSocket, in bursts of up to `subscriptions_max_per_connection`; a faster client's messages are read later; `0` disables |
 | `server.subscriptions_topic_prefix` | `postgraphile:` | channel = prefix + topic, as in `pg_notify('postgraphile:' \|\| topic, payload)`; the channel must fit in 63 bytes |
 | `server.subscriptions_topics` | `[]` | topic allowlist (without the prefix); `foo:*` allows every topic starting with `foo:`; empty allows any topic of `[A-Za-z0-9_.:/-]` |
 | `server.subscriptions_keepalive` | `15s` | WebSocket ping interval (plus `ka` messages on legacy `graphql-ws`); a peer silent for an interval is disconnected; `0` disables |

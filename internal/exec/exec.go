@@ -163,6 +163,30 @@ type Options struct {
 	// executor, so replacing the executor (watch mode) discards it with the
 	// schema it was validated against.
 	DocumentCacheSize int
+	// DocumentCacheBytes bounds the estimated memory the document cache
+	// retains (query text plus parsed and validated AST); 0 means
+	// DefaultDocumentCacheBytes.
+	DocumentCacheBytes int
+	// DocumentCacheMaxEntryBytes is the estimated size above which a
+	// document is not cached; 0 means DefaultDocumentCacheMaxEntryBytes.
+	DocumentCacheMaxEntryBytes int
+	// MaxQueryTokens is the most lexical tokens a query document may have
+	// (the parser stops at the first one beyond it); 0 means
+	// DefaultMaxQueryTokens.
+	MaxQueryTokens int
+	// MaxInputDepth bounds the nesting of input values (list and input
+	// object literals, and variable values of list and input object types);
+	// 0 means DefaultMaxInputDepth.
+	MaxInputDepth int
+	// MaxSelections bounds the selections (fields, fragment spreads and
+	// inline fragments) of a document with every fragment spread expanded;
+	// 0 means DefaultMaxSelections. Every walk of an accepted operation's
+	// selections is bounded by it.
+	MaxSelections int
+	// MaxFieldComparisons bounds the field pairs validation compares to
+	// check that fields sharing a response key can be merged; 0 means
+	// DefaultMaxFieldComparisons.
+	MaxFieldComparisons int
 	// Metrics records database operations, compile time and the product
 	// counters; nil records nothing.
 	Metrics *Metrics
@@ -201,7 +225,9 @@ func New(pool *pgxpool.Pool, built *schema.Built, compileFn compile.Func, hooks 
 		Compile: compileFn,
 		Hooks:   hooks,
 		Opts:    opts,
-		docs:    newDocCache(sch, opts.DocumentCacheSize, documentCacheBytes),
+		docs: newDocCache(sch, opts.DocumentCacheSize,
+			orDefault(opts.DocumentCacheBytes, DefaultDocumentCacheBytes),
+			orDefault(opts.DocumentCacheMaxEntryBytes, DefaultDocumentCacheMaxEntryBytes)),
 	}
 }
 
@@ -280,12 +306,21 @@ func (e *Executor) ExecuteFields(ctx context.Context, op *Operation, fields []*a
 // CompileRequest: parse, validate, operation selection, variable coercion,
 // limits, and BeforeOperation hooks.
 func (e *Executor) prepare(ctx context.Context, req Request) (context.Context, *Operation, error) {
+	if err := ctx.Err(); err != nil {
+		return ctx, nil, err
+	}
 	doc, err := e.document(req.Query)
 	if err != nil {
 		return ctx, nil, err
 	}
+	if err := ctx.Err(); err != nil {
+		return ctx, nil, err
+	}
 	opDef, err := selectOperation(doc, req.OperationName)
 	if err != nil {
+		return ctx, nil, err
+	}
+	if err := e.checkVariableDepth(opDef, req.Variables); err != nil {
 		return ctx, nil, err
 	}
 	vars, verr := validator.VariableValues(e.Built.Schema, opDef, req.Variables)
@@ -793,7 +828,8 @@ func (e *Executor) checkLimits(doc *ast.QueryDocument, op *ast.OperationDefiniti
 		}
 		sel = append(sel, item)
 	}
-	depth, cost := measure(sel, doc.Fragments, vars, pageCap, 1, e.Built)
+	m := newMeasurer(doc.Fragments, vars, pageCap, e.Built, maxDepth, maxCost)
+	depth, cost := m.measure(sel)
 	if depth > maxDepth {
 		return gqlerror.Errorf("operation depth %d exceeds limit %d", depth, maxDepth)
 	}
@@ -804,8 +840,158 @@ func (e *Executor) checkLimits(doc *ast.QueryDocument, op *ast.OperationDefiniti
 	return nil
 }
 
+// measure returns the depth and cost of sel without limits (see
+// checkLimits); depth is the depth sel starts at.
 func measure(sel ast.SelectionSet, frags ast.FragmentDefinitionList, vars map[string]any, pageCap, depth int, built *schema.Built) (int, int) {
-	return measureSel(sel, frags, vars, pageCap, depth, false, built)
+	m := newMeasurer(frags, vars, pageCap, built, 0, 0)
+	d, c := m.measure(sel)
+	return d + depth - 1, c
+}
+
+// costCeiling saturates cost arithmetic, so deeply nested multipliers cannot
+// overflow into a small or negative cost.
+const costCeiling = 1 << 40
+
+// measurer computes the depth and cost of an operation's selections. Each
+// fragment is measured once per pagination context and its result reused
+// for every spread, so the walk is linear in the document even when
+// fragments spread each other repeatedly. With limits set, the walk stops as
+// soon as the depth or the running cost exceeds them.
+type measurer struct {
+	frags    ast.FragmentDefinitionList
+	vars     map[string]any
+	pageCap  int
+	built    *schema.Built
+	meta     schema.Meta
+	maxDepth int
+	maxCost  int
+	memo     map[fragmentKey]measured
+	// over is set once the limits are exceeded; the walk then unwinds.
+	over bool
+}
+
+type fragmentKey struct {
+	name      string
+	paginated bool
+}
+
+// measured is the depth (relative to the selection set's own level) and
+// cost of a selection set.
+type measured struct{ depth, cost int }
+
+func newMeasurer(frags ast.FragmentDefinitionList, vars map[string]any, pageCap int, built *schema.Built, maxDepth, maxCost int) *measurer {
+	m := &measurer{frags: frags, vars: vars, pageCap: pageCap, built: built, maxDepth: maxDepth, maxCost: maxCost, memo: map[fragmentKey]measured{}}
+	if built != nil {
+		m.meta = built.Meta
+	}
+	return m
+}
+
+// measure returns the depth and cost of sel at the operation root; once a
+// limit is exceeded they are lower bounds that already exceed it.
+func (m *measurer) measure(sel ast.SelectionSet) (int, int) {
+	r := m.sel(sel, 1, false)
+	return 1 + r.depth, r.cost
+}
+
+func satAdd(a, b int) int { return min(a+b, costCeiling) }
+
+func satMul(a, b int) int {
+	if a == 0 || b == 0 {
+		return 0
+	}
+	if a > costCeiling/b {
+		return costCeiling
+	}
+	return min(a*b, costCeiling)
+}
+
+// sel walks one selection set at absolute depth (used only to stop early).
+// paginated is true when the enclosing field already applied a page-size
+// multiplier (a connection): its direct list children (nodes/edges) then
+// count once instead of the ×10 list default, so pagination is not charged
+// twice.
+func (m *measurer) sel(sel ast.SelectionSet, depth int, paginated bool) measured {
+	var out measured
+	for _, item := range sel {
+		if m.over {
+			return out
+		}
+		var r measured
+		switch v := item.(type) {
+		case *ast.Field:
+			// Selections excluded by @skip/@include never compile, so they
+			// cost nothing (charging them could reject a valid query).
+			if compile.SkipByDirectives(v.Directives, m.vars) {
+				continue
+			}
+			r = m.field(v, depth, paginated)
+		case *ast.InlineFragment:
+			if compile.SkipByDirectives(v.Directives, m.vars) {
+				continue
+			}
+			r = m.sel(v.SelectionSet, depth, paginated)
+		case *ast.FragmentSpread:
+			if compile.SkipByDirectives(v.Directives, m.vars) {
+				continue
+			}
+			r = m.fragment(v.Name, depth, paginated)
+		}
+		out.depth = max(out.depth, r.depth)
+		out.cost = satAdd(out.cost, r.cost)
+		if (m.maxDepth > 0 && depth+out.depth > m.maxDepth) || (m.maxCost > 0 && out.cost > m.maxCost) {
+			m.over = true
+		}
+	}
+	return out
+}
+
+func (m *measurer) fragment(name string, depth int, paginated bool) measured {
+	k := fragmentKey{name: name, paginated: paginated}
+	if r, ok := m.memo[k]; ok {
+		return r
+	}
+	def := m.frags.ForName(name)
+	if def == nil {
+		return measured{}
+	}
+	r := m.sel(def.SelectionSet, depth, paginated)
+	if !m.over {
+		m.memo[k] = r
+	}
+	return r
+}
+
+func (m *measurer) field(v *ast.Field, depth int, paginated bool) measured {
+	mult, childPaginated := 1, false
+	if n, ok := pageArg(v, m.vars); ok {
+		// first/last drive how many rows this subtree repeats for;
+		// clamp to the page-size cap the compiler enforces anyway.
+		mult = min(max(n, 1), m.pageCap)
+		childPaginated = true
+	} else if hasPageArgs(v) {
+		mult = 10 // connection without explicit first/last
+		childPaginated = true
+	} else if !paginated && v.Definition != nil && v.Definition.Type.NamedType == "" {
+		mult = 10 // list field outside a paginated container
+	}
+	// An @costMultiplier override replaces the page-size assumption
+	// with the schema's declared expected fan-out. It only ever lowers
+	// the estimate: a query asking for fewer rows than the declared
+	// average must not be charged the average.
+	if over := fieldCostMultiplier(v, m.meta); over > 0 && over < mult {
+		mult = over
+	}
+	scan := fieldScanCost(v, m.meta)
+	if scan > 0 && v.Definition != nil && v.Definition.Type.NamedType == "" {
+		mult, childPaginated = m.pageCap, true
+	}
+	scan = satAdd(scan, aggregateArgCost(v, m.vars, m.built))
+	if len(v.SelectionSet) == 0 {
+		return measured{depth: 0, cost: satAdd(1, scan)}
+	}
+	c := m.sel(v.SelectionSet, depth+1, childPaginated)
+	return measured{depth: 1 + c.depth, cost: satAdd(satAdd(1, scan), satMul(mult, c.cost))}
 }
 
 // fieldCostMultiplier returns the @costMultiplier override bound to a field,
@@ -958,81 +1144,6 @@ func inputFieldType(built *schema.Built, typeName, field string) string {
 	return ""
 }
 
-// measureSel walks one selection set. paginated is true when the enclosing
-// field already applied a page-size multiplier (a connection): its direct
-// list children (nodes/edges) then count once instead of the ×10 list
-// default, so pagination is not charged twice.
-func measureSel(sel ast.SelectionSet, frags ast.FragmentDefinitionList, vars map[string]any, pageCap, depth int, paginated bool, built *schema.Built) (int, int) {
-	var meta schema.Meta
-	if built != nil {
-		meta = built.Meta
-	}
-	maxDepth, cost := depth, 0
-	for _, item := range sel {
-		switch v := item.(type) {
-		case *ast.Field:
-			// Selections excluded by @skip/@include never compile, so they
-			// cost nothing (charging them could reject a valid query).
-			if compile.SkipByDirectives(v.Directives, vars) {
-				continue
-			}
-			mult, childPaginated := 1, false
-			if n, ok := pageArg(v, vars); ok {
-				// first/last drive how many rows this subtree repeats for;
-				// clamp to the page-size cap the compiler enforces anyway.
-				mult = min(max(n, 1), pageCap)
-				childPaginated = true
-			} else if hasPageArgs(v) {
-				mult = 10 // connection without explicit first/last
-				childPaginated = true
-			} else if !paginated && v.Definition != nil && v.Definition.Type.NamedType == "" {
-				mult = 10 // list field outside a paginated container
-			}
-			// An @costMultiplier override replaces the page-size assumption
-			// with the schema's declared expected fan-out. It only ever lowers
-			// the estimate: a query asking for fewer rows than the declared
-			// average must not be charged the average.
-			if over := fieldCostMultiplier(v, meta); over > 0 && over < mult {
-				mult = over
-			}
-			scan := fieldScanCost(v, meta)
-			if scan > 0 && v.Definition != nil && v.Definition.Type.NamedType == "" {
-				mult, childPaginated = pageCap, true
-			}
-			scan += aggregateArgCost(v, vars, built)
-			d, c := measureSel(v.SelectionSet, frags, vars, pageCap, depth+1, childPaginated, built)
-			cost += 1 + scan + mult*c
-			if len(v.SelectionSet) == 0 {
-				d = depth
-			}
-			if d > maxDepth {
-				maxDepth = d
-			}
-		case *ast.InlineFragment:
-			if compile.SkipByDirectives(v.Directives, vars) {
-				continue
-			}
-			d, c := measureSel(v.SelectionSet, frags, vars, pageCap, depth, paginated, built)
-			cost += c
-			if d > maxDepth {
-				maxDepth = d
-			}
-		case *ast.FragmentSpread:
-			if compile.SkipByDirectives(v.Directives, vars) {
-				continue
-			}
-			if def := frags.ForName(v.Name); def != nil {
-				d, c := measureSel(def.SelectionSet, frags, vars, pageCap, depth, paginated, built)
-				cost += c
-				if d > maxDepth {
-					maxDepth = d
-				}
-			}
-		}
-	}
-	return maxDepth, cost
-}
-
 // hasPageArgs reports whether the field is pagination-capable (declares a
 // first or last argument), i.e. compiles to a paginated row set even when
 // the query omits an explicit page size.
@@ -1078,7 +1189,8 @@ func pageArg(f *ast.Field, vars map[string]any) (int, bool) {
 // CollectRootFields returns the fields of a selection set with fragment
 // spreads and inline fragments expanded and @skip/@include applied, as the
 // executor resolves an operation's root fields; RequestHook plugins use it
-// to inspect what an operation will run.
+// to inspect what an operation will run. For an operation that passed
+// Prepare, the result is bounded by the executor's MaxSelections.
 func CollectRootFields(sel ast.SelectionSet, frags ast.FragmentDefinitionList, vars map[string]any) []*ast.Field {
 	return collectRootFields(sel, frags, vars)
 }

@@ -295,6 +295,7 @@ func (s *stmt) collectFields(sel ast.SelectionSet, typeName string) []*ast.Field
 func mergeFields(fields []*ast.Field) []*ast.Field {
 	var out []*ast.Field
 	index := map[string]int{}
+	var copied map[int]bool
 	for _, f := range fields {
 		i, ok := index[f.Alias]
 		if !ok {
@@ -305,9 +306,16 @@ func mergeFields(fields []*ast.Field) []*ast.Field {
 		if len(f.SelectionSet) == 0 {
 			continue
 		}
-		merged := *out[i]
-		merged.SelectionSet = append(append(ast.SelectionSet{}, out[i].SelectionSet...), f.SelectionSet...)
-		out[i] = &merged
+		if !copied[i] {
+			merged := *out[i]
+			merged.SelectionSet = append(ast.SelectionSet{}, out[i].SelectionSet...)
+			out[i] = &merged
+			if copied == nil {
+				copied = map[int]bool{}
+			}
+			copied[i] = true
+		}
+		out[i].SelectionSet = append(out[i].SelectionSet, f.SelectionSet...)
 	}
 	return out
 }

@@ -56,6 +56,12 @@ func TestValidateRejects(t *testing.T) {
 		"max page size": func(c *Config) { c.Server.MaxPageSize = 0 },
 		"readyz":        func(c *Config) { c.Server.ReadyzTimeout = 0 },
 		"doc cache":     func(c *Config) { c.Server.DocumentCacheSize = -1 },
+		"query tokens":  func(c *Config) { c.Server.MaxQueryTokens = 0 },
+		"input depth":   func(c *Config) { c.Server.MaxInputDepth = 0 },
+		"selections":    func(c *Config) { c.Server.MaxSelections = 0 },
+		"comparisons":   func(c *Config) { c.Server.MaxFieldComparisons = 0 },
+		"cache bytes":   func(c *Config) { c.Server.DocumentCacheBytes = 0 },
+		"cache entry":   func(c *Config) { c.Server.DocumentCacheMaxEntryBytes = 0 },
 		"anon role":     func(c *Config) { c.RLS.AnonymousRole = "" },
 		"watch channel": func(c *Config) { c.Watch.Enabled = true; c.Watch.Channel = "bad$$chan" },
 		"trusted proxy": func(c *Config) { c.RLS.Auth.TrustedProxies = []string{"10.0.0.0/8", "not-an-ip"} },
@@ -65,6 +71,9 @@ func TestValidateRejects(t *testing.T) {
 		"subs max":      func(c *Config) { c.Server.Subscriptions = true; c.Server.SubscriptionsMaxPerConnection = 0 },
 		"subs buffer":   func(c *Config) { c.Server.Subscriptions = true; c.Server.SubscriptionsBuffer = 0 },
 		"subs ka":       func(c *Config) { c.Server.Subscriptions = true; c.Server.SubscriptionsKeepalive = -1 },
+		"subs conns":    func(c *Config) { c.Server.Subscriptions = true; c.Server.SubscriptionsMaxConnections = 0 },
+		"subs ops":      func(c *Config) { c.Server.Subscriptions = true; c.Server.SubscriptionsMaxOperations = 0 },
+		"subs rate":     func(c *Config) { c.Server.Subscriptions = true; c.Server.SubscriptionsSubscribeRate = -1 },
 		"subs prefix": func(c *Config) {
 			c.Server.Subscriptions = true
 			c.Server.SubscriptionsTopicPrefix = strings.Repeat("p", 63)

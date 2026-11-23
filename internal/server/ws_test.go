@@ -32,13 +32,30 @@ type memConn struct {
 	mu       sync.Mutex
 	execs    []string
 	notified chan *pgconn.Notification
+	// delay is how long each statement takes, as a round trip to the
+	// database would.
+	delay time.Duration
 }
 
-func (m *memConn) Exec(_ context.Context, sql string) error {
+func (m *memConn) Exec(ctx context.Context, sql string) error {
 	m.mu.Lock()
-	defer m.mu.Unlock()
+	d := m.delay
 	m.execs = append(m.execs, sql)
+	m.mu.Unlock()
+	if d > 0 {
+		select {
+		case <-time.After(d):
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
 	return nil
+}
+
+func (m *memConn) setDelay(d time.Duration) {
+	m.mu.Lock()
+	m.delay = d
+	m.mu.Unlock()
 }
 
 func (m *memConn) WaitForNotification(ctx context.Context) (*pgconn.Notification, error) {

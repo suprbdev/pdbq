@@ -14,10 +14,12 @@ import (
 	"github.com/vektah/gqlparser/v2/validator/rules"
 )
 
-// documentCacheBytes bounds the total query text held by one document cache,
-// so a client sending many large unique documents cannot grow it without
-// limit even below the entry cap.
-const documentCacheBytes = 32 << 20
+// Defaults of the document cache budget, used when the corresponding Options
+// field is 0.
+const (
+	DefaultDocumentCacheBytes         = 64 << 20
+	DefaultDocumentCacheMaxEntryBytes = 1 << 20
+)
 
 var defaultRules = rules.NewDefaultRules()
 
@@ -45,11 +47,16 @@ func newHiddenSchemaRules() *rules.Rules {
 // documents, keyed by query text. Entries hold either the document or the
 // parse/validation error it produced against schema. Cached documents are
 // shared between requests and must never be mutated.
+//
+// Entries are weighed by the memory they retain (see estimateDocumentBytes),
+// not by their text: the cache holds at most maxBytes of them, and an entry
+// heavier than maxEntry is not cached at all.
 type docCache struct {
 	schema   *ast.Schema
 	mu       sync.Mutex
 	maxItems int
 	maxBytes int
+	maxEntry int
 	bytes    int
 	order    list.List
 	items    map[string]*list.Element
@@ -59,13 +66,14 @@ type docEntry struct {
 	query string
 	doc   *ast.QueryDocument
 	err   error
+	size  int
 }
 
-func newDocCache(schema *ast.Schema, maxItems, maxBytes int) *docCache {
+func newDocCache(schema *ast.Schema, maxItems, maxBytes, maxEntry int) *docCache {
 	if maxItems <= 0 {
 		return nil
 	}
-	return &docCache{schema: schema, maxItems: maxItems, maxBytes: maxBytes, items: make(map[string]*list.Element)}
+	return &docCache{schema: schema, maxItems: maxItems, maxBytes: maxBytes, maxEntry: min(maxEntry, maxBytes), items: make(map[string]*list.Element)}
 }
 
 func (c *docCache) get(query string) (*docEntry, bool) {
@@ -79,8 +87,10 @@ func (c *docCache) get(query string) (*docEntry, bool) {
 	return el.Value.(*docEntry), true
 }
 
-func (c *docCache) put(query string, doc *ast.QueryDocument, err error) {
-	if len(query) > c.maxBytes {
+// put caches the outcome of parsing and validating query; size is its
+// estimated retained memory (estimateDocumentBytes).
+func (c *docCache) put(query string, doc *ast.QueryDocument, err error, size int) {
+	if size > c.maxEntry {
 		return
 	}
 	c.mu.Lock()
@@ -89,15 +99,22 @@ func (c *docCache) put(query string, doc *ast.QueryDocument, err error) {
 		return
 	}
 	query = strings.Clone(query)
-	c.items[query] = c.order.PushFront(&docEntry{query: query, doc: doc, err: err})
-	c.bytes += len(query)
+	c.items[query] = c.order.PushFront(&docEntry{query: query, doc: doc, err: err, size: size})
+	c.bytes += size
 	for len(c.items) > c.maxItems || c.bytes > c.maxBytes {
 		oldest := c.order.Back()
 		e := oldest.Value.(*docEntry)
 		c.order.Remove(oldest)
 		delete(c.items, e.query)
-		c.bytes -= len(e.query)
+		c.bytes -= e.size
 	}
+}
+
+// size returns the estimated memory the cached entries retain.
+func (c *docCache) size() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.bytes
 }
 
 func (c *docCache) len() int {
@@ -106,17 +123,39 @@ func (c *docCache) len() int {
 	return len(c.items)
 }
 
-// parseAndValidate parses and validates query against schema with rs,
-// without caching.
-func parseAndValidate(schema *ast.Schema, rs *rules.Rules, query string) (*ast.QueryDocument, error) {
-	doc, err := parser.ParseQuery(&ast.Source{Input: query})
+// parseAndValidate parses query with a limit of maxTokens tokens, checks it
+// against lim (see scanDocument) and validates it against schema with rs,
+// without caching. size is the estimated memory the outcome retains.
+func parseAndValidate(schema *ast.Schema, rs *rules.Rules, query string, maxTokens int, lim docLimits) (doc *ast.QueryDocument, size int, err error) {
+	doc, err = parser.ParseQueryWithTokenLimit(&ast.Source{Input: query}, maxTokens)
 	if err != nil {
-		return nil, err
+		return nil, estimateDocumentBytes(query, 0, err), err
+	}
+	astBytes, err := scanDocument(doc, lim)
+	if err != nil {
+		return nil, estimateDocumentBytes(query, 0, err), err
 	}
 	if listErr := validator.ValidateWithRules(schema, doc, rs); len(listErr) > 0 {
-		return nil, listErr
+		return nil, estimateDocumentBytes(query, 0, listErr), listErr
 	}
-	return doc, nil
+	return doc, estimateDocumentBytes(query, astBytes, nil), nil
+}
+
+// estimateDocumentBytes estimates the memory a document cache entry retains:
+// the query text it is keyed by, plus its parsed and validated AST of
+// astBytes (see scanDocument) or its error.
+func estimateDocumentBytes(query string, astBytes int, err error) int {
+	n := len(query) + astBytes + 256
+	var list gqlerror.List
+	switch {
+	case errors.As(err, &list):
+		for _, e := range list {
+			n += 256 + len(e.Message)
+		}
+	case err != nil:
+		n += 256 + len(err.Error())
+	}
+	return n
 }
 
 // document returns the parsed and validated document for query, consulting
@@ -126,16 +165,18 @@ func (e *Executor) document(query string) (*ast.QueryDocument, error) {
 	if e.Opts.DisableIntrospection {
 		rs = hiddenSchemaRules
 	}
+	maxTokens, lim := orDefault(e.Opts.MaxQueryTokens, DefaultMaxQueryTokens), e.docLimits()
 	if e.docs == nil || e.docs.schema != e.Built.Schema {
-		return parseAndValidate(e.Built.Schema, rs, query)
+		doc, _, err := parseAndValidate(e.Built.Schema, rs, query, maxTokens, lim)
+		return doc, err
 	}
 	if ent, ok := e.docs.get(query); ok {
 		e.Opts.Metrics.documentLookup(true)
 		return ent.doc, cloneError(ent.err)
 	}
 	e.Opts.Metrics.documentLookup(false)
-	doc, err := parseAndValidate(e.Built.Schema, rs, query)
-	e.docs.put(query, doc, err)
+	doc, size, err := parseAndValidate(e.Built.Schema, rs, query, maxTokens, lim)
+	e.docs.put(query, doc, err, size)
 	return doc, cloneError(err)
 }
 

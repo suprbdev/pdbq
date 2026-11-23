@@ -197,7 +197,14 @@ PostGraphile's `pgSubscriptionAuthorizationFunction` is not supported.
   `BeforeOperation` request hooks, once, when it is subscribed. Plugins'
   `AfterOperation` hooks do not run for subscription events.
   `server.subscriptions_max_per_connection` caps the operations running at
-  once on one socket.
+  once on one socket; an operation counts until it has stopped, not just
+  until the client completes it, so a client that completes operations
+  faster than they stop waits for them. `server.subscriptions_subscribe_rate`
+  slows down a socket that subscribes faster than that many times a second,
+  `server.subscriptions_max_connections` and
+  `server.subscriptions_max_operations` cap the sockets and operations of
+  the whole server, and at most 1024 new channels wait for their `LISTEN`
+  at once (a subscribe beyond that gets an `error` saying to try again).
 - **Watch mode.** A subscription keeps resolving against the schema it was
   validated with. Clients pick up a new schema when they resubscribe.
 
