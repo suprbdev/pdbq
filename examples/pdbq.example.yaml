@@ -32,6 +32,8 @@ server:
   max_cost: 10000
   # Maximum rows per page; first/last above this are rejected and it is the default page size when neither is given.
   max_page_size: 100
+  # Characters of a document a full-text headline (<field>Headline) reads: text is cut to its first max_headline_document characters, a longer json/jsonb document gets a null headline. ts_headline's work grows with the document, and the cost estimate charges each headline by this bound.
+  max_headline_document: 65536
   # Maximum lexical tokens (names, punctuation, values, comments) in a GraphQL document; parsing stops at the first token beyond it. Bounds the parse and validation work of one request.
   max_query_tokens: 15000
   # Maximum nesting of input values (list and input object literals, and variable values of list and input object types), e.g. filter not/and/or chains.

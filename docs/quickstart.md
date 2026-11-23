@@ -74,6 +74,7 @@ For each table/view the connection role can `SELECT`:
 | `INSERT`/`UPDATE`/`DELETE` privileges | `createUser`, `updateUserById`, `deleteUserById` |
 | enums | GraphQL enums (`HAPPY`, `SAD`, ...) |
 | composite types | object types with per-field selection (`address { street city }`), plus `AddressInput` on mutations; arrays too |
+| rows inside other values (`posts[]`, composite attributes, `RETURNS TABLE` columns) | `PostRow` object types holding the columns `Post` exposes |
 | functions | queries (stable/immutable) or mutations (volatile) |
 
 One-off queries from the shell:

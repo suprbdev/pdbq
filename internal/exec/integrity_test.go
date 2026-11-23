@@ -21,6 +21,16 @@ func integrityCatalog() *introspect.Catalog {
 			{Name: "users_email_key", Columns: []string{"email"}},
 			{Name: "users_full_name_key", Columns: []string{"full_name"}},
 		},
+		Indexes: []*introspect.Index{
+			{Name: "users_id_email_lower_key", Columns: []string{"id"}, ExpressionColumns: []string{"email"}, Unique: true},
+			{Name: "users_full_name_partial_key", Columns: []string{"full_name"}, ExpressionColumns: []string{"email"}, Unique: true},
+			{Name: "users_full_name_lower_key", Columns: []string{"id"}, ExpressionColumns: []string{"full_name"}, Unique: true},
+			{Name: "users_no_overlap", Columns: []string{"id"}, ExpressionColumns: []string{"email"}, Method: "gist"},
+		},
+		Checks: []*introspect.Constraint{
+			{Name: "users_email_len", Columns: []string{"email"}},
+			{Name: "users_full_name_len", Columns: []string{"full_name"}},
+		},
 	}
 	posts := &introspect.Table{
 		Schema: "app", Name: "posts",
@@ -53,6 +63,16 @@ func TestIntegrityMessageHidesNamesOutsideTheSchema(t *testing.T) {
 		"unique key on hidden col": {pgconn.PgError{Code: "23505", SchemaName: "app", TableName: "users", ConstraintName: "users_email_key"}, "unique violation"},
 		"check on a table with a hidden column": {pgconn.PgError{Code: "23514", SchemaName: "app", TableName: "users", ConstraintName: "users_email_check"},
 			"check violation"},
+		"expression index over a hidden column": {pgconn.PgError{Code: "23505", SchemaName: "app", TableName: "users", ConstraintName: "users_id_email_lower_key"},
+			"unique violation"},
+		"partial index predicate on a hidden column": {pgconn.PgError{Code: "23505", SchemaName: "app", TableName: "users", ConstraintName: "users_full_name_partial_key"},
+			"unique violation"},
+		"expression index over visible columns": {pgconn.PgError{Code: "23505", SchemaName: "app", TableName: "users", ConstraintName: "users_full_name_lower_key"}, orig},
+		"recorded check on a hidden column": {pgconn.PgError{Code: "23514", SchemaName: "app", TableName: "users", ConstraintName: "users_email_len"},
+			"check violation"},
+		"recorded check on a visible column": {pgconn.PgError{Code: "23514", SchemaName: "app", TableName: "users", ConstraintName: "users_full_name_len"}, orig},
+		"exclusion over a hidden column": {pgconn.PgError{Code: "23P01", SchemaName: "app", TableName: "users", ConstraintName: "users_no_overlap"},
+			"exclusion violation"},
 		"check on a fully visible table":   {pgconn.PgError{Code: "23514", SchemaName: "app", TableName: "posts", ConstraintName: "posts_title_check"}, orig},
 		"partition index of visible table": {pgconn.PgError{Code: "23505", SchemaName: "app", TableName: "events_2026", ConstraintName: "events_2026_pkey"}, orig},
 		"exclusion on a hidden table":      {pgconn.PgError{Code: "23P01", SchemaName: "app", TableName: "rooms", ConstraintName: "no_overlap"}, "exclusion violation"},

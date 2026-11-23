@@ -17,6 +17,7 @@ import (
 
 	"github.com/suprbdev/pdbcore/cache"
 	"github.com/suprbdev/pdbcore/confx"
+	pgcontrib "github.com/suprbdev/pdbcore/contrib"
 	"github.com/suprbdev/pdbq"
 	"github.com/suprbdev/pdbq/internal/config"
 	"github.com/suprbdev/pdbq/internal/exec"
@@ -45,6 +46,7 @@ func configFlags(cmd *cobra.Command) {
 	fs.Bool("server.read_only", false, "reject every mutation operation (read-only mode)")
 	fs.Bool("server.disable_introspection", false, "reject __schema/__type introspection queries and drop \"Did you mean\" suggestions from validation errors")
 	fs.Int("server.max_query_tokens", 15000, "maximum lexical tokens in a GraphQL document")
+	fs.Int("server.max_headline_document", pgcontrib.MaxHeadlineDocument, "characters of a document a full-text headline reads")
 	fs.Int("server.max_input_depth", 32, "maximum nesting of input values (literals and variables)")
 	fs.Int("server.max_selections", 10000, "maximum selections in a document with fragments expanded")
 	fs.Int("server.max_introspection_bytes", 16<<20, "maximum estimated JSON bytes of __schema / __type fields per operation")

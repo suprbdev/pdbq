@@ -29,7 +29,8 @@ func TestHeadlineFields(t *testing.T) {
 		if f.Type != "String" || len(f.Args) != 2 || f.Args[0].Type != "DocumentHeadlineDocument!" || f.Args[1].Type != headlineOptionsInput {
 			t.Errorf("%s: type %s args %+v", name, f.Type, f.Args)
 		}
-		if f.Meta.Kind != schema.KindFullTextHeadline || f.Meta.RowCost != pgcontrib.HeadlineCost {
+		if f.Meta.Kind != schema.KindFullTextHeadline || f.Meta.RowCost != pgcontrib.HeadlineDocumentCost(pgcontrib.MaxHeadlineDocument) ||
+			f.Meta.Nested["max_document"] != pgcontrib.MaxHeadlineDocument {
 			t.Errorf("%s meta: %+v", name, f.Meta)
 		}
 	}

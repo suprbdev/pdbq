@@ -122,6 +122,17 @@ from a schema outside `schema.schemas` that pdbq cannot resolve (typically
 a table's row type), is not exposed and a warning is logged: it would
 otherwise surface as a `String` returning whole rows as JSON.
 
+A row of a table held inside another value (an element of a `posts[]`
+result or column, a composite attribute or `RETURNS TABLE` column of type
+`posts`, a column typed `posts`) reads as `PostRow`: an object type with
+the columns `Post` exposes, so a column `@omit read` (or a contract) hides
+is not on it either, and raster columns are left out. It has no relations,
+computed columns or `nodeId`, since the value need not be a row stored in
+the table. A value of the row type of a table tagged `@omit` (or hidden by
+a contract) has no field at all: a composite attribute or `RETURNS TABLE`
+column of that type is left out of its object type, and a composite left
+without fields reads only the always-null `_empty`.
+
 ### Enums
 
 | Tag | Effect |

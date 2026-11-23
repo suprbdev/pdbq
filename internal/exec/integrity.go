@@ -39,9 +39,12 @@ func integrityMessage(cat *introspect.Catalog, pgErr *pgconn.PgError, msg string
 
 // namesHidden reports whether pgErr's table, column or constraint is not
 // part of the schema built from cat. A table outside cat is hidden, and so
-// is a partition of one; a constraint cat does not record (a check or
-// exclusion constraint, an expression index, a partition's own index) is
-// treated as hidden when its table has a hidden column it could be on.
+// is a partition of one. A constraint is hidden when a column it references
+// is (key and INCLUDE columns, the columns of key expressions and
+// partial-index predicates, a check's columns; see
+// introspect.Table.ConstraintColumns); one cat does not record (a
+// partition's own index) is treated as hidden when its table has a hidden
+// column it could be on.
 func namesHidden(cat *introspect.Catalog, pgErr *pgconn.PgError) bool {
 	if pgErr.TableName == "" {
 		return false
@@ -74,11 +77,11 @@ func namesHidden(cat *introspect.Catalog, pgErr *pgconn.PgError) bool {
 		ref := cat.Table(fk.RefSchema, fk.RefTable)
 		return ref == nil || anyHidden(owner, fk.Columns) || anyHidden(ref, fk.RefColumns)
 	}
-	if cols, ok := keyColumns(t, pgErr.ConstraintName); ok && len(cols) > 0 {
-		return anyHidden(owner, cols)
-	}
-	if cols, ok := keyColumns(owner, pgErr.ConstraintName); ok && len(cols) > 0 {
-		return anyHidden(owner, cols)
+	hidden := func(n string) bool { return hiddenColumn(owner, n) }
+	for _, src := range []*introspect.Table{t, owner} {
+		if refs, ok := src.ConstraintReferences(pgErr.ConstraintName, hidden); ok {
+			return refs
+		}
 	}
 	for _, c := range owner.Columns {
 		if omit.Column(c, omit.Read) {
@@ -109,23 +112,4 @@ func foreignKey(t *introspect.Table, name string) *introspect.ForeignKey {
 		}
 	}
 	return nil
-}
-
-// keyColumns returns the columns of t's primary key, unique constraint or
-// index named name.
-func keyColumns(t *introspect.Table, name string) ([]string, bool) {
-	if pk := t.PrimaryKey; pk != nil && pk.Name == name {
-		return pk.Columns, true
-	}
-	for _, u := range t.Uniques {
-		if u.Name == name {
-			return u.Columns, true
-		}
-	}
-	for _, ix := range t.Indexes {
-		if ix.Name == name {
-			return ix.Columns, true
-		}
-	}
-	return nil, false
 }

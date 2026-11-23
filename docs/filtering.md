@@ -33,9 +33,10 @@ to untrusted callers and don't need jsonpath filtering, remove the operators
 with a smart comment (`@omit filter` on the column) or keep the statement
 timeout tight.
 
-Composite-typed columns are never filterable or orderable (regardless of
-indexes or `allow_columns`): they map to object types, which have no scalar
-operator set.
+Composite-typed and row-typed columns (a column of type `posts` or
+`posts[]`) are never filterable or orderable (regardless of indexes or
+`allow_columns`): they map to object types, which have no scalar operator
+set.
 
 ```graphql
 {

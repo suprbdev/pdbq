@@ -335,6 +335,7 @@ func (a *App) BuildSchema(ctx context.Context, cat *introspect.Catalog) (*schema
 		Subscriptions:       a.Config.Server.Subscriptions,
 		Live:                a.Config.Server.Live,
 		IncrementalDelivery: a.Config.Server.IncrementalDelivery,
+		MaxHeadlineDocument: a.Config.Server.MaxHeadlineDocument,
 		Logger:              a.Log,
 	})
 	if err := a.Registry.TransformSchema(ctx, disabled, b); err != nil {

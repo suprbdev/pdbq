@@ -16,7 +16,7 @@ type FieldKind string
 
 const (
 	KindColumn           FieldKind = "column"
-	KindCompositeField   FieldKind = "composite_field"   // attribute of a composite-type column
+	KindCompositeField   FieldKind = "composite_field"   // attribute of a composite value, or column of a nested row value
 	KindRelationForward  FieldKind = "relation_forward"  // many-to-one: FK on this table (a connection for a PERIOD FK)
 	KindRelationBackward FieldKind = "relation_backward" // one-to-many: FK on the other table
 	KindListQuery        FieldKind = "list_query"

@@ -296,7 +296,8 @@ func functionFixtures() []*introspect.Function {
 // against the catalog extended with temporalTables, through the
 // advanced-filters and nested-mutations plugins (nested_* ones too), contrib_*
 // against the contrib fixture catalog with the contrib plugin, aggregates_*
-// against buildAggregates, omit_* against buildOmit.
+// against buildAggregates, omit_* against buildOmit, nestedrow_* against
+// buildNestedRows.
 func TestGolden(t *testing.T) {
 	plain := build(t)
 	aggBuilt := buildAggregates(t)
@@ -305,6 +306,7 @@ func TestGolden(t *testing.T) {
 	contribBuilt := buildContrib(t)
 	intervalBuilt := buildInterval(t)
 	omitBuilt := buildOmit(t)
+	nestedRowsBuilt := buildNestedRows(t)
 
 	files, err := filepath.Glob(filepath.Join("testdata", "*.graphql"))
 	if err != nil || len(files) == 0 {
@@ -327,6 +329,9 @@ func TestGolden(t *testing.T) {
 		}
 		if strings.HasPrefix(name, "omit_") {
 			built = omitBuilt
+		}
+		if strings.HasPrefix(name, "nestedrow_") {
+			built = nestedRowsBuilt
 		}
 		compileFn := compile.New(built).Compile
 		if strings.HasPrefix(name, "temporal") || strings.HasPrefix(name, "nested_") {

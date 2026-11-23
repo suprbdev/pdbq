@@ -90,7 +90,7 @@ Tags apply to:
 
 | Object | Hiding it removes |
 |---|---|
-| Table, view, materialized view | Everything a bare `@omit` on the table removes: the type, its queries, mutations, connections, relation fields both ways, filters and nested inputs referencing it. Also its partitions, every function taking or returning its row type, and every column typed as its row type. |
+| Table, view, materialized view | Everything a bare `@omit` on the table removes: the type, its queries, mutations, connections, relation fields both ways, filters and nested inputs referencing it. Also its partitions, every function taking or returning its row type, every column typed as its row type, and every composite attribute of its row type. |
 | Column | Everything a bare `@omit` on the column removes: the output field, filter and condition fields, orderBy and distinctOn values, aggregates, create and update input fields, and every key containing it (by-key lookups and mutations, `nodeId`, keyset cursors; see [What `@omit read` hides](smart-comments.md#what-omit-read-hides)). |
 | Function | Its root query or mutation field, or its computed column. |
 | Foreign key (`COMMENT ON CONSTRAINT`) | The relation fields in both directions, relation filters and orderings, nested-mutation inputs. |
@@ -129,7 +129,10 @@ contract does can add a field, a type, a privilege or a row:
   exclusion violation whose message names a table, column or foreign key
   the contract hides (or `@omit` hides, with or without contracts) is
   reported as `foreign key violation`, `not-null violation`, and so on. A
-  check or exclusion constraint, which pdbq does not introspect, gets the
+  unique, check or exclusion constraint counts as naming every column it
+  references: its key and `INCLUDE` columns, the columns of index
+  expressions and of a partial index's predicate, and a check's columns.
+  A constraint pdbq does not know (a partition's own index) gets the
   generic message whenever its table has a hidden column. Deleting a
   visible row still fails while a hidden table references it: the error no
   longer names that table, but its SQLSTATE (`23503`) still tells that some

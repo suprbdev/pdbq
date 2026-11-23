@@ -52,7 +52,7 @@ func (s *stmt) rowJSONAs(typeName string, sel ast.SelectionSet, alias string, de
 		}
 		switch meta.Kind {
 		case schema.KindColumn:
-			if comp := s.compositeFor(meta.Column); comp != nil {
+			if comp := s.valueComposite(meta.Column); comp != nil {
 				expr, err := s.compositeJSON(alias+"."+quoteIdent(meta.Column.Name), comp, meta.Column.IsArray, f.SelectionSet, depth+1)
 				if err != nil {
 					return "", nil, err
@@ -294,7 +294,25 @@ func (s *stmt) compositeFor(c *introspect.Column) *introspect.Composite {
 	if c == nil {
 		return nil
 	}
-	return s.c.Built.Catalog.Composite(c.TypeSchema, strings.TrimPrefix(c.PGType, "_"))
+	return s.c.Built.Catalog.Composite(schema.ValueType(c))
+}
+
+// valueComposite resolves the composite an output value of column type c
+// renders through: its catalog composite type, or for a table's row type
+// with a row value object type (schema.Builder.RowValueType) the table
+// viewed as a composite of its columns. nil otherwise.
+func (s *stmt) valueComposite(c *introspect.Column) *introspect.Composite {
+	if comp := s.compositeFor(c); comp != nil {
+		return comp
+	}
+	t := schema.RowTable(s.c.Built.Catalog, c)
+	if t == nil {
+		return nil
+	}
+	if _, ok := s.c.Built.CompositeTypeForPG[t.Schema+"."+t.Name]; !ok {
+		return nil
+	}
+	return &introspect.Composite{Schema: t.Schema, Name: t.Name, Fields: t.Columns}
 }
 
 // compositeJSON compiles a selection set over a composite-typed value into a
@@ -339,7 +357,7 @@ func (s *stmt) compositeJSON(ref string, comp *introspect.Composite, isArray boo
 		}
 		attr := "(" + ref + ")." + quoteIdent(meta.Column.Name)
 		var expr string
-		if nested := s.compositeFor(meta.Column); nested != nil {
+		if nested := s.valueComposite(meta.Column); nested != nil {
 			var err error
 			expr, err = s.compositeJSON(attr, nested, meta.Column.IsArray, f.SelectionSet, depth+1)
 			if err != nil {
