@@ -74,18 +74,36 @@
 //     (<->, <#>, <=>, <+>, <~>, <%>), which an HNSW or IVFFlat index answers
 //     nearest-first;
 //
+//   - cube: CubeFilterOps (contains, containedBy, overlaps) on cube columns,
+//     _L2_DISTANCE_, _L1_DISTANCE_ and _CHEBYSHEV_DISTANCE_ orderBy values
+//     against nearVector:, <distance>LessThan thresholds on
+//     CubeDistanceFilterOps, all served by a GiST index;
+//
+//   - earthdistance: on earth columns the earthDistanceLessThan radius filter
+//     (LatLonDistanceFilterOps) and <COLUMN>_EARTH_DISTANCE_ASC/_DESC ordered
+//     by cube's <-> chord distance (a GiST KNN scan, which keyset cursors
+//     compare too) against a nearPoint: <Type>NearPointInput argument; on
+//     point columns the policy admits, the <@> statute-mile
+//     _EARTH_DISTANCE_MILES_ ordering and earthDistanceMilesLessThan filter
+//     (PointDistanceFilterOps);
+//
 //   - score fields: <field>Similarity, <field>WordSimilarity and
 //     <field>StrictWordSimilarity on text columns with trigram surface,
 //     measured against similarTo:, and <field>L2Distance,
 //     <field>NegativeInnerProduct, <field>CosineDistance, <field>L1Distance
-//     (<field>HammingDistance, <field>JaccardDistance on bit columns)
-//     measured against nearVector:, null without the reference; they come
+//     (<field>HammingDistance, <field>JaccardDistance on bit columns,
+//     <field>ChebyshevDistance on cube columns) measured against
+//     nearVector:, <field>EarthDistance (metres, earth columns) and
+//     <field>EarthDistanceMiles (point columns) measured against nearPoint:,
+//     null without the reference; they come
 //     with the ordering setting and ignore @omit order and index coverage;
 //
 //   - distance thresholds: VectorDistanceFilterOps,
 //     SparseVectorDistanceFilterOps and BitDistanceFilterOps add
 //     <distance>LessThan: {vector, distance} operators, which no index
-//     serves, on columns the indexed-only policy admits them for.
+//     serves, CubeDistanceFilterOps, LatLonDistanceFilterOps and
+//     PointDistanceFilterOps the cube and earthdistance ones, on columns the
+//     indexed-only policy admits them for.
 //
 // Under filters.indexed_only, operators no index can serve (hstore
 // containedBy and containsDefinedKey, the ltree *Any forms, the unaccent and
@@ -129,8 +147,9 @@ type Plugin struct {
 	// filters adds the vocabulary operators, pg_trgm, unaccent and
 	// distance-threshold operators and rank fields.
 	filters bool
-	// ordering adds the rank, similarity and vector distance orderBy values,
-	// the score fields, similarTo: and nearVector:.
+	// ordering adds the rank, similarity, vector, cube and earth distance
+	// orderBy values, the score fields, similarTo:, nearVector: and
+	// nearPoint:.
 	ordering bool
 }
 
@@ -266,35 +285,87 @@ func (st *build) addFilters(t *introspect.Table, cols []column) {
 		if st.served(t, cc.col, nil) {
 			st.addValueFilters(t, cc)
 		}
-		if dv, ok := cc.ci.Distances(); ok && len(dv.Ops) > 0 && st.served(t, cc.col, nil) {
-			if name := st.ensureDistanceOps(f.Type, cc.ci, dv); name != "" {
+		if dops := cc.ci.DistanceOps(); len(dops) > 0 && st.served(t, cc.col, dops[0].Index) {
+			if name := st.ensureDistanceOps(f.Type, cc.ci, dops); name != "" {
 				f.Type = name
 			}
 		}
 	}
 }
 
-// distanceInputs maps the operator inputs of vector and bit columns to the
-// inputs adding the distance-threshold operators to them, with their
-// operand input, the reference vector's GraphQL type and descriptions.
-var distanceInputs = map[string]struct{ name, operand, vecType, desc string }{
-	contribtype.VectorOps: {contribtype.VectorDistanceOps, contribtype.VectorDistanceInput, "[Float!]!",
-		"pgvector operators plus distance thresholds against a reference vector; no index serves the thresholds."},
-	"StringFilterOps": {contribtype.BitDistanceOps, contribtype.BitDistanceInput, "String!",
-		"String operators plus pgvector Hamming and Jaccard distance thresholds against a reference bit string; no index serves the thresholds."},
+// distanceTarget is the distance-threshold input of one kind of column: its
+// name, the operator input it extends, its operand input with that input's
+// fields, and its description.
+type distanceTarget struct {
+	name, base, operand, desc string
+	fields                    []*schema.InputField
+}
+
+// distanceField is the distance member of a threshold operand.
+func distanceField() *schema.InputField {
+	return &schema.InputField{Name: "distance", Type: "Float!", Description: "Exclusive upper bound of the distance."}
+}
+
+// latLonDistanceFields are the members of LatLonDistanceInput, shared by
+// earth and point columns.
+func latLonDistanceFields() []*schema.InputField {
+	return []*schema.InputField{
+		{Name: "lat", Type: "Float!", Description: "Latitude of the reference location in degrees."},
+		{Name: "lon", Type: "Float!", Description: "Longitude of the reference location in degrees."},
+		{Name: "distance", Type: "Float!", Description: "Exclusive upper bound of the distance: metres on earth columns " +
+			"(earthDistanceLessThan), statute miles on point columns (earthDistanceMilesLessThan)."},
+	}
+}
+
+// distanceTargetFor returns the distance-threshold input of column ci.
+func distanceTargetFor(ci contribtype.Column) (distanceTarget, bool) {
+	vector := func(typ string) []*schema.InputField {
+		return []*schema.InputField{
+			{Name: "vector", Type: typ, Description: "Reference value; it must have the column's dimensions."},
+			distanceField(),
+		}
+	}
+	const vectorDesc = "pgvector operators plus distance thresholds against a reference vector; no index serves the thresholds."
+	switch ci.Kind {
+	case contribtype.Vector:
+		if !ci.List() {
+			return distanceTarget{contribtype.SparseVectorDistanceOps, contribtype.VectorOps, contribtype.SparseVectorDistanceInput,
+				vectorDesc, vector("String!")}, true
+		}
+		return distanceTarget{contribtype.VectorDistanceOps, contribtype.VectorOps, contribtype.VectorDistanceInput,
+			vectorDesc, vector("[Float!]!")}, true
+	case contribtype.Cube:
+		return distanceTarget{contribtype.CubeDistanceOps, ci.OpsInput, contribtype.CubeDistanceInput,
+			"cube operators plus distance thresholds against a reference cube, which a GiST index serves through an overlap prefilter.",
+			[]*schema.InputField{{Name: "cube", Type: contribtype.ScalarCube + "!", Description: "Reference cube."}, distanceField()}}, true
+	case contribtype.Earth:
+		return distanceTarget{contribtype.LatLonDistanceOps, ci.OpsInput, contribtype.LatLonDistanceInput,
+			"Earth location operators plus the earthdistance radius filter, which a GiST index serves.", latLonDistanceFields()}, true
+	}
+	dv, ok := ci.Distances()
+	switch {
+	case !ok:
+	case dv.Name == pgcontrib.VocabBit:
+		return distanceTarget{contribtype.BitDistanceOps, "StringFilterOps", contribtype.BitDistanceInput,
+			"String operators plus pgvector Hamming and Jaccard distance thresholds against a reference bit string; no index serves the thresholds.",
+			vector("String!")}, true
+	case dv.Name == pgcontrib.VocabEarthPoint:
+		return distanceTarget{contribtype.PointDistanceOps, "StringFilterOps", contribtype.LatLonDistanceInput,
+			"Point operators plus the earthdistance <@> radius filter in statute miles, the point being (longitude, latitude); no index serves it.",
+			latLonDistanceFields()}, true
+	}
+	return distanceTarget{}, false
 }
 
 // ensureDistanceOps declares the input adding the distance-threshold
-// operators of dv to the operator input base of a vector or bit column (and
-// their operand input), returning its name, or "" when base takes none or
+// operators ops to the operator input base of a column with distances (and
+// their operand input, which earth and point columns share), returning its
+// name, or "" when base is not the input the column's thresholds extend or
 // a name is taken.
-func (st *build) ensureDistanceOps(base string, ci contribtype.Column, dv pgcontrib.Vocabulary) string {
-	target, ok := distanceInputs[base]
-	if !ok || (ci.Kind == contribtype.Vector) != (base == contribtype.VectorOps) {
+func (st *build) ensureDistanceOps(base string, ci contribtype.Column, ops []pgcontrib.Op) string {
+	target, ok := distanceTargetFor(ci)
+	if !ok || base != target.base {
 		return ""
-	}
-	if ci.Kind == contribtype.Vector && !ci.List() {
-		target.name, target.operand, target.vecType = contribtype.SparseVectorDistanceOps, contribtype.SparseVectorDistanceInput, "String!"
 	}
 	if st.extended[target.name] {
 		return target.name
@@ -304,29 +375,27 @@ func (st *build) ensureDistanceOps(base string, ci contribtype.Column, dv pgcont
 		return ""
 	}
 	for _, n := range []string{target.name, target.operand} {
-		_, in := st.b.Inputs[n]
-		_, obj := st.b.Objects[n]
-		_, en := st.b.Enums[n]
-		if in || obj || en {
+		if !st.extended[n] && st.nameTaken(n) {
 			st.b.Options.Logger.Warn("contrib: type name already taken, distance thresholds disabled", "type", n)
 			return ""
 		}
 	}
 	st.extended[target.name] = true
-	st.b.Inputs[target.operand] = &schema.Input{
-		Name:        target.operand,
-		Description: "A distance threshold against a reference: rows whose distance is less than distance match.",
-		Fields: []*schema.InputField{
-			{Name: "vector", Type: target.vecType, Description: "Reference value; it must have the column's dimensions."},
-			{Name: "distance", Type: "Float!", Description: "Exclusive upper bound of the distance."},
-		},
+	if !st.extended[target.operand] {
+		st.extended[target.operand] = true
+		st.b.Inputs[target.operand] = &schema.Input{
+			Name:        target.operand,
+			Description: "A distance threshold against a reference: rows whose distance is less than distance match.",
+			Fields:      target.fields,
+		}
 	}
 	in := &schema.Input{Name: target.name, Description: target.desc}
 	for _, f := range src.Fields {
 		cp := *f
 		in.Fields = append(in.Fields, &cp)
 	}
-	for _, o := range dv.Ops {
+	dv, _ := ci.Distances()
+	for _, o := range ops {
 		in.AddField(&schema.InputField{Name: contribtype.OpName(dv, o), Type: target.operand, Description: o.Description})
 	}
 	st.b.Inputs[target.name] = in
@@ -482,6 +551,8 @@ func operandType(ci contribtype.Column, o pgcontrib.Op) string {
 		return "[String!]"
 	case pgcontrib.ArgHstore:
 		return contribtype.ScalarKeyValueHash
+	case pgcontrib.ArgCube:
+		return contribtype.ScalarCube
 	case pgcontrib.ArgRange:
 		return ci.Input
 	case pgcontrib.ArgElement:
@@ -694,7 +765,7 @@ func (st *build) addOrdering(t *introspect.Table, cols []column) {
 	}
 	var similar []*introspect.Column
 	levenshtein := map[string]bool{}
-	var vectors []vectorColumn
+	refs := map[string][]vectorColumn{}
 	var filterable map[string]bool
 	for _, cc := range cols {
 		if omit.Column(cc.col, omit.Read) {
@@ -712,10 +783,11 @@ func (st *build) addOrdering(t *introspect.Table, cols []column) {
 			for _, e := range dv.Exprs {
 				hints = append(hints, e.Index...)
 			}
-			vectors = append(vectors, vectorColumn{
+			arg := cc.ci.ReferenceArg()
+			refs[arg] = append(refs[arg], vectorColumn{
 				column: cc, vocab: dv,
 				ordered: ordered && filterable[cc.col.Name],
-				scored:  cc.ci.Kind == contribtype.Vector || st.served(t, cc.col, hints),
+				scored:  cc.ci.Owned() || st.served(t, cc.col, hints),
 			})
 			continue
 		}
@@ -791,16 +863,19 @@ func (st *build) addOrdering(t *introspect.Table, cols []column) {
 	if len(similar) > 0 && !st.addSimilarToArg(t, enumName, similar, levenshtein) {
 		st.dropScores(t, "similarTo")
 	}
-	if len(vectors) > 0 {
-		st.addVectorOrdering(t, enumName, en, vectors)
+	for _, arg := range []string{contribtype.NearVectorArg, contribtype.NearPointArg} {
+		if len(refs[arg]) > 0 {
+			st.addReferenceOrdering(t, enumName, en, arg, refs[arg])
+		}
 	}
 }
 
-// vectorColumn is a vector or bit column with pgvector distances: its
-// distance vocabulary, whether the policy admits its ordering, and whether
-// it gets distance scores (every vector column; a bit column only where an
-// index or the policy admits pgvector's surface, so installing pgvector
-// leaves unrelated bit columns alone).
+// vectorColumn is a column with distances to a per-request reference
+// ([contribtype.Column.Distances]): its distance vocabulary, whether the
+// policy admits its ordering, and whether it gets distance scores (every
+// vector, cube and earth column; a bit or point column only where an index
+// or the policy admits the surface, so installing pgvector or earthdistance
+// leaves unrelated bit and point columns alone).
 type vectorColumn struct {
 	column
 	vocab   pgcontrib.Vocabulary
@@ -855,56 +930,84 @@ func (st *build) dropScores(t *introspect.Table, arg string) {
 	obj.Fields = keep
 }
 
-// addVectorOrdering adds the pgvector distance orderBy values of the vector
-// and bit columns the indexed-only policy admits them for and the distance
-// score fields of every readable one, declares <Type>NearVectorInput (one
-// reference vector per such column) and adds nearVector: to every field
-// taking the table's orderBy enum. Nothing is added when the input's name
-// is taken.
-func (st *build) addVectorOrdering(t *introspect.Table, enumName string, en *schema.Enum, cols []vectorColumn) {
+// referenceKind describes the distance surface of one vocabulary in
+// descriptions: the extension it comes from, what its reference is and
+// which index serves its orderings.
+type referenceKind struct{ family, reference, index string }
+
+// referenceKinds are keyed by vocabulary name.
+var referenceKinds = map[string]referenceKind{
+	pgcontrib.VocabVector:     {"pgvector", "reference vector", "index-assisted with an HNSW or IVFFlat index built with the matching operator class"},
+	pgcontrib.VocabBit:        {"pgvector", "reference vector", "index-assisted with an HNSW or IVFFlat index built with the matching operator class"},
+	pgcontrib.VocabCube:       {"cube", "reference cube", "index-assisted with a GiST index"},
+	pgcontrib.VocabEarth:      {"earthdistance", "reference location", "index-assisted with a GiST index"},
+	pgcontrib.VocabEarthPoint: {"earthdistance", "reference location", "no index serves it"},
+}
+
+// addReferenceOrdering adds the distance orderBy values of the columns
+// measured against the list argument arg (nearVector: for vector, bit and
+// cube columns, nearPoint: for earth and point columns) that the
+// indexed-only policy admits them for and the distance score fields of
+// every readable one, declares <Type>NearVectorInput or
+// <Type>NearPointInput (one reference per such column) and adds arg to
+// every field taking the table's orderBy enum. Nothing is added when the
+// input's name is taken.
+func (st *build) addReferenceOrdering(t *introspect.Table, enumName string, en *schema.Enum, arg string, cols []vectorColumn) {
 	b := st.b
 	typeName := b.TypeForTable[t.Schema+"."+t.Name]
-	inputName := typeName + "NearVectorInput"
-	_, obj := b.Objects[inputName]
-	_, in := b.Inputs[inputName]
-	_, ene := b.Enums[inputName]
-	if obj || in || ene {
-		b.Options.Logger.Warn("contrib: type name already taken, vector distance ordering skipped", "type", inputName)
+	inputName := typeName + coreinflect.UpperCamel(arg) + "Input"
+	if st.nameTaken(inputName) {
+		b.Options.Logger.Warn("contrib: type name already taken, distance ordering skipped", "type", inputName)
 		return
 	}
-	input := &schema.Input{
-		Name:        inputName,
-		Description: "Reference vectors for the pgvector distance orderBy values and distance fields of " + typeName + ", per column.",
+	if arg == contribtype.NearPointArg && slices.ContainsFunc(cols, func(vc vectorColumn) bool { return vc.scored }) && !b.EnsureLatLonTypes() {
+		b.Options.Logger.Warn("contrib: type name already taken, distance ordering skipped", "type", contribtype.LatLonInput)
+		return
 	}
+	desc := "Reference vectors for the pgvector distance orderBy values and distance fields of " + typeName + ", per column."
+	if arg == contribtype.NearPointArg {
+		desc = "Reference locations for the earthdistance distance orderBy values and distance fields of " + typeName + ", per column."
+	} else if slices.ContainsFunc(cols, func(vc vectorColumn) bool { return vc.ci.Kind == contribtype.Cube }) {
+		desc = "Reference vectors and cubes for the pgvector and cube distance orderBy values and distance fields of " + typeName + ", per column."
+	}
+	input := &schema.Input{Name: inputName, Description: desc}
 	for _, vc := range cols {
+		kind := referenceKinds[vc.vocab.Name]
 		added := false
-		for _, vo := range contribtype.VectorOrders {
-			e, ok := vc.vocab.Expr(vo.Expr)
+		for _, do := range contribtype.DistanceOrders {
+			e, ok := vc.vocab.Expr(do.Expr)
 			if !vc.ordered || !ok || !st.served(t, vc.col, e.Index) {
 				continue
 			}
-			base := coreinflect.EnumValue(vc.col.Name) + vo.Infix
-			desc := "Order by pgvector " + vo.Label + " from the nearVector: reference vector for this column"
+			base := coreinflect.EnumValue(vc.col.Name) + do.Infix
+			desc := "Order by " + kind.family + " " + do.Label + " from the " + arg + ": " + kind.reference + " for this column"
 			addValue(en, base+"_ASC", schema.EnumValue{
-				Column: vc.col.Name, Vector: vo.Expr,
-				Description: desc + " (nearest first; index-assisted with an HNSW or IVFFlat index built with the matching operator class). Requires nearVector:.",
+				Column: vc.col.Name, Vector: do.Expr, Reference: arg,
+				Description: desc + " (nearest first; " + kind.index + "). Requires " + arg + ":.",
 			})
 			addValue(en, base+"_DESC", schema.EnumValue{
-				Column: vc.col.Name, Vector: vo.Expr, Desc: true,
-				Description: desc + " (farthest first). Requires nearVector:.",
+				Column: vc.col.Name, Vector: do.Expr, Reference: arg, Desc: true,
+				Description: desc + " (farthest first). Requires " + arg + ":.",
 			})
 			added = true
 		}
-		if vc.scored && st.addScores(t, vc.col, vc.vocab, "nearVector") {
+		if vc.scored && st.addScores(t, vc.col, vc.vocab, arg) {
 			added = true
 		}
 		if !added {
 			continue
 		}
+		fieldDesc := "Reference vector for the " + vc.col.Name + " distance orderBy values and distance fields; it must have the column's dimensions."
+		switch {
+		case vc.ci.Kind == contribtype.Cube:
+			fieldDesc = "Reference cube for the " + vc.col.Name + " distance orderBy values and distance fields."
+		case arg == contribtype.NearPointArg:
+			fieldDesc = "Reference location for the " + vc.col.Name + " distance orderBy values and distance fields."
+		}
 		input.AddField(&schema.InputField{
 			Name:        b.Inflect(inflect.KindFieldName, inflect.Input{Schema: t.Schema, Table: t.Name, Column: vc.col.Name}),
 			Type:        vc.ci.DistanceInput(),
-			Description: "Reference vector for the " + vc.col.Name + " distance orderBy values and distance fields; it must have the column's dimensions.",
+			Description: fieldDesc,
 			Column:      vc.col.Name,
 		})
 	}
@@ -913,8 +1016,8 @@ func (st *build) addVectorOrdering(t *introspect.Table, enumName string, en *sch
 	}
 	b.Inputs[inputName] = input
 	for _, f := range st.orderBy[enumName] {
-		if !hasArg(f, "nearVector") {
-			f.Args = append(f.Args, schema.Arg{Name: "nearVector", Type: inputName})
+		if !hasArg(f, arg) {
+			f.Args = append(f.Args, schema.Arg{Name: arg, Type: inputName})
 		}
 	}
 }

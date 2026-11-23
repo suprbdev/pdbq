@@ -41,10 +41,13 @@ func build(t testing.TB) *schema.Built {
 	return buildWith(t, nil)
 }
 
-// buildWith is build with the postgis plugin configured by settings.
+// buildWith is build with the postgis plugin configured by settings. The
+// catalog gains public.tiles, a table of raster columns: rast, allowlisted
+// so its filter exists under filters.indexed_only, and mask.
 func buildWith(t testing.TB, settings map[string]any) *schema.Built {
 	t.Helper()
 	cat := testutil.FixtureCatalog()
+	cat.Tables = append(cat.Tables, rasterTable())
 	cat.Functions = append(cat.Functions, functionFixtures()...)
 	cat.Composites = append(cat.Composites, &introspect.Composite{
 		Schema: "public", Name: "site",
@@ -60,16 +63,32 @@ func buildWith(t testing.TB, settings map[string]any) *schema.Built {
 		Args:       []introspect.FuncArg{{Name: "label", PGType: "text", TypeSchema: "pg_catalog", Mode: introspect.ArgModeIn}},
 		ReturnType: "site", ReturnTypeSchema: "public", Volatility: introspect.VolatilityStable,
 	})
-	return buildCatalog(t, cat, settings)
+	return buildCatalogAllowing(t, cat, map[string][]string{"public.tiles": {"rast"}}, settings)
+}
+
+// rasterTable is public.tiles (id, rast raster, mask raster).
+func rasterTable() *introspect.Table {
+	return &introspect.Table{
+		Schema: "public", Name: "tiles", Kind: introspect.RelTable,
+		Privileges: introspect.Privileges{Select: true, Insert: true, Update: true, Delete: true},
+		Columns: []*introspect.Column{
+			{Name: "id", Position: 1, PGType: "int4", TypeSchema: "pg_catalog", NotNull: true, Generated: true, GeneratedKind: introspect.GeneratedIdentity},
+			{Name: "rast", Position: 2, PGType: "raster", TypeSchema: "public"},
+			{Name: "mask", Position: 3, PGType: "raster", TypeSchema: "public"},
+		},
+		PrimaryKey: &introspect.Constraint{Name: "tiles_pkey", Columns: []string{"id"}},
+		Indexes:    []*introspect.Index{{Name: "tiles_pkey", Columns: []string{"id"}, Unique: true, Method: "btree"}},
+	}
 }
 
 // buildContrib compiles the contrib fixture catalog (the shared fixture plus
 // tables of contrib-typed and pgvector columns and the extensions) with the
 // postgis and contrib plugins applied. documents.notes, path, attrs and
-// tag_ids and embeddings.sparse, embedding and code are allowlisted, so the
-// unaccent and fuzzystrmatch operators, the ltree nlevel, intarray icount
-// and hstore value filters and orderings, sparsevec ordering and the vector
-// distance thresholds, which no index serves, are generated.
+// tag_ids, embeddings.sparse, embedding and code and locations.here are
+// allowlisted, so the unaccent and fuzzystrmatch operators, the ltree nlevel,
+// intarray icount and hstore value filters and orderings, sparsevec
+// ordering, the vector distance thresholds and the point column's
+// earthdistance surface, which no index serves, are generated.
 func buildContrib(t testing.TB) *schema.Built {
 	t.Helper()
 	cat := contribfixture.Catalog()
@@ -77,6 +96,7 @@ func buildContrib(t testing.TB) *schema.Built {
 	return buildCatalogAllowing(t, cat, map[string][]string{
 		"public.documents":  {"notes", "path", "attrs", "tag_ids"},
 		"public.embeddings": {"sparse", "embedding", "code"},
+		"public.locations":  {"here"},
 	}, nil, contribplugin.New(nil))
 }
 

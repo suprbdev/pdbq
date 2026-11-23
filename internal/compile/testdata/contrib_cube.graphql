@@ -1,0 +1,23 @@
+# cube columns: JSON output, the containment operators and the index-served
+# distance thresholds, distance orderings and scores against nearVector:.
+{
+  allLocations(
+    filter: {
+      pos: {
+        contains: [1, 2]
+        containedBy: [[0, 0], [10, 10]]
+        overlaps: "(1, 1), (2, 2)"
+        l2DistanceLessThan: {cube: [1, 2], distance: 5}
+        chebyshevDistanceLessThan: {cube: [[0, 0], [1, 1]], distance: 2}
+      }
+      box: {equalTo: [1, 2], notEqualTo: [[0, 0], [1, 1]], isNull: false}
+    }
+    nearVector: {pos: [1, 2], box: [[0, 0], [1, 1]]}
+    orderBy: [POS_L2_DISTANCE_ASC, POS_CHEBYSHEV_DISTANCE_DESC]
+    first: 5
+  ) {
+    nodes { id pos box posL2Distance posL1Distance boxChebyshevDistance }
+  }
+  unscored: allLocations(orderBy: [POS_L1_DISTANCE_ASC]) { nodes { id } }
+  badCube: allLocations(nearVector: {pos: [1, "x"]}, orderBy: [POS_L2_DISTANCE_ASC]) { nodes { id } }
+}

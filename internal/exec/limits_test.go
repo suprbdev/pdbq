@@ -9,6 +9,7 @@ import (
 	"github.com/vektah/gqlparser/v2/validator"
 
 	"github.com/suprbdev/pdbcore/introspect"
+	"github.com/suprbdev/pdbcore/postgis"
 	"github.com/suprbdev/pdbcore/testutil"
 	"github.com/suprbdev/pdbq/internal/config"
 	"github.com/suprbdev/pdbq/internal/inflect"
@@ -251,5 +252,36 @@ func TestCostScoreFields(t *testing.T) {
 		`{ allPlaces(first: 20, near: {geometry: "POINT(0 0)"}) { nodes { locationDistance(useSpheroid: true) areaDistance } } }`, nil)
 	if cols != scores {
 		t.Errorf("score fields cost %d, columns %d", scores, cols)
+	}
+}
+
+// TestCostRasterFields pins the raster surface: metadata accessors cost a
+// column, a pixel value postgis.RasterValueCost and summary statistics
+// postgis.RasterSummaryStatsCost per row (plus their selected members), all
+// multiplied by the page.
+func TestCostRasterFields(t *testing.T) {
+	cat := testutil.FixtureCatalog()
+	cat.Tables = append(cat.Tables, &introspect.Table{
+		Schema: "public", Name: "tiles", Kind: introspect.RelTable,
+		Privileges: introspect.Privileges{Select: true},
+		Columns: []*introspect.Column{
+			{Name: "id", Position: 1, PGType: "int4", TypeSchema: "pg_catalog", NotNull: true},
+			{Name: "rast", Position: 2, PGType: "raster", TypeSchema: "public"},
+		},
+		PrimaryKey: &introspect.Constraint{Name: "tiles_pkey", Columns: []string{"id"}},
+	})
+	page := func(sel string) int {
+		return costFor(t, cat, map[string]any{}, `{ allTiles(first: 20) { nodes { `+sel+` } } }`, nil)
+	}
+	base := page("id")
+	for sel, perRow := range map[string]int{
+		"id rastWidth rastEnvelope":                     2,
+		`id rastValue(point: "POINT(0 0)")`:             postgis.RasterValueCost,
+		"id rastSummaryStats { count mean }":            postgis.RasterSummaryStatsCost + 2,
+		`id v: rastValue(point: "POINT(0 0)", band: 2)`: postgis.RasterValueCost,
+	} {
+		if got := page(sel) - base; got != 20*perRow {
+			t.Errorf("cost of %q = base + %d, want base + 20×%d", sel, got, perRow)
+		}
 	}
 }

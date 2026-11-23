@@ -348,6 +348,9 @@ func (s *stmt) oneOp(col *introspect.Column, ref, op string, val any) (string, e
 	if f := postgis.FlavourOf(col.PGType); f.Spatial() {
 		return s.spatialOp(f, columnSRID(col), ref, op, val)
 	}
+	if postgis.IsRaster(col.PGType) && !col.IsArray {
+		return s.rasterOp(ref, op, val)
+	}
 	ci := s.contrib(col)
 	if ci.Owned() && ci.Kind != contribtype.Citext {
 		return s.contribOp(ci, ref, op, val)

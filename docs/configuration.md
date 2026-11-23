@@ -102,8 +102,8 @@ $ pdbq config example   # print the full annotated reference
 | `plugins.settings.aggregates.spatial` | `true` | `stExtent`/`stCentroid` over geometry and geography columns (false also drops the next row) |
 | `plugins.settings.aggregates.spatial_union_collect` | `false` | `stUnion`/`stCollect`, whose results grow with the row set (10 × `scan_cost` each) |
 | `plugins.settings.aggregates.scan_cost` | `10` | cost-estimate surcharge per aggregate field, aggregate orderBy value and relation-aggregate comparison |
-| `plugins.settings.contrib.filters` | `true` | full-text, trigram, unaccent, hstore, ltree, range and inet filter operators plus `<field>Rank` fields; see [Contrib types](contrib.md) |
-| `plugins.settings.contrib.ordering` | `true` | `_RANK_`/`_SIMILARITY_`/pgvector distance orderBy values and the `similarTo:`/`nearVector:` arguments; see [Contrib types](contrib.md) |
+| `plugins.settings.contrib.filters` | `true` | full-text, trigram, unaccent, hstore, ltree, range, inet and cube filter operators, the vector, cube and earthdistance distance thresholds, plus `<field>Rank` fields; see [Contrib types](contrib.md) |
+| `plugins.settings.contrib.ordering` | `true` | `_RANK_`/`_SIMILARITY_`/pgvector, cube and earthdistance distance orderBy values, the distance fields and the `similarTo:`/`nearVector:`/`nearPoint:` arguments; see [Contrib types](contrib.md) |
 | `plugins.settings.nested-mutations.force_transactions` | `true` | run operations using nested mutation fields in a transaction even when `transactions.mutations` is false; see [Plugins](plugins.md#worked-example-4-nested-mutations) |
 | `plugins.settings.nested-mutations.max_depth` | `3` | nesting levels of nested mutation fields per root field |
 | `plugins.settings.nested-mutations.max_operations` | `50` | nested operations per root field (each list item counts once); more is a client error |

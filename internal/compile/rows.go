@@ -108,6 +108,25 @@ func (s *stmt) rowJSONAs(typeName string, sel ast.SelectionSet, alias string, de
 				return "", nil, err
 			}
 			pairs = append(pairs, key, expr)
+		case schema.KindRasterAccessor:
+			suffix, _ := meta.Nested["suffix"].(string)
+			expr, err := s.rasterAccessorSQL(alias, meta.Column, suffix)
+			if err != nil {
+				return "", nil, err
+			}
+			pairs = append(pairs, key, expr)
+		case schema.KindRasterValue:
+			expr, err := s.rasterValueSQL(alias, meta.Column, f)
+			if err != nil {
+				return "", nil, err
+			}
+			pairs = append(pairs, key, expr)
+		case schema.KindRasterSummaryStats:
+			expr, err := s.rasterSummaryStatsSQL(alias, meta.Column, f, f.Definition.Type.Name())
+			if err != nil {
+				return "", nil, err
+			}
+			pairs = append(pairs, key, expr)
 		case schema.KindNodeID:
 			pairs = append(pairs, key, nodeIDSQL(typeName, meta.Table, alias))
 		case schema.KindPlaceholder:

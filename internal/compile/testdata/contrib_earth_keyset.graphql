@@ -1,0 +1,9 @@
+# variables: {"after": "WyJMb2NhdGlvbiIsIDNd"}
+# Keyset pages over the earth distance ordering compare the ordering form
+# (cube's <-> chord distance) of the row and of the anchor row.
+query ($after: Cursor) {
+  allLocations(nearPoint: {spot: {lat: 51.5, lon: -0.12}}, orderBy: [SPOT_EARTH_DISTANCE_ASC], after: $after, first: 2) {
+    edges { cursor node { id spotEarthDistance } }
+    pageInfo { hasNextPage }
+  }
+}

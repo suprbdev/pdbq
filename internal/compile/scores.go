@@ -22,8 +22,10 @@ func (s *stmt) scoreList(alias string, f *ast.Field) {
 // scoreSQL renders a score field (schema.KindScore) of the row at alias
 // against its list's reference: the spatial distance from near:
 // (ST_Distance, or metres on the spheroid with useSpheroid: on a geometry
-// column), a pg_trgm similarity to similarTo: or a pgvector distance from
-// nearVector:. Rows read outside such a list, or through a list without the
+// column), a pg_trgm similarity to similarTo:, a pgvector or cube distance
+// from nearVector: or an earthdistance distance from nearPoint: (the value
+// itself, Expr.Render, not its ordering form). Rows read outside such a
+// list, or through a list without the
 // reference for the column, score NULL. The reference is bound again rather
 // than shared with the ordering, so the SQL text only depends on which
 // fields and arguments are present.

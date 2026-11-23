@@ -59,9 +59,10 @@ const (
 	// reference the enclosing list field takes for it (Meta.Score): the
 	// <field>Distance of a spatial column from near: (postgis plugin), the
 	// <field>Similarity family of a text column against similarTo: and the
-	// <field><Metric> distances of a vector or bit column from nearVector:
-	// (contrib plugin). Null without the reference, and for rows not read
-	// through such a list.
+	// <field><Metric> distances of a vector, bit or cube column from
+	// nearVector: and of an earth or point column from nearPoint: (contrib
+	// plugin). Null without the reference, and for rows not read through
+	// such a list.
 	KindScore FieldKind = "score"
 	// KindContribAccessor is an operand-free contrib accessor of
 	// Meta.Column (contrib plugin): <field>Nlevel and <field>Parent of an
@@ -74,6 +75,17 @@ const (
 	// of an ltree column. Meta.Contrib names the expression; the arguments
 	// are bind parameters.
 	KindContribDerived FieldKind = "contrib_derived"
+	// KindRasterAccessor is a metadata accessor of a postgis_raster column
+	// (postgis plugin): <field>Width, <field>Srid, <field>Envelope, ...,
+	// named by Meta.Nested["suffix"] (see postgis.RasterAccessors).
+	KindRasterAccessor FieldKind = "raster_accessor"
+	// KindRasterValue is <field>Value(point:, band:) of a raster column
+	// (postgis plugin): the pixel value of a band at a point (ST_Value).
+	KindRasterValue FieldKind = "raster_value"
+	// KindRasterSummaryStats is <field>SummaryStats(band:) of a raster
+	// column (postgis plugin): the RasterSummaryStats object of a band
+	// (ST_SummaryStats).
+	KindRasterSummaryStats FieldKind = "raster_summary_stats"
 	// KindAggregates is the aggregates field of a connection (aggregates
 	// plugin): an object of aggregate groups computed over the connection's
 	// filtered row set, ignoring pagination.
@@ -199,7 +211,7 @@ type ContribValue struct {
 // Score binds a [KindScore] field.
 type Score struct {
 	// Arg is the list field argument holding the reference: "near",
-	// "similarTo" or "nearVector".
+	// "similarTo", "nearVector" or "nearPoint".
 	Arg string
 	// Expr is the pdbcore contrib expression measured ("similarity",
 	// "cosineDistance", ...); empty for the spatial distance.
@@ -487,10 +499,15 @@ type EnumValue struct {
 	// expression ("distance", "wordDistance", "strictWordDistance") of
 	// Column from the field's similarTo: reference (contrib plugin).
 	Similarity string
-	// Vector marks orderBy enum values sorting by a pgvector distance
-	// expression ("l2Distance", "cosineDistance", ...) of Column from the
-	// field's nearVector: reference (contrib plugin).
+	// Vector marks orderBy enum values sorting by a distance expression
+	// ("l2Distance", "cosineDistance", "earthDistance", ...) of Column from
+	// the field's per-column reference in the Reference argument (contrib
+	// plugin).
 	Vector string
+	// Reference names the list argument holding Vector's reference:
+	// "nearVector" (pgvector and cube distances) or "nearPoint"
+	// (earthdistance distances).
+	Reference string
 	// Contrib marks orderBy enum values sorting by a contrib value of
 	// Column (contrib plugin): an accessor (nlevel, icount) or a derived
 	// expression whose operand the list field's Contrib.Arg argument

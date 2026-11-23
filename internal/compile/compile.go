@@ -177,7 +177,7 @@ type stmt struct {
 	ranks    map[string]rankSource
 	rankRefs []rankRef
 	// scoreLists maps the alias of a list's row scan to the list field
-	// whose reference arguments (near:, similarTo:, nearVector:) the score
+	// whose reference arguments (near:, similarTo:, nearVector:, nearPoint:) the score
 	// fields of those rows measure against.
 	scoreLists map[string]*ast.Field
 	// then is the Then statement of the compiled field (functionMutation).
@@ -493,9 +493,10 @@ type orderTerm struct {
 	rank    bool
 	rankKey string
 	value   string
-	// expr set: order by this contrib expression of col (pg_trgm or
-	// pgvector distance) from the reference bound to exprArgs (contrib
-	// plugin).
+	// expr set: order by this contrib expression of col (pg_trgm
+	// similarity, a pgvector, cube or earthdistance distance, an hstore
+	// value) from the reference bound to exprArgs (contrib plugin), in its
+	// ordering form (Expr.OrderSQL), which keyset anchors share.
 	expr     *pgcontrib.Expr
 	exprArgs []string
 	// acc set: order by this operand-free contrib accessor of col (ltree
@@ -632,7 +633,7 @@ func (s *stmt) orderExprSQL(t *introspect.Table, term orderTerm, alias string) s
 		return s.rankMarker(rankRef{key: term.rankKey, render: alias + "." + quoteIdent(term.col), order: term.value})
 	}
 	if term.expr != nil {
-		return term.expr.Render(alias+"."+quoteIdent(term.col), term.exprArgs...)
+		return term.expr.OrderSQL(alias+"."+quoteIdent(term.col), term.exprArgs...)
 	}
 	if term.acc != nil {
 		return term.acc.SQL(alias + "." + quoteIdent(term.col))

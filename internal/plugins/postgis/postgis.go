@@ -39,6 +39,16 @@
 //     selecting the distance itself (ST_Distance; metres on geography, SRID
 //     units on geometry unless useSpheroid: true).
 //
+//   - rasters: postgis_raster columns get no output field of their own (the
+//     pixel data is never returned; a computed column encoding it is the
+//     opt-in), but header-only metadata accessors (<field>Width,
+//     <field>Height, <field>NumBands, <field>Srid, <field>PixelWidth,
+//     <field>PixelHeight, <field>Envelope as GeoJSON), the pixel value
+//     <field>Value(point:, band:) (ST_Value), per-band
+//     <field>SummaryStats(band:) (ST_SummaryStats) with the derived
+//     setting, and a RasterFilterOps { isNull intersects } filter field with
+//     the filters setting.
+//
 //   - typed geometry (opt-in, typed_geometry: true): spatial column fields
 //     return `@graphile/postgis`-style objects (GeometryInterface,
 //     GeometryPoint {x y}, GeometryPolygon {exterior interiors}, ...; see
@@ -60,11 +70,13 @@
 // the codebase (package omit): "@omit filter" on a spatial column skips its
 // filter surface, "@omit order" its distance ordering, and "@omit read" its
 // derived accessors, distance field and distance ordering (measuring the
-// distance from a client-chosen point reads the value back).
+// distance from a client-chosen point reads the value back); on a raster
+// column "@omit read" removes every raster field and its filter.
 package postgis
 
 import (
 	"context"
+	"slices"
 	"strings"
 
 	coreinflect "github.com/suprbdev/pdbcore/inflect"
@@ -118,12 +130,19 @@ func (p *Plugin) Priority() int { return 160 }
 // ---- SchemaHook ----
 
 func (p *Plugin) TransformSchema(_ context.Context, b *schema.Builder) error {
-	if !hasSpatialColumn(b.Catalog) {
+	spatial := hasSpatialColumn(b.Catalog)
+	if !spatial && !hasRasterColumn(b.Catalog) {
 		return nil
 	}
-	p.addSharedInputs(b)
+	if spatial {
+		p.addSharedInputs(b)
+	}
 	orderBy := b.FieldsByOrderBy()
+	rb := &rasterBuild{p: p, b: b}
 	for _, t := range b.Catalog.Tables {
+		if rc := rasterColumns(t); len(rc) > 0 {
+			rb.add(t, rc)
+		}
 		cols := spatialColumns(t)
 		if len(cols) == 0 {
 			continue
@@ -162,6 +181,27 @@ func spatialColumns(t *introspect.Table) []*introspect.Column {
 	var out []*introspect.Column
 	for _, c := range t.Columns {
 		if postgis.IsSpatial(c.PGType) {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// hasRasterColumn reports whether any table carries a postgis_raster column.
+func hasRasterColumn(cat *introspect.Catalog) bool {
+	for _, t := range cat.Tables {
+		if len(rasterColumns(t)) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// rasterColumns returns the raster columns of a table.
+func rasterColumns(t *introspect.Table) []*introspect.Column {
+	var out []*introspect.Column
+	for _, c := range t.Columns {
+		if postgis.IsRaster(c.PGType) && !c.IsArray {
 			out = append(out, c)
 		}
 	}
@@ -564,4 +604,176 @@ func hasArg(f *schema.Field, name string) bool {
 		}
 	}
 	return false
+}
+
+// Raster type names.
+const (
+	rasterOpsInput = "RasterFilterOps"
+	rasterStats    = "RasterSummaryStats"
+)
+
+// rasterBuild is the per-TransformSchema state of the raster surface: the
+// shared RasterFilterOps and RasterSummaryStats types are declared on first
+// use, or found taken.
+type rasterBuild struct {
+	p *Plugin
+	b *schema.Builder
+	// ops and stats are "", "declared" or "taken".
+	ops, stats string
+}
+
+// add adds the raster columns' filter fields (filters setting) and
+// metadata, pixel value and summary statistics fields (derived setting),
+// declaring the GeoJSON scalar they take when no spatial column did.
+func (rb *rasterBuild) add(t *introspect.Table, cols []*introspect.Column) {
+	added := false
+	if rb.p.filters {
+		added = rb.addFilters(t, cols)
+	}
+	if rb.p.derived && rb.addFields(t, cols) {
+		added = true
+	}
+	if added && !slices.Contains(rb.b.Scalars, postgis.TypeName) {
+		rb.b.Scalars = append(rb.b.Scalars, postgis.TypeName)
+	}
+}
+
+// addFilters gives each raster column the indexed-only policy admits (an
+// allowlisted column under filters.indexed_only: the GiST index serving
+// intersects is an expression index on ST_ConvexHull, which leads no
+// column) a filter field typed RasterFilterOps, reporting whether any was
+// added.
+func (rb *rasterBuild) addFilters(t *introspect.Table, cols []*introspect.Column) bool {
+	b := rb.b
+	in := b.Inputs[b.Inflect(inflect.KindFilterTypeName, inflect.Input{Schema: t.Schema, Table: t.Name})]
+	if in == nil {
+		return false
+	}
+	allowed := filterableSet(b, t)
+	added := false
+	for _, c := range cols {
+		if omit.Column(c, omit.Filter) || !allowed[c.Name] || !rb.ensureOps() {
+			continue
+		}
+		in.AddField(&schema.InputField{
+			Name:        b.Inflect(inflect.KindFieldName, inflect.Input{Schema: t.Schema, Table: t.Name, Column: c.Name}),
+			Type:        rasterOpsInput,
+			Description: "Raster filters on " + c.Name + ".",
+			Column:      c.Name,
+		})
+		added = true
+	}
+	return added
+}
+
+// ensureOps declares RasterFilterOps once per schema, reporting false when
+// another type took the name.
+func (rb *rasterBuild) ensureOps() bool {
+	if rb.ops == "" {
+		rb.ops = "taken"
+		if typeTaken(rb.b, rasterOpsInput) {
+			rb.b.Options.Logger.Warn("postgis: type name already taken, raster filters disabled", "type", rasterOpsInput)
+			return false
+		}
+		rb.ops = "declared"
+		rb.b.Inputs[rasterOpsInput] = &schema.Input{
+			Name:        rasterOpsInput,
+			Description: "Operators for a PostGIS raster column.",
+			Fields: []*schema.InputField{
+				{Name: "isNull", Type: "Boolean", Description: "Is null (if true) or is not null (if false)."},
+				{Name: "intersects", Type: postgis.TypeName, Description: "The raster's convex hull and the given geometry share any " +
+					"space (ST_Intersects). The geometry must be in the raster's SRID: give it as EWKT (SRID=n;...) unless the raster " +
+					"is in WGS 84. A GiST index on ST_ConvexHull(column) can serve it."},
+			},
+		}
+	}
+	return rb.ops == "declared"
+}
+
+// typeTaken reports whether an output, input or enum type uses name.
+func typeTaken(b *schema.Builder, name string) bool {
+	_, obj := b.Objects[name]
+	_, in := b.Inputs[name]
+	_, en := b.Enums[name]
+	return obj || in || en
+}
+
+// addFields adds the metadata accessors, <field>Value(point:, band:) and
+// <field>SummaryStats(band:) next to each readable raster column, skipping
+// names a column or another field already owns, and reports whether any
+// was added.
+func (rb *rasterBuild) addFields(t *introspect.Table, cols []*introspect.Column) bool {
+	b := rb.b
+	obj := b.Objects[b.TypeForTable[t.Schema+"."+t.Name]]
+	if obj == nil {
+		return false
+	}
+	added := false
+	add := func(f *schema.Field) {
+		if obj.Field(f.Name) != nil {
+			b.Options.Logger.Warn("postgis: field name already taken, raster field skipped", "type", obj.Name, "field", f.Name)
+			return
+		}
+		obj.AddField(f)
+		added = true
+	}
+	band := schema.Arg{Name: "band", Type: "Int", Default: "1", Description: "1-based band number."}
+	for _, c := range cols {
+		if omit.Column(c, omit.Read) {
+			continue
+		}
+		base := b.Inflect(inflect.KindFieldName, inflect.Input{Schema: t.Schema, Table: t.Name, Column: c.Name})
+		for _, a := range postgis.RasterAccessors {
+			add(&schema.Field{
+				Name: base + a.Suffix, Type: a.Type, Description: a.Description,
+				Meta: &schema.FieldMeta{Kind: schema.KindRasterAccessor, Table: t, Column: c, Nested: map[string]any{"suffix": a.Suffix}},
+			})
+		}
+		add(&schema.Field{
+			Name: base + "Value", Type: "Float",
+			Args: []schema.Arg{
+				{Name: "point", Type: postgis.TypeName + "!", Description: "Point to sample, as GeoJSON or WKT; reprojected to the raster's SRID."},
+				band,
+			},
+			Description: "Value of the pixel of " + c.Name + " at the given point in the given band (ST_Value); null for " +
+				"NODATA, a point outside the raster or a missing band.",
+			Meta: &schema.FieldMeta{Kind: schema.KindRasterValue, Table: t, Column: c, RowCost: rowCost(postgis.RasterValueCost)},
+		})
+		if rb.ensureStats() {
+			add(&schema.Field{
+				Name: base + "SummaryStats", Type: rasterStats, Args: []schema.Arg{band},
+				Description: "Summary statistics of one band of " + c.Name + " (ST_SummaryStats, NODATA pixels excluded); " +
+					"null for a missing band. Reads every pixel of the band.",
+				Meta: &schema.FieldMeta{Kind: schema.KindRasterSummaryStats, Table: t, Column: c, RowCost: rowCost(postgis.RasterSummaryStatsCost)},
+			})
+		}
+	}
+	return added
+}
+
+// rowCost converts a cost weight in units of one column read (pdbcore's
+// Raster*Cost) into the FieldMeta.RowCost surcharge on top of the unit cost
+// every field is charged.
+func rowCost(units int) int { return units - 1 }
+
+// ensureStats declares the RasterSummaryStats object once per schema,
+// reporting false when another type took the name.
+func (rb *rasterBuild) ensureStats() bool {
+	if rb.stats == "" {
+		rb.stats = "taken"
+		if typeTaken(rb.b, rasterStats) {
+			rb.b.Options.Logger.Warn("postgis: type name already taken, raster summary statistics disabled", "type", rasterStats)
+			return false
+		}
+		rb.stats = "declared"
+		obj := &schema.Object{Name: rasterStats, Description: "Summary statistics of one band of a raster (ST_SummaryStats)."}
+		for _, f := range postgis.RasterSummaryStatsFields {
+			obj.Fields = append(obj.Fields, &schema.Field{
+				Name: f.Name, Type: f.Type, Description: f.Description,
+				Meta: &schema.FieldMeta{Kind: schema.KindSynthetic},
+			})
+		}
+		rb.b.Objects[rasterStats] = obj
+	}
+	return rb.stats == "declared"
 }
