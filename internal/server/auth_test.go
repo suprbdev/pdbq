@@ -18,7 +18,7 @@ func TestReservedRoleClaimRejected(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s, err := New(config.Server{MaxBodyBytes: 1 << 20}, authn, nil, "type Query { ok: Boolean }", slog.Default())
+	s, err := New(config.Config{Limits: config.Limits{MaxBodyBytes: 1 << 20}}, authn, nil, "type Query { ok: Boolean }", slog.Default())
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -58,7 +58,7 @@ func testServer(t *testing.T, mutate func(*config.Config)) *httptest.Server {
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv, err := server.New(cfg.Server, mustAuthenticator(t, cfg), app.Executor(built), built.SDL, nil)
+	srv, err := server.New(cfg, mustAuthenticator(t, cfg), app.Executor(built), built.SDL, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1508,7 +1508,7 @@ func TestFunctionMutations(t *testing.T) {
 }
 
 func TestSDLAndHealth(t *testing.T) {
-	hs := testServer(t, func(c *config.Config) { c.Server.ExposeSchema = true })
+	hs := testServer(t, func(c *config.Config) { c.Server.Introspection = true })
 	body, err := httpGet(hs.URL + "/schema.graphql")
 	if err != nil {
 		t.Fatal(err)
@@ -1748,9 +1748,9 @@ func TestCostMultiplierThread(t *testing.T) {
 	})
 
 	const thread = `{
-	  allComments(first: 20, condition: {parentId: null}) { nodes { id body
-	    commentsByParentId(first: 20) { nodes { id body
-	      commentsByParentId(first: 20) { nodes { id body } } } } } }
+	  allComments(condition: {parentId: null}) { nodes { id body
+	    commentsByParentId { nodes { id body
+	      commentsByParentId { nodes { id body } } } } } }
 	}`
 
 	// Without the tag the estimate is geometric and the operation is rejected.
@@ -1758,7 +1758,7 @@ func TestCostMultiplierThread(t *testing.T) {
 		`COMMENT ON CONSTRAINT comments_parent_id_fkey ON comments IS NULL`); err != nil {
 		t.Fatal(err)
 	}
-	untagged := testServer(t, func(c *config.Config) { c.Server.MaxDepth = 30 })
+	untagged := testServer(t, func(c *config.Config) { c.Limits.MaxDepth = 30 })
 	res := post(t, untagged.URL, thread, nil)
 	if len(res.Errors) == 0 {
 		t.Fatalf("untagged thread query unexpectedly passed the cost limit: %s", res.Data["allComments"])
@@ -1772,7 +1772,7 @@ func TestCostMultiplierThread(t *testing.T) {
 		`COMMENT ON CONSTRAINT comments_parent_id_fkey ON comments IS '@costMultiplier 3'`); err != nil {
 		t.Fatal(err)
 	}
-	tagged := testServer(t, func(c *config.Config) { c.Server.MaxDepth = 30 })
+	tagged := testServer(t, func(c *config.Config) { c.Limits.MaxDepth = 30 })
 	res = post(t, tagged.URL, thread, nil)
 	requireNoErrors(t, res)
 
@@ -2114,7 +2114,7 @@ func TestFunctionCalls(t *testing.T) {
 			_, _ = conn.Exec(context.Background(), q)
 		}
 	})
-	hs := testServer(t, func(c *config.Config) { c.Server.ExposeSchema = true })
+	hs := testServer(t, func(c *config.Config) { c.Server.Introspection = true })
 
 	cases := []struct {
 		name, query, want string
@@ -2216,7 +2216,7 @@ func TestPartitions(t *testing.T) {
 	)
 	t.Cleanup(func() { _, _ = conn.Exec(context.Background(), `DROP TABLE readings`) })
 
-	hs := testServer(t, func(c *config.Config) { c.Server.ExposeSchema = true })
+	hs := testServer(t, func(c *config.Config) { c.Server.Introspection = true })
 	sdl, err := httpGet(hs.URL + "/schema.graphql")
 	if err != nil {
 		t.Fatal(err)

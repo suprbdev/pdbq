@@ -27,7 +27,7 @@ const (
 // csrfServer builds a server whose executor is in read-only mode, so a
 // mutation that gets past the transport checks answers 200 with the
 // read-only error instead of reaching the (nil) pool.
-func csrfServer(t *testing.T, cfg config.Server) *Server {
+func csrfServer(t *testing.T, cfg config.Config) *Server {
 	t.Helper()
 	built, err := schema.New(testutil.FixtureCatalog(), inflect.Default, schema.Options{FilterIndexedOnly: true, Subscriptions: true}).Build()
 	if err != nil {
@@ -36,8 +36,8 @@ func csrfServer(t *testing.T, cfg config.Server) *Server {
 	var ro atomic.Bool
 	ro.Store(true)
 	ex := exec.New(nil, built, nil, nil, exec.Options{DocumentCacheSize: 100, ReadOnly: &ro})
-	if cfg.MaxBodyBytes == 0 {
-		cfg.MaxBodyBytes = 1 << 20
+	if cfg.Limits.MaxBodyBytes == 0 {
+		cfg.Limits.MaxBodyBytes = 1 << 20
 	}
 	s, err := New(cfg, testAuth(), ex, built.SDL, slog.Default())
 	if err != nil {
@@ -65,7 +65,7 @@ func postGraphQL(t *testing.T, h http.Handler, contentType, body string) *httpte
 }
 
 func TestGETRunsQueries(t *testing.T) {
-	h := csrfServer(t, config.Server{}).Handler()
+	h := csrfServer(t, config.Config{}).Handler()
 	rec := getGraphQL(t, h, url.Values{"query": {`{ __typename }`}})
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"__typename":"Query"`) {
 		t.Fatalf("GET query: %d %s", rec.Code, rec.Body.String())
@@ -73,7 +73,7 @@ func TestGETRunsQueries(t *testing.T) {
 }
 
 func TestGETRejectsMutationsAndSubscriptions(t *testing.T) {
-	h := csrfServer(t, config.Server{}).Handler()
+	h := csrfServer(t, config.Config{}).Handler()
 	for _, params := range []url.Values{
 		{"query": {csrfMutation}},
 		{"query": {`subscription { listen(topic: "t") { relatedNodeId } }`}},
@@ -94,7 +94,7 @@ func TestGETRejectsMutationsAndSubscriptions(t *testing.T) {
 }
 
 func TestHEADRejectsMutations(t *testing.T) {
-	h := csrfServer(t, config.Server{}).Handler()
+	h := csrfServer(t, config.Config{}).Handler()
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodHead, "/graphql?"+url.Values{"query": {csrfMutation}}.Encode(),
 		strings.NewReader(fmt.Sprintf(`{"query":%q}`, csrfMutation)))
@@ -106,7 +106,7 @@ func TestHEADRejectsMutations(t *testing.T) {
 }
 
 func TestGETSelectsQueryFromMixedDocument(t *testing.T) {
-	h := csrfServer(t, config.Server{}).Handler()
+	h := csrfServer(t, config.Config{}).Handler()
 	rec := getGraphQL(t, h, url.Values{"query": {mixedDocument}, "operationName": {"q"}})
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"__typename":"Query"`) {
 		t.Fatalf("GET query of mixed document: %d %s", rec.Code, rec.Body.String())
@@ -114,7 +114,7 @@ func TestGETSelectsQueryFromMixedDocument(t *testing.T) {
 }
 
 func TestGETInvalidDocumentReportsValidationError(t *testing.T) {
-	h := csrfServer(t, config.Server{}).Handler()
+	h := csrfServer(t, config.Config{}).Handler()
 	rec := getGraphQL(t, h, url.Values{"query": {`mutation { nope }`}})
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `Cannot query field \"nope\"`) {
 		t.Fatalf("GET invalid mutation: %d %s", rec.Code, rec.Body.String())
@@ -122,7 +122,7 @@ func TestGETInvalidDocumentReportsValidationError(t *testing.T) {
 }
 
 func TestPOSTRunsMutations(t *testing.T) {
-	h := csrfServer(t, config.Server{}).Handler()
+	h := csrfServer(t, config.Config{}).Handler()
 	for _, ct := range []string{"application/json", "application/json; charset=utf-8", "Application/JSON"} {
 		rec := postGraphQL(t, h, ct, fmt.Sprintf(`{"query":%q}`, csrfMutation))
 		if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "read-only mode") {
@@ -132,7 +132,7 @@ func TestPOSTRunsMutations(t *testing.T) {
 }
 
 func TestPOSTRejectsNonJSONContentTypes(t *testing.T) {
-	h := csrfServer(t, config.Server{}).Handler()
+	h := csrfServer(t, config.Config{}).Handler()
 	body := fmt.Sprintf(`{"query":%q}`, csrfMutation)
 	for _, ct := range []string{
 		"",
@@ -158,7 +158,7 @@ func TestPersistedMutationOverGETRejected(t *testing.T) {
 		hashQuery(csrfMutation), csrfMutation, hashQuery(apqQuery), apqQuery), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	h := csrfServer(t, config.Server{PersistedQueriesPath: path, PersistedOnly: true}).Handler()
+	h := csrfServer(t, config.Config{PersistedQueries: config.PersistedQueries{Path: path, Only: true}}).Handler()
 
 	rec := getGraphQL(t, h, url.Values{"extensions": {apqExt(csrfMutation)}})
 	if rec.Code != http.StatusMethodNotAllowed {
@@ -177,7 +177,7 @@ func TestPersistedMutationOverGETRejected(t *testing.T) {
 }
 
 func TestAPQMutationOverGETRejected(t *testing.T) {
-	h := csrfServer(t, config.Server{APQ: true}).Handler()
+	h := csrfServer(t, config.Config{PersistedQueries: config.PersistedQueries{APQ: true}}).Handler()
 	rec := getGraphQL(t, h, url.Values{"query": {csrfMutation}, "extensions": {apqExt(csrfMutation)}})
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("GET APQ register mutation: %d %s, want 405", rec.Code, rec.Body.String())
@@ -189,7 +189,7 @@ func TestAPQMutationOverGETRejected(t *testing.T) {
 }
 
 func TestOtherMethodsRejected(t *testing.T) {
-	h := csrfServer(t, config.Server{}).Handler()
+	h := csrfServer(t, config.Config{}).Handler()
 	for _, m := range []string{http.MethodPut, http.MethodDelete, http.MethodPatch} {
 		rec := httptest.NewRecorder()
 		req := httptest.NewRequest(m, "/graphql", strings.NewReader(fmt.Sprintf(`{"query":%q}`, csrfMutation)))

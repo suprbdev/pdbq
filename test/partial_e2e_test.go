@@ -82,7 +82,7 @@ func TestPartialMutations(t *testing.T) {
 	query := func(fields ...string) string { return "mutation { " + strings.Join(fields, "\n") + " }" }
 
 	t.Run("a failing field leaves the others committed", func(t *testing.T) {
-		hs := testServer(t, func(c *config.Config) { c.TX.PartialMutations = true })
+		hs := testServer(t, func(c *config.Config) { c.TX.Partial.Enabled = true })
 		res := postPartial(t, hs.URL, query(create("a", email("ok1")), create("b", email("ok1")), create("c", email("ok2"))), true, nil)
 		if len(res.Errors) != 1 || partialPathStrings(res.Errors[0].Path) != "b" {
 			t.Fatalf("errors = %+v, want one error at b", res.Errors)
@@ -96,7 +96,7 @@ func TestPartialMutations(t *testing.T) {
 	})
 
 	t.Run("not found and compile-time failures are field errors", func(t *testing.T) {
-		hs := testServer(t, func(c *config.Config) { c.TX.PartialMutations = true })
+		hs := testServer(t, func(c *config.Config) { c.TX.Partial.Enabled = true })
 		res := postPartial(t, hs.URL, query(
 			`gone: updateUserByEmail(email: "nobody-`+fmt.Sprint(run)+`@partial.example", patch: {fullName: "x"}) { user { id } }`,
 			create("a", email("nf")),
@@ -113,7 +113,7 @@ func TestPartialMutations(t *testing.T) {
 	})
 
 	t.Run("default mode stays all or nothing", func(t *testing.T) {
-		hs := testServer(t, func(c *config.Config) { c.TX.PartialMutations = true })
+		hs := testServer(t, func(c *config.Config) { c.TX.Partial.Enabled = true })
 		res := postPartial(t, hs.URL, query(create("a", email("aon1")), create("b", email("aon1")), create("c", email("aon2"))), false, nil)
 		if len(res.Errors) == 0 {
 			t.Fatal("expected the duplicate to fail")
@@ -134,8 +134,19 @@ func TestPartialMutations(t *testing.T) {
 		}
 	})
 
+	t.Run("rejected above transactions.partial.max_items", func(t *testing.T) {
+		hs := testServer(t, func(c *config.Config) { c.TX.Partial.Enabled = true; c.TX.Partial.MaxItems = 1 })
+		res := postPartial(t, hs.URL, query(create("a", email("max1")), create("b", email("max2"))), true, nil)
+		if len(res.Errors) != 1 || !strings.Contains(res.Errors[0].Message, "exceed transactions.partial.max_items (1)") {
+			t.Fatalf("errors = %+v", res.Errors)
+		}
+		if n := countWhere(t, `SELECT count(*) FROM users WHERE email IN ($1, $2)`, email("max1"), email("max2")); n != 0 {
+			t.Fatal("a rejected request wrote")
+		}
+	})
+
 	t.Run("serialization failure retries the whole transaction", func(t *testing.T) {
-		hs := testServer(t, func(c *config.Config) { c.TX.PartialMutations = true; c.TX.MaxRetries = 1 })
+		hs := testServer(t, func(c *config.Config) { c.TX.Partial.Enabled = true; c.TX.MaxRetries = 1 })
 		res := postPartial(t, hs.URL, query(create("a", email("retry")), `p: retryProbe(input: {}) { integer }`), true, nil)
 		if len(res.Errors) != 0 {
 			t.Fatalf("errors = %+v", res.Errors)
@@ -146,7 +157,7 @@ func TestPartialMutations(t *testing.T) {
 	})
 
 	t.Run("serialization failure without retries commits nothing", func(t *testing.T) {
-		hs := testServer(t, func(c *config.Config) { c.TX.PartialMutations = true })
+		hs := testServer(t, func(c *config.Config) { c.TX.Partial.Enabled = true })
 		var res partialResp
 		for range 2 {
 			res = postPartial(t, hs.URL, query(create("a", email("noretry")), `p: retryProbe(input: {}) { integer }`), true, nil)
@@ -167,7 +178,7 @@ func TestPartialMutations(t *testing.T) {
 
 	t.Run("RLS rejects one field, the rest commit under the same identity", func(t *testing.T) {
 		hs := testServer(t, func(c *config.Config) {
-			c.TX.PartialMutations = true
+			c.TX.Partial.Enabled = true
 			headersIdentity(c)
 		})
 		title := fmt.Sprintf("partial-rls-%d", run)

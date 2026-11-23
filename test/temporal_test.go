@@ -57,7 +57,6 @@ func TestTemporal(t *testing.T) {
 	})
 
 	hs := testServer(t, func(c *config.Config) {
-		c.Server.ExposeSchema = true
 		c.Filters.IndexedOnly = false
 	})
 	query := func(t *testing.T, q, want string) {

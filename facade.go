@@ -27,24 +27,32 @@ import (
 // Configuration. Section types carry a Config suffix to avoid clashing with
 // unrelated root-package names.
 type (
-	Config         = config.Config
-	DatabaseConfig = config.Database
-	ServerConfig   = config.Server
-	SchemaConfig   = config.Schema
-	FiltersConfig  = config.Filters
-	AuthConfig     = config.Auth
-	JWTConfig      = config.JWT
-	HeadersConfig  = config.Headers
-	RolesConfig    = config.Roles
-	ClaimsConfig   = config.Claims
-	TXConfig       = config.TX
-	WatchConfig    = config.Watch
-	ErrorsConfig   = config.Errors
-	PluginsConfig  = config.Plugins
-	PluginSettings = config.PluginSettings
-	LogConfig      = config.Log
-	MetricsConfig  = config.Metrics
-	ContractConfig = config.Contract
+	Config                 = config.Config
+	DatabaseConfig         = config.Database
+	ServerConfig           = config.Server
+	DocumentCacheConfig    = config.DocumentCache
+	LimitsConfig           = config.Limits
+	PersistedQueriesConfig = config.PersistedQueries
+	SubscriptionsConfig    = config.Subscriptions
+	LiveConfig             = config.Live
+	IncrementalConfig      = config.Incremental
+	AggregatesConfig       = config.Aggregates
+	SchemaConfig           = config.Schema
+	FiltersConfig          = config.Filters
+	AuthConfig             = config.Auth
+	JWTConfig              = config.JWT
+	HeadersConfig          = config.Headers
+	RolesConfig            = config.Roles
+	ClaimsConfig           = config.Claims
+	TXConfig               = config.TX
+	PartialConfig          = config.Partial
+	WatchConfig            = config.Watch
+	ErrorsConfig           = config.Errors
+	PluginsConfig          = config.Plugins
+	PluginSettings         = config.PluginSettings
+	LogConfig              = config.Log
+	MetricsConfig          = config.Metrics
+	ContractConfig         = config.Contract
 )
 
 // DefaultConfig returns the documented defaults.
@@ -92,7 +100,7 @@ type (
 // embedder mounts App.Metrics().Handler() itself. The caller owns the
 // listener; server.addr and request timeouts still apply to the handler's
 // internals (http.TimeoutHandler), but read/idle timeouts are the
-// embedder's job. With server.subscriptions on, the handler also serves
+// embedder's job. With subscriptions.enabled on, the handler also serves
 // WebSocket subscriptions on /graphql; App.Close closes those connections
 // and the LISTEN connection. With contracts configured, the handler serves
 // each contract's schema under its path instead (see docs/contracts.md).
@@ -147,13 +155,13 @@ func (a *App) buildServer(ctx context.Context) (httpServer, error) {
 		return nil, err
 	}
 	ex := a.Executor(built)
-	srv, err := server.New(a.serverConfig(), authn, ex, built.SDL, a.Log)
+	srv, err := server.New(a.Config, authn, ex, built.SDL, a.Log)
 	if err != nil {
 		return nil, err
 	}
 	srv.SetReadiness(a.pool.Ping)
 	var tracker *live.Tracker
-	if a.Config.Server.Subscriptions {
+	if a.Config.Subscriptions.Enabled {
 		hub := subscribe.NewHub(subscribe.PoolDialer(a.pool), a.Log)
 		srv.SetSubscriptions(hub)
 		if tracker, err = a.liveTracker(ctx, hub); err != nil {
@@ -194,19 +202,11 @@ func (a *App) buildServer(ctx context.Context) (httpServer, error) {
 	return srv, nil
 }
 
-// serverConfig is the server section with the defaults that depend on other
-// sections resolved.
-func (a *App) serverConfig() config.Server {
-	cfg := a.Config.Server
-	cfg.IncrementalMaxResponses = a.Config.IncrementalResponses()
-	return cfg
-}
-
 // buildContractServer builds one schema, executor and Server per contract
 // from cat and mounts them on a server.Group; watch mode rebuilds every
 // contract.
 func (a *App) buildContractServer(ctx context.Context, cat *introspect.Catalog, catHash string, authn *server.Authenticator) (*server.Group, error) {
-	group := server.NewGroup(a.serverConfig(), a.Log)
+	group := server.NewGroup(a.Config, a.Log)
 	group.SetReadiness(a.pool.Ping)
 	if a.Config.Metrics.Addr == "" {
 		group.SetMetrics(a.metrics, a.Config.Metrics.Path)
@@ -217,7 +217,7 @@ func (a *App) buildContractServer(ctx context.Context, cat *introspect.Catalog, 
 		if err != nil {
 			return nil, err
 		}
-		srv, err := server.New(a.serverConfig(), authn, a.executor(built, a.instrumentsFor(ct.Name)), built.SDL, a.Log)
+		srv, err := server.New(a.Config, authn, a.executor(built, a.instrumentsFor(ct.Name)), built.SDL, a.Log)
 		if err != nil {
 			return nil, err
 		}
@@ -227,7 +227,7 @@ func (a *App) buildContractServer(ctx context.Context, cat *introspect.Catalog, 
 		a.Log.Info("contract ready", "contract", ct.Name, "path", ct.URLPath(""))
 	}
 	var tracker *live.Tracker
-	if a.Config.Server.Subscriptions {
+	if a.Config.Subscriptions.Enabled {
 		hub := subscribe.NewHub(subscribe.PoolDialer(a.pool), a.Log)
 		var err error
 		if tracker, err = a.liveTracker(ctx, hub); err != nil {
@@ -268,9 +268,9 @@ func (a *App) buildContractServer(ctx context.Context, cat *introspect.Catalog, 
 }
 
 // liveTracker returns the live query tracker listening through hub, with
-// the change triggers installed, or nil when server.live is off.
+// the change triggers installed, or nil when live.enabled is off.
 func (a *App) liveTracker(ctx context.Context, hub *subscribe.Hub) (*live.Tracker, error) {
-	if !a.Config.Server.Live {
+	if !a.Config.Live.Enabled {
 		return nil, nil
 	}
 	m, err := live.NewMetrics(a.metrics)
@@ -278,9 +278,9 @@ func (a *App) liveTracker(ctx context.Context, hub *subscribe.Hub) (*live.Tracke
 		return nil, err
 	}
 	t := live.NewTracker(hub, live.Options{
-		Channel:     a.Config.Server.LiveChannel,
-		Throttle:    a.Config.Server.LiveThrottle,
-		Concurrency: a.Config.Server.LiveConcurrency,
+		Channel:     a.Config.Live.Channel,
+		Throttle:    a.Config.Live.Throttle,
+		Concurrency: a.Config.Live.Concurrency,
 		Metrics:     m,
 		Log:         a.Log,
 	})
@@ -289,16 +289,16 @@ func (a *App) liveTracker(ctx context.Context, hub *subscribe.Hub) (*live.Tracke
 }
 
 // installLive installs the change triggers of live queries (or, with
-// server.live_install_triggers off, finds the tables that have them) and
+// live.install_triggers off, finds the tables that have them) and
 // hands the tracked tables to t. A nil t does nothing.
 func (a *App) installLive(ctx context.Context, t *live.Tracker) {
 	if t == nil {
 		return
 	}
 	tracked, err := live.Install(ctx, a.pool, live.InstallOptions{
-		Channel: a.Config.Server.LiveChannel,
+		Channel: a.Config.Live.Channel,
 		Schemas: a.Config.Schema.Schemas,
-		Create:  a.Config.Server.LiveInstallTriggers,
+		Create:  a.Config.Live.InstallTriggers,
 		Log:     a.Log,
 	})
 	if err != nil {

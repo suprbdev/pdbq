@@ -84,13 +84,13 @@ func TestWSChurnKeepsGoroutinesBounded(t *testing.T) {
 	for _, rate := range []int{0, 100} {
 		t.Run(fmt.Sprintf("subscribe_rate=%d", rate), func(t *testing.T) {
 			const conns, perConn = 8, 20
-			f := wsServer(t, func(c *config.Server) {
-				c.SubscriptionsMaxPerConnection = perConn
-				c.SubscriptionsSubscribeRate = rate
+			f := wsServer(t, func(c *config.Config) {
+				c.Subscriptions.MaxPerConnection = perConn
+				c.Subscriptions.SubscribeRate = rate
 				// A throttled connection whose client has left still has its
 				// unread messages queued; the keepalive ping, whose pong waits
 				// behind them, is what ends it.
-				c.SubscriptionsKeepalive = time.Second
+				c.Subscriptions.Keepalive = time.Second
 			})
 			if rate == 0 {
 				f.conn.setDelay(time.Millisecond)
@@ -129,7 +129,7 @@ func TestWSChurnKeepsGoroutinesBounded(t *testing.T) {
 }
 
 func TestWSCompletedOperationReleasesSlot(t *testing.T) {
-	f := wsServer(t, func(c *config.Server) { c.SubscriptionsMaxPerConnection = 1 })
+	f := wsServer(t, func(c *config.Config) { c.Subscriptions.MaxPerConnection = 1 })
 	c := dialWS(t, f.url, subprotocolTransportWS)
 	c.init("")
 	c.send(`{"id":"a","type":"subscribe","payload":{"query":"subscription { listen(topic: \"x\", initialEvent: true) { relatedNodeId } }"}}`)
@@ -142,7 +142,7 @@ func TestWSCompletedOperationReleasesSlot(t *testing.T) {
 }
 
 func TestWSMaxConnections(t *testing.T) {
-	f := wsServer(t, func(c *config.Server) { c.SubscriptionsMaxConnections = 2 })
+	f := wsServer(t, func(c *config.Config) { c.Subscriptions.MaxConnections = 2 })
 	dialWS(t, f.url, subprotocolTransportWS).init("")
 	dialWS(t, f.url, subprotocolTransportWS).init("")
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -154,7 +154,7 @@ func TestWSMaxConnections(t *testing.T) {
 }
 
 func TestWSMaxOperations(t *testing.T) {
-	f := wsServer(t, func(c *config.Server) { c.SubscriptionsMaxOperations = 1 })
+	f := wsServer(t, func(c *config.Config) { c.Subscriptions.MaxOperations = 1 })
 	a := dialWS(t, f.url, subprotocolTransportWS)
 	a.init("")
 	a.send(`{"id":"a","type":"subscribe","payload":{"query":"subscription { listen(topic: \"x\", initialEvent: true) { relatedNodeId } }"}}`)

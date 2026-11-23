@@ -12,7 +12,7 @@ import (
 	"github.com/suprbdev/pdbq/internal/config"
 )
 
-func groupServer(t *testing.T, cfg config.Server, sdl string) *Server {
+func groupServer(t *testing.T, cfg config.Config, sdl string) *Server {
 	t.Helper()
 	s, err := New(cfg, testAuth(), nil, sdl, slog.Default())
 	if err != nil {
@@ -22,7 +22,7 @@ func groupServer(t *testing.T, cfg config.Server, sdl string) *Server {
 }
 
 func TestGroupRoutesByPrefix(t *testing.T) {
-	cfg := config.Server{ExposeSchema: true, GraphiQL: true, ReadyzTimeout: 1}
+	cfg := config.Config{Server: config.Server{Introspection: true, GraphiQL: true, ReadyzTimeout: 1}}
 	g := NewGroup(cfg, nil)
 	internal := groupServer(t, cfg, "type Query { internal: Boolean }")
 	public := groupServer(t, cfg, "type Query { public: Boolean }")
@@ -63,7 +63,7 @@ func TestGroupRoutesByPrefix(t *testing.T) {
 }
 
 func TestGroupWithoutRootMount(t *testing.T) {
-	cfg := config.Server{ExposeSchema: true, ReadyzTimeout: 1}
+	cfg := config.Config{Server: config.Server{Introspection: true, ReadyzTimeout: 1}}
 	g := NewGroup(cfg, nil)
 	g.Add("/public", groupServer(t, cfg, "type Query { public: Boolean }"))
 	g.SetReadiness(func(context.Context) error { return errors.New("down") })
@@ -90,7 +90,7 @@ func TestGroupMetrics(t *testing.T) {
 		}
 		return m
 	}
-	cfg := config.Server{ExposeSchema: true, ReadyzTimeout: 1}
+	cfg := config.Config{Server: config.Server{Introspection: true, ReadyzTimeout: 1}}
 	g := NewGroup(cfg, nil)
 	public, partner := groupServer(t, cfg, "type Query { a: Boolean }"), groupServer(t, cfg, "type Query { b: Boolean }")
 	public.SetMetrics(newM("public"), "")

@@ -3,10 +3,7 @@ package e2e
 import (
 	"context"
 	"encoding/json"
-	"strconv"
 	"testing"
-
-	"github.com/suprbdev/pdbq/internal/config"
 )
 
 // TestMutationPayloads covers the PostGraphile payload fields: the result
@@ -60,7 +57,6 @@ func TestMutationPayloads(t *testing.T) {
 			DROP TABLE pay_posts; DROP TABLE pay_authors`)
 	})
 	hs := testServer(t, nil)
-	noTx := testServer(t, func(cfg *config.Config) { cfg.TX.Mutations = false })
 
 	t.Run("row result with relations, edge and query", func(t *testing.T) {
 		res := post(t, hs.URL, `mutation {
@@ -121,18 +117,16 @@ func TestMutationPayloads(t *testing.T) {
 	})
 
 	t.Run("scalar result with query", func(t *testing.T) {
-		for i, url := range []string{hs.URL, noTx.URL} {
-			res := post(t, url, `mutation ($id: Int!) {
-			  payAddAuthor(input: {authorId: $id, authorName: "ken", clientMutationId: "a"}) {
-			    integer
-			    clientMutationId
-			    query { payAuthorById(id: $id) { name } }
-			  }
-			}`, map[string]any{"id": 40 + i})
-			requireNoErrors(t, res)
-			expectField(t, res, "payAddAuthor", `{"integer": `+strconv.Itoa(3+i)+`, "clientMutationId": "a",
-				"query": {"payAuthorById": {"name": "ken"}}}`)
-		}
+		res := post(t, hs.URL, `mutation ($id: Int!) {
+		  payAddAuthor(input: {authorId: $id, authorName: "ken", clientMutationId: "a"}) {
+		    integer
+		    clientMutationId
+		    query { payAuthorById(id: $id) { name } }
+		  }
+		}`, map[string]any{"id": 40})
+		requireNoErrors(t, res)
+		expectField(t, res, "payAddAuthor", `{"integer": 3, "clientMutationId": "a",
+			"query": {"payAuthorById": {"name": "ken"}}}`)
 	})
 
 	t.Run("setof result keeps the function's order", func(t *testing.T) {
@@ -141,17 +135,15 @@ func TestMutationPayloads(t *testing.T) {
 	})
 
 	t.Run("payload error rolls back the function", func(t *testing.T) {
-		for i, url := range []string{hs.URL, noTx.URL} {
-			res := post(t, url, `mutation ($id: Int!) {
-			  payBoom(input: {postId: $id, postTitle: "boom"}) { payPost { id checked } }
-			}`, map[string]any{"id": 30 + i})
-			if len(res.Errors) != 1 || string(res.Data["payBoom"]) != "null" {
-				raw, _ := json.Marshal(res)
-				t.Fatalf("want the payload's error, got %s", raw)
-			}
-			res = post(t, url, `query ($id: Int!) { payPostById(id: $id) { id } }`, map[string]any{"id": 30 + i})
-			expectField(t, res, "payPostById", `null`)
+		res := post(t, hs.URL, `mutation ($id: Int!) {
+		  payBoom(input: {postId: $id, postTitle: "boom"}) { payPost { id checked } }
+		}`, map[string]any{"id": 30})
+		if len(res.Errors) != 1 || string(res.Data["payBoom"]) != "null" {
+			raw, _ := json.Marshal(res)
+			t.Fatalf("want the payload's error, got %s", raw)
 		}
+		res = post(t, hs.URL, `query ($id: Int!) { payPostById(id: $id) { id } }`, map[string]any{"id": 30})
+		expectField(t, res, "payPostById", `null`)
 	})
 
 	t.Run("table mutation payload", func(t *testing.T) {

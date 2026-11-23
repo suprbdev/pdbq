@@ -15,7 +15,6 @@ import (
 	"github.com/suprbdev/pdbcore/introspect"
 	"github.com/suprbdev/pdbcore/testutil"
 	"github.com/suprbdev/pdbq/internal/compile"
-	"github.com/suprbdev/pdbq/internal/exec"
 	"github.com/suprbdev/pdbq/internal/inflect"
 	"github.com/suprbdev/pdbq/internal/plugin"
 	"github.com/suprbdev/pdbq/internal/plugins/nestedmutations"
@@ -172,7 +171,7 @@ func TestForwardDisconnect(t *testing.T) {
 }
 
 func TestNestedErrors(t *testing.T) {
-	reg, built := setupWith(t, plugin.NewRegistry(nestedmutations.New(nestedmutations.Settings{ForceTransactions: true, MaxDepth: 2, MaxOperations: 3})))
+	reg, built := setupWith(t, plugin.NewRegistry(nestedmutations.New(nestedmutations.Settings{MaxDepth: 2, MaxOperations: 3})))
 	post := base64.StdEncoding.EncodeToString([]byte(`["Post", 1]`))
 	for _, tc := range []struct{ name, query, want string }{
 		{"two links", `mutation { createPost(input: {title: "x", author: {connectById: {id: 1}, create: {email: "e"}}}) { post { id } } }`,
@@ -200,33 +199,6 @@ func TestNestedErrors(t *testing.T) {
 				t.Fatalf("err = %v, want %q", err, tc.want)
 			}
 		})
-	}
-}
-
-func TestBeforeOperationForcesTx(t *testing.T) {
-	p := nestedmutations.New(nestedmutations.DefaultSettings())
-	_, built := setupWith(t, plugin.NewRegistry(p))
-	for query, want := range map[string]bool{
-		`mutation { updateUserById(id: 1, patch: {postsByAuthorId: {create: [{title: "x"}]}}) { user { id } } }`:                                  true,
-		`mutation { updateUserById(id: 1, patch: {fullName: "x"}) { user { id } } }`:                                                              false,
-		`mutation { ...M } fragment M on Mutation { createUser(input: {email: "e", postsByAuthorId: {create: [{title: "x"}]}}) { user { id } } }`: true,
-		`mutation { ... on Mutation { createUser(input: {email: "e", postsByAuthorId: {create: [{title: "x"}]}}) { user { id } } } }`:             true,
-		`mutation { ... @skip(if: true) { createUser(input: {email: "e", postsByAuthorId: {create: [{title: "x"}]}}) { user { id } } } }`:         false,
-	} {
-		doc, perr := parser.ParseQuery(&ast.Source{Input: query})
-		if perr != nil {
-			t.Fatal(perr)
-		}
-		if errs := validator.ValidateWithRules(built.Schema, doc, nil); len(errs) > 0 {
-			t.Fatal(errs)
-		}
-		op := &exec.Operation{Type: ast.Mutation, Document: doc, Definition: doc.Operations[0], Built: built}
-		if _, err := p.BeforeOperation(context.Background(), op); err != nil {
-			t.Fatal(err)
-		}
-		if op.ForceTx != want {
-			t.Errorf("%s: ForceTx = %v, want %v", query, op.ForceTx, want)
-		}
 	}
 }
 
@@ -316,13 +288,6 @@ func TestStatePerSchema(t *testing.T) {
 	}
 	if errs := validator.ValidateWithRules(first.Schema, doc, nil); len(errs) > 0 {
 		t.Fatal(errs)
-	}
-	op := &exec.Operation{Type: ast.Mutation, Document: doc, Definition: doc.Operations[0], Built: first}
-	if _, err := p.BeforeOperation(context.Background(), op); err != nil {
-		t.Fatal(err)
-	}
-	if !op.ForceTx {
-		t.Error("the first schema's nested field was forgotten after a second build")
 	}
 	if err := compileErr(t, reg, first, query); err != nil {
 		t.Errorf("compiling against the first schema: %v", err)

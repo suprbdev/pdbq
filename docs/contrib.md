@@ -271,7 +271,7 @@ returns their highlighted document as JSON).
 
 `ts_headline` parses the whole document on every call, whatever the
 options, so its work grows with the document's length. It is bounded four
-ways: it reads only the first `server.max_headline_document` characters of
+ways: it reads only the first `limits.max_headline_document` characters of
 the document (65536 by default, `left(doc, n)`; a match further in is not
 highlighted and the headline shows the opening words, as for a document
 without a match); it runs only for the rows of the page (plus the one
@@ -281,8 +281,9 @@ per row; and the cost estimator charges each headline 10 per started 8192
 characters of that bound, per row, on top of the column reads (pdbcore's
 `contrib.HeadlineDocumentCost`): 80 at the default bound, so a `first: 100`
 page of one headline costs about 8,000 against the default `max_cost` of
-10000, and a second headline alias on that page exceeds it. Lower the bound
-for long documents read by untrusted callers.
+100000 (a connection without `first` is priced as a full page of
+`max_page_size` rows), so about a dozen headline aliases on such a page
+exceed it. Lower the bound for long documents read by untrusted callers.
 
 ## Trigram similarity (pg_trgm)
 

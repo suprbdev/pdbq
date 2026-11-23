@@ -61,7 +61,7 @@ func (s *Server) startListen(ctx context.Context, ex *exec.Executor, op *exec.Op
 	if s.live != nil && channel == s.live.Channel() {
 		return nil, gqlerror.Errorf("topic %q is not allowed", topic)
 	}
-	l, err := s.hub.Subscribe(ctx, channel, s.cfg.SubscriptionsBuffer)
+	l, err := s.hub.Subscribe(ctx, channel, s.cfg.Subscriptions.Buffer)
 	if err != nil {
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
@@ -72,7 +72,7 @@ func (s *Server) startListen(ctx context.Context, ex *exec.Executor, op *exec.Op
 		s.log.Warn("subscriptions: listen failed", "channel", channel, "err", err)
 		return nil, errSubscriptionsUnavailable
 	}
-	return &listenStream{ex: ex, op: op, ctx: ctx, field: f, l: l, initial: initial, timeout: s.cfg.RequestTimeout}, nil
+	return &listenStream{ex: ex, op: op, ctx: ctx, field: f, l: l, initial: initial, timeout: s.cfg.Server.RequestTimeout}, nil
 }
 
 // Close releases the stream's channel.

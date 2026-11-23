@@ -14,7 +14,7 @@ import (
 )
 
 // SetLive makes the server answer live queries with tracker. It has an
-// effect only with server.live on; call it before Handler. The caller owns
+// effect only with live.enabled on; call it before Handler. The caller owns
 // tracker and closes it after the server, before the hub.
 func (s *Server) SetLive(tracker *live.Tracker) { s.live = tracker }
 
@@ -23,7 +23,7 @@ func (s *Server) SetLive(tracker *live.Tracker) { s.live = tracker }
 // marked with the live directive, and returns its root fields bound to
 // the Query type.
 func (s *Server) liveFields(ex *exec.Executor, op *exec.Operation) ([]*ast.Field, bool) {
-	if !s.cfg.Live || ex.Built.Schema.Subscription == nil {
+	if !s.cfg.Live.Enabled || ex.Built.Schema.Subscription == nil {
 		return nil, false
 	}
 	roots := exec.CollectRootFields(op.Definition.SelectionSet, op.Document.Fragments, op.Vars)
@@ -60,7 +60,7 @@ func (c *wsSession) executeLive(ctx, pctx context.Context, id string, ex *exec.E
 	}
 	if !c.reserveLive() {
 		s.live.Rejected()
-		c.sendErrors(ctx, id, gqlerror.List{gqlerror.Errorf("too many live queries on this connection (limit %d)", s.cfg.LiveMaxPerConnection)})
+		c.sendErrors(ctx, id, gqlerror.List{gqlerror.Errorf("too many live queries on this connection (limit %d)", s.cfg.Live.MaxPerConnection)})
 		return
 	}
 	defer c.releaseLive()
@@ -122,18 +122,18 @@ func (c *wsSession) executeLive(ctx, pctx context.Context, id string, ex *exec.E
 
 // withTimeout bounds ctx by server.request_timeout, when set.
 func (c *wsSession) withTimeout(ctx context.Context) (context.Context, context.CancelFunc) {
-	if t := c.s.cfg.RequestTimeout; t > 0 {
+	if t := c.s.cfg.Server.RequestTimeout; t > 0 {
 		return context.WithTimeout(ctx, t)
 	}
 	return context.WithCancel(ctx)
 }
 
 // reserveLive counts a live query against
-// server.live_max_per_connection; false when none is left.
+// live.max_per_connection; false when none is left.
 func (c *wsSession) reserveLive() bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.live >= c.s.cfg.LiveMaxPerConnection {
+	if c.live >= c.s.cfg.Live.MaxPerConnection {
 		return false
 	}
 	c.live++
@@ -147,9 +147,9 @@ func (c *wsSession) releaseLive() {
 }
 
 // reserveLiveOperation counts a live query against
-// server.live_max_operations; false when none is left.
+// live.max_operations; false when none is left.
 func (s *Server) reserveLiveOperation() bool {
-	if s.ws.live.Add(1) > int64(s.cfg.LiveMaxOperations) {
+	if s.ws.live.Add(1) > int64(s.cfg.Live.MaxOperations) {
 		s.ws.live.Add(-1)
 		return false
 	}

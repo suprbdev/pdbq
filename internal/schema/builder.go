@@ -66,24 +66,24 @@ type Options struct {
 	// String result instead of the composite's object type.
 	JWTType string
 	// DomainScalars declares a custom scalar per domain over a built-in
-	// scalar type (schema.domain_scalars), as PostGraphile does; otherwise
+	// scalar type (schema.domains), as PostGraphile does; otherwise
 	// domains take their base type's GraphQL type.
 	DomainScalars bool
 	// Subscriptions declares the Subscription root with PostGraphile's
-	// simple listen subscription (server.subscriptions). Without it the
+	// simple listen subscription (subscriptions.enabled). Without it the
 	// schema has no Subscription type.
 	Subscriptions bool
-	// Live adds live queries (server.live): every Query root field is
+	// Live adds live queries (live.enabled): every Query root field is
 	// repeated on the Subscription root, and the live directive is
 	// declared for query operations. It has no effect without
 	// Subscriptions.
 	Live bool
 	// IncrementalDelivery declares the defer and stream directives of the
-	// incremental delivery RFC (server.incremental_delivery). Without it
+	// incremental delivery RFC (incremental.enabled). Without it
 	// the SDL declares no directive.
 	IncrementalDelivery bool
 	// MaxHeadlineDocument bounds, in characters, the document a full-text
-	// headline reads (server.max_headline_document); the contrib plugin
+	// headline reads (limits.max_headline_document); the contrib plugin
 	// prices headlines by it. Values below 1 mean
 	// contrib.MaxHeadlineDocument.
 	MaxHeadlineDocument int
@@ -2003,7 +2003,7 @@ directive @stream(
 
 `
 
-// liveDirective is declared with server.live: a query operation carrying it
+// liveDirective is declared with live.enabled: a query operation carrying it
 // is served as a live query over WebSocket.
 const liveDirective = `"""Re-sends the query's result whenever the data it read changes (live query; WebSocket only, over HTTP the query runs once)."""
 directive @live on QUERY

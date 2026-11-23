@@ -9,8 +9,8 @@ RFC as graphql-js 17 and GraphQL Yoga implement it (`pending`, `incremental`,
 Incremental delivery is **off by default**:
 
 ```yaml
-server:
-  incremental_delivery: true
+incremental:
+  enabled: true
 ```
 
 While it is off, the schema declares neither directive. Its SDL is
@@ -97,7 +97,7 @@ whole response.
 
 ### WebSocket
 
-With `server.subscriptions` on, queries sent over `graphql-transport-ws` (or
+With `subscriptions.enabled` on, queries sent over `graphql-transport-ws` (or
 the legacy `graphql-ws`) are delivered incrementally as several `next`
 (`data`) messages, one per payload, followed by `complete`. WebSocket has no
 content negotiation, so these payloads always use the `incrementalSpec=v0.2`
@@ -152,7 +152,7 @@ delivery runs a few more:
   transaction is not retried: a payload already sent cannot be taken back.
   It holds one pooled connection until the last payload is written, so a
   slow client keeps that connection for up to `server.request_timeout`, and
-  a client that stops reading for up to `server.incremental_write_timeout`
+  a client that stops reading for up to `incremental.write_timeout`
   (see [Limits and errors](#limits-and-errors)).
 - **RLS identity.** The role and claims are applied once, at the start of
   that transaction, so every deferred fragment and stream batch runs under the
@@ -171,7 +171,7 @@ delivery runs a few more:
   of the list. When the connection selects other fields too (`pageInfo`,
   `totalCount`, aggregates), the streamed list becomes a subquery of its own,
   so those fields still describe the whole page. Each later batch reads the
-  next `server.incremental_stream_batch_size` items of the same page with
+  next `incremental.stream_batch_size` items of the same page with
   `OFFSET`/`LIMIT` in the same snapshot. The stream ends at the first short
   batch.
 
@@ -207,16 +207,16 @@ With the option on, these rules apply to every operation:
 
 ## Limits and errors
 
-- `server.max_depth`, `server.max_cost` and `server.max_selections` measure the
+- `limits.max_depth`, `limits.max_cost` and `limits.max_selections` measure the
   whole operation, deferred fragments included.
-- `server.incremental_max_deferred` (16) caps the `@defer` fragments and
+- `incremental.max_deferred` (16) caps the `@defer` fragments and
   `@stream` fields one operation may apply. Each of them runs its own
   statements.
 - `server.request_timeout` covers the whole response. When it expires, a last
   payload completes every pending fragment and stream with a
   `request timeout` error and `hasNext: false`. A client that disconnects
   cancels the transaction.
-- `server.incremental_write_timeout` (10s) bounds each payload of an HTTP
+- `incremental.write_timeout` (10s) bounds each payload of an HTTP
   response: a write the client has not taken in that time (it stopped
   reading, and the socket buffers are full) fails, the transaction rolls
   back and the connection is closed without a last payload. No write
@@ -224,10 +224,10 @@ With the option on, these rules apply to every operation:
   released by then whatever the client does. Over WebSocket each message
   has a fixed 10 second write timeout; a write that misses it closes the
   WebSocket connection, which ends its transactions.
-- `server.incremental_max_responses` caps the incremental responses holding
+- `incremental.max_responses` caps the incremental responses holding
   a transaction at once, over HTTP and WebSocket and over every contract
-  (0, the default, means half of `database.max_conns`, at least 1), so
-  incremental clients cannot take the whole pool. A query beyond it is
+  (default 5; it must be below `database.max_conns`), so incremental
+  clients cannot take the whole pool. A query beyond it is
   answered by one result, as if the directives were absent: an
   `application/json` response over HTTP, one `next` message over
   WebSocket.

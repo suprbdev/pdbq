@@ -49,7 +49,7 @@ func TestDocumentCacheReusesValidatedDocument(t *testing.T) {
 func TestDocumentCacheDisabled(t *testing.T) {
 	e := cacheExecutor(t, 0)
 	if e.docs != nil {
-		t.Fatal("document_cache_size 0 built a cache")
+		t.Fatal("document cache size 0 built a cache")
 	}
 	q := `{__typename}`
 	_, op1, err := e.prepare(context.Background(), Request{Query: q})

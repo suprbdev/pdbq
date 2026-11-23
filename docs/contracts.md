@@ -56,14 +56,15 @@ unfiltered schema is not reachable over HTTP unless a contract with
 
 | Path | Served when |
 |---|---|
-| `P/graphql` | always: POST, GET and, with `server.subscriptions`, the WebSocket upgrade |
-| `P/schema.graphql` | `server.expose_schema` |
+| `P/graphql` | always: POST, GET and, with `subscriptions.enabled`, the WebSocket upgrade |
+| `P/schema.graphql` | `server.introspection` |
 | `P/` | `server.graphiql` (the page posts to `P/graphql`) |
 
 `/healthz`, `/readyz` and the metrics endpoint stay at the root. Any other
-path is a 404. Every `server.*` setting (limits, CORS, timeouts, APQ,
-persisted queries, read-only) applies to every contract;
-`server.subscriptions_max_connections` and `subscriptions_max_operations`
+path is a 404. Every `server.*`, `limits.*` and `persisted_queries.*`
+setting (CORS, timeouts, request limits, APQ, persisted queries,
+read-only) applies to every contract; `subscriptions.max_connections` and
+`subscriptions.max_operations`
 count connections and operations over all contracts together.
 
 ## Tags

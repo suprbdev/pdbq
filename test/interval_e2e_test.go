@@ -56,7 +56,7 @@ func intervalServer(t *testing.T) string {
 	return testServer(t, func(c *config.Config) {
 		c.Schema.Schemas = []string{intervalSchema}
 		c.Filters.IndexedOnly = false
-		c.Plugins.Settings.Aggregates.Enabled = true
+		c.Aggregates.Enabled = true
 	}).URL
 }
 
@@ -131,7 +131,6 @@ func TestInterval(t *testing.T) {
 func sdlOfServer(t *testing.T) string {
 	hs := testServer(t, func(c *config.Config) {
 		c.Schema.Schemas = []string{intervalSchema}
-		c.Server.ExposeSchema = true
 	})
 	return sdlOf(t, hs.URL)
 }

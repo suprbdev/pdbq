@@ -53,13 +53,13 @@ var exposeHeaders = []string{"WWW-Authenticate"}
 
 // corsPolicy is the CORS policy of the GraphQL endpoint.
 func (s *Server) corsPolicy() httpx.CORSPolicy {
-	return httpx.CORSPolicy{Origins: s.cfg.CORSOrigins, AllowMethods: "POST, GET, OPTIONS", ExposeHeaders: exposeHeaders}
+	return httpx.CORSPolicy{Origins: s.cfg.Server.CORSOrigins, AllowMethods: "POST, GET, OPTIONS", ExposeHeaders: exposeHeaders}
 }
 
 // Server is the HTTP front end. Executor is stored atomically so watch mode
 // can swap in a new schema without a restart.
 type Server struct {
-	cfg      config.Server
+	cfg      config.Config
 	executor atomic.Pointer[exec.Executor]
 	auth     *Authenticator
 	log      *slog.Logger
@@ -71,10 +71,10 @@ type Server struct {
 	metricsPath string
 	ping        func(context.Context) error
 
-	// hub and topics serve Subscription.listen (server.subscriptions).
+	// hub and topics serve Subscription.listen (subscriptions.enabled).
 	hub    *subscribe.Hub
 	topics *subscribe.TopicPolicy
-	// live serves live queries (server.live).
+	// live serves live queries (live.enabled).
 	live *live.Tracker
 
 	wsInitTimeout time.Duration
@@ -85,7 +85,7 @@ type Server struct {
 	// a Group shares one between its servers.
 	ws *wsLimits
 	// incremental counts the incremental responses holding a transaction
-	// against server.incremental_max_responses; a Group shares one between
+	// against incremental.max_responses; a Group shares one between
 	// its servers.
 	incremental *slots
 
@@ -103,22 +103,22 @@ type wsLimits struct {
 	live  atomic.Int64
 }
 
-func New(cfg config.Server, authn *Authenticator, ex *exec.Executor, sdl string, log *slog.Logger) (*Server, error) {
+func New(cfg config.Config, authn *Authenticator, ex *exec.Executor, sdl string, log *slog.Logger) (*Server, error) {
 	if log == nil {
 		log = slog.Default()
 	}
 	s := &Server{cfg: cfg, auth: authn, log: log, wsInitTimeout: wsInitTimeout, wsSessions: map[*wsSession]struct{}{}, ws: &wsLimits{}, incremental: &slots{}}
-	if cfg.Subscriptions {
-		topics, err := subscribe.NewTopicPolicy(cfg.SubscriptionsTopicPrefix, cfg.SubscriptionsTopics)
+	if cfg.Subscriptions.Enabled {
+		topics, err := subscribe.NewTopicPolicy(cfg.Subscriptions.TopicPrefix, cfg.Subscriptions.Topics)
 		if err != nil {
-			return nil, fmt.Errorf("server: %w", err)
+			return nil, fmt.Errorf("server: subscriptions.%w", err)
 		}
 		s.topics = topics
 	}
 	s.executor.Store(ex)
 	s.sdl.Store(&sdl)
-	if cfg.APQ || cfg.PersistedQueriesPath != "" {
-		pq, err := newPQStore(cfg.PersistedQueriesPath)
+	if cfg.PersistedQueries.APQ || cfg.PersistedQueries.Path != "" {
+		pq, err := newPQStore(cfg.PersistedQueries.Path)
 		if err != nil {
 			return nil, err
 		}
@@ -137,7 +137,7 @@ func (s *Server) SetMetrics(m *metrics.Metrics, path string) {
 
 // SetSubscriptions makes the server answer Subscription.listen operations
 // with notifications from hub. It has an effect only with
-// server.subscriptions on; call it before Handler. The caller owns hub and
+// subscriptions.enabled on; call it before Handler. The caller owns hub and
 // closes it after the server.
 func (s *Server) SetSubscriptions(hub *subscribe.Hub) { s.hub = hub }
 
@@ -148,7 +148,7 @@ func (s *Server) SetReadiness(ping func(context.Context) error) { s.ping = ping 
 
 func (s *Server) handleReadyz(w http.ResponseWriter, r *http.Request) {
 	if s.ping != nil {
-		ctx, cancel := context.WithTimeout(r.Context(), s.cfg.ReadyzTimeout)
+		ctx, cancel := context.WithTimeout(r.Context(), s.cfg.Server.ReadyzTimeout)
 		defer cancel()
 		if err := s.ping(ctx); err != nil {
 			s.log.Warn("readyz: database ping failed", "err", err)
@@ -171,9 +171,9 @@ func (s *Server) RouteClass(r *http.Request) string {
 		return "health"
 	case s.metricsPath != "" && p == s.metricsPath:
 		return "metrics"
-	case p == "/schema.graphql" && s.cfg.ExposeSchema:
+	case p == "/schema.graphql" && s.cfg.Server.Introspection:
 		return "schema"
-	case p == "/" && s.cfg.GraphiQL:
+	case p == "/" && s.cfg.Server.GraphiQL:
 		return "graphiql"
 	}
 	return metrics.DefaultRoute
@@ -185,11 +185,11 @@ func (s *Server) Swap(ex *exec.Executor, sdl string) {
 	s.sdl.Store(&sdl)
 }
 
-// Handler returns the HTTP handler. With server.subscriptions on,
+// Handler returns the HTTP handler. With subscriptions.enabled on,
 // WebSocket upgrades of /graphql are served before the HTTP middlewares
 // (request timeout, CORS headers, gzip, metrics); their Origin must be the
 // server's own host or match server.cors_origins. With
-// server.incremental_delivery on, GraphQL requests that accept
+// incremental.enabled on, GraphQL requests that accept
 // multipart/mixed skip the request timeout handler and gzip, which would
 // buffer their payloads; serveIncremental bounds them by
 // server.request_timeout itself.
@@ -197,33 +197,33 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /graphql", s.handleGraphQL)
 	mux.HandleFunc("GET /graphql", s.handleGraphQL)
-	if len(s.cfg.CORSOrigins) > 0 {
+	if len(s.cfg.Server.CORSOrigins) > 0 {
 		mux.HandleFunc("OPTIONS /graphql", httpx.Preflight(s.corsPolicy()))
 	}
 	mux.HandleFunc("GET /healthz", httpx.Healthz)
 	mux.HandleFunc("GET /readyz", s.handleReadyz)
-	if s.cfg.ExposeSchema {
+	if s.cfg.Server.Introspection {
 		mux.HandleFunc("GET /schema.graphql", s.handleSDL)
 	}
-	if s.cfg.GraphiQL {
+	if s.cfg.Server.GraphiQL {
 		mux.HandleFunc("GET /", s.handleGraphiQL)
 	}
 	if s.metrics != nil && s.metricsPath != "" {
 		mux.Handle("GET "+s.metricsPath, s.metrics.Handler())
 	}
 	var h http.Handler = mux
-	if s.cfg.RequestTimeout > 0 {
-		h = http.TimeoutHandler(h, s.cfg.RequestTimeout, `{"errors":[{"message":"request timeout"}]}`)
+	if s.cfg.Server.RequestTimeout > 0 {
+		h = http.TimeoutHandler(h, s.cfg.Server.RequestTimeout, `{"errors":[{"message":"request timeout"}]}`)
 	}
-	if len(s.cfg.CORSOrigins) > 0 {
+	if len(s.cfg.Server.CORSOrigins) > 0 {
 		h = httpx.CORS(s.corsPolicy(), h)
 	}
-	if s.cfg.Compression {
+	if s.cfg.Server.Compression {
 		h = httpx.Gzip(h)
 	}
-	if s.cfg.IncrementalDelivery {
+	if s.cfg.Incremental.Enabled {
 		buffered, streaming := h, http.Handler(mux)
-		if len(s.cfg.CORSOrigins) > 0 {
+		if len(s.cfg.Server.CORSOrigins) > 0 {
 			streaming = httpx.CORS(s.corsPolicy(), streaming)
 		}
 		h = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -235,7 +235,7 @@ func (s *Server) Handler() http.Handler {
 		})
 	}
 	h = s.metrics.Middleware(h, s.RouteClass)
-	if !s.cfg.Subscriptions {
+	if !s.cfg.Subscriptions.Enabled {
 		return h
 	}
 	next := h
@@ -254,10 +254,10 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 	stop := context.AfterFunc(ctx, s.CloseWebSockets)
 	defer stop()
 	return httpx.ListenAndServe(ctx, s.Handler(), httpx.ServeOptions{
-		Addr:           s.cfg.Addr,
-		RequestTimeout: s.cfg.RequestTimeout,
+		Addr:           s.cfg.Server.Addr,
+		RequestTimeout: s.cfg.Server.RequestTimeout,
 		Log:            s.log,
-		LogAttrs:       []any{"graphiql", s.cfg.GraphiQL},
+		LogAttrs:       []any{"graphiql", s.cfg.Server.GraphiQL},
 	})
 }
 
@@ -306,7 +306,7 @@ func (s *Server) handleGraphQL(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusUnsupportedMediaType, "unsupported content type: POST requests must send Content-Type: application/json")
 			return
 		}
-		body := http.MaxBytesReader(w, r.Body, s.cfg.MaxBodyBytes)
+		body := http.MaxBytesReader(w, r.Body, s.cfg.Limits.MaxBodyBytes)
 		if err := json.NewDecoder(body).Decode(&req); err != nil {
 			writeError(w, http.StatusBadRequest, "malformed request body")
 			return

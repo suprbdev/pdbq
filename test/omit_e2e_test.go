@@ -69,7 +69,6 @@ func setupOmit(t *testing.T) {
 func omitServer(t *testing.T) string {
 	hs := testServer(t, func(c *config.Config) {
 		c.Schema.Schemas = []string{omitSchema}
-		c.Server.ExposeSchema = true
 		c.Filters.IndexedOnly = false
 	})
 	return hs.URL

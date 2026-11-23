@@ -7,7 +7,7 @@ import (
 )
 
 func TestResponseKeepsRootFieldOrder(t *testing.T) {
-	h := apqServer(t, config.Server{MaxBodyBytes: 1 << 20}).Handler()
+	h := apqServer(t, config.Config{Limits: config.Limits{MaxBodyBytes: 1 << 20}}).Handler()
 	rec := postJSON(t, h, `{"query":"{zed: __typename mid: __type(name: \"User\") {name} alpha: __typename}"}`)
 	if got := rec.Header().Get("Content-Type"); got != "application/json" {
 		t.Fatalf("content type %q", got)
@@ -21,7 +21,7 @@ func TestResponseKeepsRootFieldOrder(t *testing.T) {
 // TestResponseErrorFormat pins error bodies to the bytes the encoding/json
 // writer produced, for a cache miss and the cached repeat.
 func TestResponseErrorFormat(t *testing.T) {
-	h := apqServer(t, config.Server{MaxBodyBytes: 1 << 20}).Handler()
+	h := apqServer(t, config.Config{Limits: config.Limits{MaxBodyBytes: 1 << 20}}).Handler()
 	cases := map[string]string{
 		`{"query":"{nope}"}`:                           `{"errors":[{"message":"Cannot query field \"nope\" on type \"Query\". Did you mean \"node\"?","locations":[{"line":1,"column":2}]}]}`,
 		`{"query":"{userById(id: 1) {"}`:               `{"errors":[{"message":"Expected Name, found \u003cEOF\u003e","locations":[{"line":1,"column":19}]}]}`,

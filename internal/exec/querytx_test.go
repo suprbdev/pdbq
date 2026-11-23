@@ -301,7 +301,7 @@ func TestBatchTxMutation(t *testing.T) {
 	const mutation = `mutation { a: createUser(input: {email: "a@b.c"}) { user { id } } t: __typename }`
 	t.Run("commit after scan", func(t *testing.T) {
 		f := &fakeBatch{attempts: []attempt{{stmts: map[string]outcome{"a": {raw: `{"user":{"id":1}}`}}}}}
-		e := newBatchExecutor(t, Options{TxMutations: true}, f)
+		e := newBatchExecutor(t, Options{}, f)
 		res := e.Execute(context.Background(), Request{Query: mutation})
 		if got, want := resultJSON(t, res), `{"data":{"a":{"user":{"id":1}},"t":"Mutation"}}`; got != want {
 			t.Fatalf("response = %s, want %s", got, want)
@@ -317,7 +317,7 @@ func TestBatchTxMutation(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			var scanErr error
 			f := &fakeBatch{attempts: []attempt{{stmts: map[string]outcome{"a": o}}}}
-			e := newBatchExecutor(t, Options{TxMutations: true}, f)
+			e := newBatchExecutor(t, Options{}, f)
 			e.queryTx = func(ctx context.Context, db pgexec.ConnAcquirer, opts pgexec.TxOptions, id pgexec.Identity, stmts ...pgexec.Stmt) error {
 				scanErr = f.queryTx(ctx, db, opts, id, stmts...)
 				return scanErr
@@ -338,7 +338,7 @@ func TestBatchTxMutation(t *testing.T) {
 
 func TestBatchTxMutationIdentityFailure(t *testing.T) {
 	f := &fakeBatch{attempts: []attempt{{before: errors.New("invalid role \"x y\"")}}}
-	e := newBatchExecutor(t, Options{TxMutations: true, DevErrors: true}, f)
+	e := newBatchExecutor(t, Options{DevErrors: true}, f)
 	res := e.Execute(context.Background(), Request{Query: `mutation { a: createUser(input: {email: "a@b.c"}) { user { id } } }`})
 	if got, want := resultJSON(t, res), `{"errors":[{"message":"invalid role \"x y\""}]}`; got != want {
 		t.Fatalf("response = %s, want %s", got, want)

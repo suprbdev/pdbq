@@ -82,7 +82,7 @@ type wsFixture struct {
 	srv  *Server
 }
 
-func wsServer(t *testing.T, mutate func(*config.Server), execOpts ...func(*exec.Options)) *wsFixture {
+func wsServer(t *testing.T, mutate func(*config.Config), execOpts ...func(*exec.Options)) *wsFixture {
 	t.Helper()
 	b := schema.New(testutil.FixtureCatalog(), inflect.Default, schema.Options{FilterIndexedOnly: true, Subscriptions: true})
 	built, err := b.Build()
@@ -94,8 +94,8 @@ func wsServer(t *testing.T, mutate func(*config.Server), execOpts ...func(*exec.
 		o(&opts)
 	}
 	ex := exec.New(nil, built, compile.New(built).Compile, nil, opts)
-	cfg := config.DefaultConfig().Server
-	cfg.Subscriptions = true
+	cfg := config.DefaultConfig()
+	cfg.Subscriptions.Enabled = true
 	if mutate != nil {
 		mutate(&cfg)
 	}
@@ -246,7 +246,7 @@ func TestWSQueryOverSocket(t *testing.T) {
 }
 
 func TestWSProtocolErrors(t *testing.T) {
-	f := wsServer(t, func(c *config.Server) { c.SubscriptionsKeepalive = 0 })
+	f := wsServer(t, func(c *config.Config) { c.Subscriptions.Keepalive = 0 })
 	cases := []struct {
 		name string
 		run  func(c *wsClient)
@@ -314,7 +314,7 @@ func TestWSRejectsUnknownSubprotocol(t *testing.T) {
 }
 
 func TestWSOffByDefault(t *testing.T) {
-	s := testServer(config.Server{MaxBodyBytes: 1 << 20})
+	s := testServer(config.Config{Limits: config.Limits{MaxBodyBytes: 1 << 20}})
 	hs := httptest.NewServer(s.Handler())
 	defer hs.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -345,7 +345,7 @@ func TestInitAuthorization(t *testing.T) {
 }
 
 func TestWSListen(t *testing.T) {
-	f := wsServer(t, func(c *config.Server) { c.SubscriptionsTopics = []string{"chat:*"} })
+	f := wsServer(t, func(c *config.Config) { c.Subscriptions.Topics = []string{"chat:*"} })
 	c := dialWS(t, f.url, subprotocolTransportWS)
 	c.init("")
 
@@ -431,7 +431,7 @@ func TestWSSubscriptionOverHTTPRejected(t *testing.T) {
 }
 
 func TestWSMaxPerConnection(t *testing.T) {
-	f := wsServer(t, func(c *config.Server) { c.SubscriptionsMaxPerConnection = 1 })
+	f := wsServer(t, func(c *config.Config) { c.Subscriptions.MaxPerConnection = 1 })
 	c := dialWS(t, f.url, subprotocolTransportWS)
 	c.init("")
 	c.send(`{"id":"a","type":"subscribe","payload":{"query":"subscription { listen(topic: \"x\", initialEvent: true) { relatedNodeId } }"}}`)
@@ -456,7 +456,7 @@ func TestWSTokenExpiry(t *testing.T) {
 }
 
 func TestWSLegacyProtocol(t *testing.T) {
-	f := wsServer(t, func(c *config.Server) { c.SubscriptionsKeepalive = time.Hour })
+	f := wsServer(t, func(c *config.Config) { c.Subscriptions.Keepalive = time.Hour })
 	c := dialWS(t, f.url, subprotocolLegacyWS)
 	c.send(`{"id":"1","type":"start","payload":{"query":"{ __typename }"}}`)
 	if e := c.expect("error"); e.ID != "1" {

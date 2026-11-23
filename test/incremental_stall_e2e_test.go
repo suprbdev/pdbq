@@ -47,9 +47,9 @@ func idleInTx(t *testing.T) int {
 
 // TestIncrementalStalledClientReleasesConnection pins that clients which
 // send an incremental request and stop reading cannot keep pooled
-// connections in open transactions: at most server.incremental_max_responses
-// of them (half of database.max_conns by default) hold one at a time, and
-// each is rolled back within server.incremental_write_timeout of its write
+// connections in open transactions: at most incremental.max_responses of
+// them hold one at a time, and each is rolled back within
+// incremental.write_timeout of its write
 // stalling, or at server.request_timeout, while the clients keep their
 // sockets open. The server keeps answering other requests.
 func TestIncrementalStalledClientReleasesConnection(t *testing.T) {
@@ -79,14 +79,12 @@ func TestIncrementalStalledClientReleasesConnection(t *testing.T) {
 			cfg.Database.MaxConns = 4
 			noIdentity(&cfg)
 			cfg.Plugins.Disabled = []string{"simple_names"}
-			cfg.Server.IncrementalDelivery = true
-			cfg.Server.IncrementalWriteTimeout = tc.writeTimeout
+			cfg.Incremental.Enabled = true
+			cfg.Incremental.WriteTimeout = tc.writeTimeout
+			cfg.Incremental.MaxResponses = 2
 			cfg.Server.RequestTimeout = tc.requestTimeout
 			if err := cfg.Validate(); err != nil {
 				t.Fatal(err)
-			}
-			if got := cfg.IncrementalResponses(); got != 2 {
-				t.Fatalf("IncrementalResponses() = %d, want half of max_conns", got)
 			}
 			app := pdbq.New(cfg)
 			t.Cleanup(app.Close)
@@ -107,7 +105,7 @@ func TestIncrementalStalledClientReleasesConnection(t *testing.T) {
 			for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(50 * time.Millisecond) {
 				n := idleInTx(t)
 				if n > 2 {
-					t.Fatalf("%d transactions held by stalled clients, want at most incremental_max_responses (2)", n)
+					t.Fatalf("%d transactions held by stalled clients, want at most incremental.max_responses (2)", n)
 				}
 				if n > 0 {
 					stalled = time.Now()
@@ -122,12 +120,12 @@ func TestIncrementalStalledClientReleasesConnection(t *testing.T) {
 				body, _ := io.ReadAll(resp.Body)
 				_ = resp.Body.Close()
 				if ct := resp.Header.Get("Content-Type"); ct != "application/json" || strings.ReplaceAll(string(bytes.TrimSpace(body)), " ", "") != `{"data":{"allUsers":{"nodes":[{"id":1},{"id":2}]}}}` {
-					t.Fatalf("request beyond incremental_max_responses: %s %s, want one JSON result", ct, body)
+					t.Fatalf("request beyond incremental.max_responses: %s %s, want one JSON result", ct, body)
 				}
 			}
 			for n := idleInTx(t); n > 0; n = idleInTx(t) {
 				if n > 2 {
-					t.Fatalf("%d transactions held by stalled clients, want at most incremental_max_responses (2)", n)
+					t.Fatalf("%d transactions held by stalled clients, want at most incremental.max_responses (2)", n)
 				}
 				if time.Since(stalled) > tc.release {
 					t.Fatalf("stalled clients still hold transactions %v after their writes stalled", time.Since(stalled))

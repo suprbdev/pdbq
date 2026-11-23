@@ -21,7 +21,7 @@ import (
 
 // apqServer builds a server with a real executor (nil pool: introspection
 // queries like {__typename} resolve in memory).
-func apqServer(t *testing.T, cfg config.Server) *Server {
+func apqServer(t *testing.T, cfg config.Config) *Server {
 	t.Helper()
 	b := schema.New(testutil.FixtureCatalog(), inflect.Default, schema.Options{FilterIndexedOnly: true})
 	built, err := b.Build()
@@ -52,7 +52,7 @@ func apqExt(query string) string {
 }
 
 func TestAPQRoundTrip(t *testing.T) {
-	h := apqServer(t, config.Server{APQ: true, MaxBodyBytes: 1 << 20}).Handler()
+	h := apqServer(t, config.Config{PersistedQueries: config.PersistedQueries{APQ: true}, Limits: config.Limits{MaxBodyBytes: 1 << 20}}).Handler()
 
 	// 1. Hash-only miss -> PersistedQueryNotFound.
 	rec := postJSON(t, h, fmt.Sprintf(`{"extensions":%s}`, apqExt(apqQuery)))
@@ -74,7 +74,7 @@ func TestAPQRoundTrip(t *testing.T) {
 }
 
 func TestAPQHashMismatchRejected(t *testing.T) {
-	h := apqServer(t, config.Server{APQ: true, MaxBodyBytes: 1 << 20}).Handler()
+	h := apqServer(t, config.Config{PersistedQueries: config.PersistedQueries{APQ: true}, Limits: config.Limits{MaxBodyBytes: 1 << 20}}).Handler()
 	rec := postJSON(t, h, fmt.Sprintf(`{"query":%q,"extensions":{"persistedQuery":{"version":1,"sha256Hash":%q}}}`,
 		apqQuery, hashQuery("something else")))
 	if rec.Code != http.StatusBadRequest {
@@ -83,7 +83,7 @@ func TestAPQHashMismatchRejected(t *testing.T) {
 }
 
 func TestAPQViaGET(t *testing.T) {
-	h := apqServer(t, config.Server{APQ: true, MaxBodyBytes: 1 << 20}).Handler()
+	h := apqServer(t, config.Config{PersistedQueries: config.PersistedQueries{APQ: true}, Limits: config.Limits{MaxBodyBytes: 1 << 20}}).Handler()
 	// Register via POST, fetch via GET with the extensions query param.
 	postJSON(t, h, fmt.Sprintf(`{"query":%q,"extensions":%s}`, apqQuery, apqExt(apqQuery)))
 	rec := get(t, h, "/graphql?extensions="+`{"persistedQuery":{"version":1,"sha256Hash":"`+hashQuery(apqQuery)+`"}}`)
@@ -98,7 +98,7 @@ func TestPersistedQueriesFile(t *testing.T) {
 	if err := os.WriteFile(path, doc, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	cfg := config.Server{PersistedQueriesPath: path, PersistedOnly: true, MaxBodyBytes: 1 << 20}
+	cfg := config.Config{PersistedQueries: config.PersistedQueries{Path: path, Only: true}, Limits: config.Limits{MaxBodyBytes: 1 << 20}}
 	h := apqServer(t, cfg).Handler()
 
 	// Listed hash executes.

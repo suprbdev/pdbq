@@ -110,7 +110,7 @@ type persistedError struct {
 }
 
 // applyPersisted resolves req's persistedQuery extension into req.Query,
-// registers APQ documents, and enforces server.persisted_only. It is shared
+// registers APQ documents, and enforces persisted_queries.only. It is shared
 // by HTTP and WebSocket requests and does nothing when persisted queries are
 // off.
 func (s *Server) applyPersisted(req *gqlHTTPRequest) *persistedError {
@@ -128,7 +128,7 @@ func (s *Server) applyPersisted(req *gqlHTTPRequest) *persistedError {
 	}
 	pq := ext.PersistedQuery
 	if pq == nil {
-		if s.cfg.PersistedOnly {
+		if s.cfg.PersistedQueries.Only {
 			return fail("persisted queries only: send a persistedQuery extension")
 		}
 		return nil
@@ -153,7 +153,7 @@ func (s *Server) applyPersisted(req *gqlHTTPRequest) *persistedError {
 	if hashQuery(req.Query) != pq.Sha256Hash {
 		return fail("provided sha256Hash does not match query")
 	}
-	if !s.cfg.APQ {
+	if !s.cfg.PersistedQueries.APQ {
 		// Static allowlist deployments do not accept client registrations.
 		return fail("persisted query registration is disabled")
 	}

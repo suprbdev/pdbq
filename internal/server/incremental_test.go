@@ -46,15 +46,15 @@ func TestIncrementalAccept(t *testing.T) {
 	}
 }
 
-func incrementalServer(t *testing.T, cfg config.Server) http.Handler {
+func incrementalServer(t *testing.T, cfg config.Config) http.Handler {
 	t.Helper()
 	built, err := schema.New(testutil.FixtureCatalog(), inflect.Default, schema.Options{FilterIndexedOnly: true, IncrementalDelivery: true}).Build()
 	if err != nil {
 		t.Fatal(err)
 	}
 	ex := exec.New(nil, built, nil, nil, exec.Options{Incremental: exec.IncrementalOptions{Enabled: true}})
-	cfg.MaxBodyBytes = 1 << 20
-	cfg.IncrementalDelivery = true
+	cfg.Limits.MaxBodyBytes = 1 << 20
+	cfg.Incremental.Enabled = true
 	s, err := New(cfg, testAuth(), ex, built.SDL, slog.Default())
 	if err != nil {
 		t.Fatal(err)
@@ -76,7 +76,7 @@ func postAccept(h http.Handler, accept, body string) *httptest.ResponseRecorder 
 // deliver incrementally is answered as plain, uncompressed JSON when the
 // client accepts multipart/mixed.
 func TestIncrementalSingleResult(t *testing.T) {
-	h := incrementalServer(t, config.Server{RequestTimeout: time.Second, Compression: true})
+	h := incrementalServer(t, config.Config{Server: config.Server{RequestTimeout: time.Second, Compression: true}})
 	rec := postAccept(h, "multipart/mixed;incrementalSpec=v0.2, application/json", `{"query":"{ __typename }"}`)
 	if rec.Code != http.StatusOK || rec.Header().Get("Content-Type") != "application/json" || rec.Header().Get("Content-Encoding") != "" {
 		t.Fatalf("got %d %v", rec.Code, rec.Header())
@@ -91,7 +91,7 @@ func TestIncrementalSingleResult(t *testing.T) {
 }
 
 func TestIncrementalNotAcceptable(t *testing.T) {
-	h := incrementalServer(t, config.Server{})
+	h := incrementalServer(t, config.Config{})
 	rec := postAccept(h, "multipart/mixed;deferSpec=20200101", `{"query":"{ __typename }"}`)
 	if rec.Code != http.StatusNotAcceptable {
 		t.Fatalf("got %d, want 406: %s", rec.Code, rec.Body.String())
@@ -105,7 +105,7 @@ func TestIncrementalOffKeepsJSON(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s, err := New(config.Server{MaxBodyBytes: 1 << 20, Compression: true}, testAuth(), exec.New(nil, built, nil, nil, exec.Options{}), built.SDL, slog.Default())
+	s, err := New(config.Config{Limits: config.Limits{MaxBodyBytes: 1 << 20}, Server: config.Server{Compression: true}}, testAuth(), exec.New(nil, built, nil, nil, exec.Options{}), built.SDL, slog.Default())
 	if err != nil {
 		t.Fatal(err)
 	}

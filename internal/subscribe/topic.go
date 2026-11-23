@@ -27,11 +27,10 @@ type TopicPolicy struct {
 // NewTopicPolicy builds the policy for a channel prefix and a topic
 // allowlist. An allowlist entry is a topic, or a topic prefix followed by
 // "*"; a lone "*" or an empty allowlist allows every valid topic. The error
-// names the offending setting (subscriptions_topic_prefix or
-// subscriptions_topics).
+// names the offending setting (topic_prefix or topics).
 func NewTopicPolicy(prefix string, allow []string) (*TopicPolicy, error) {
 	if strings.ContainsRune(prefix, 0) || len(prefix) >= MaxChannelBytes {
-		return nil, fmt.Errorf("subscriptions_topic_prefix: %q must be shorter than %d bytes and contain no NUL", prefix, MaxChannelBytes)
+		return nil, fmt.Errorf("topic_prefix: %q must be shorter than %d bytes and contain no NUL", prefix, MaxChannelBytes)
 	}
 	p := &TopicPolicy{prefix: prefix, exact: map[string]bool{}, any: len(allow) == 0}
 	for _, t := range allow {
@@ -39,7 +38,7 @@ func NewTopicPolicy(prefix string, allow []string) (*TopicPolicy, error) {
 		case t == "*":
 			p.any = true
 		case !topicPattern.MatchString(base):
-			return nil, fmt.Errorf("subscriptions_topics: %q is not a valid topic (letters, digits and _ . : / -, optionally ending in *)", t)
+			return nil, fmt.Errorf("topics: %q is not a valid topic (letters, digits and _ . : / -, optionally ending in *)", t)
 		case wild:
 			p.prefixes = append(p.prefixes, base)
 		default:

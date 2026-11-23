@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -13,7 +14,7 @@ const headlineBoundSchema = "headline_bound_e2e"
 // TestHeadlineDocumentBound reproduces many headline aliases over large
 // documents on a page of 50 passing the cost check at a flat price per
 // headline, and checks headlines are priced by the document bound and read
-// only server.max_headline_document characters.
+// only limits.max_headline_document characters.
 func TestHeadlineDocumentBound(t *testing.T) {
 	conn := testConn(t)
 	t.Cleanup(func() {
@@ -32,22 +33,27 @@ func TestHeadlineDocumentBound(t *testing.T) {
 		return testServer(t, func(c *config.Config) {
 			c.Schema.Schemas = []string{headlineBoundSchema}
 			if maxDoc > 0 {
-				c.Server.MaxHeadlineDocument = maxDoc
+				c.Limits.MaxHeadlineDocument = maxDoc
 			}
 		}).URL
 	}
 	url := serve(0)
 
-	t.Run("many aliases exceed the cost limit", func(t *testing.T) {
+	aliases := func(page string, n int) string {
 		var q strings.Builder
-		q.WriteString(`{ allBigs(first: 50, filter: {search: {matches: "fox"}}) { nodes { id`)
-		for i := range 9 {
-			q.WriteString(` h` + string(rune('1'+i)) + `: searchHeadline(document: BODY)`)
+		q.WriteString(`{ allBigs(` + page + `filter: {search: {matches: "fox"}}) { nodes { id`)
+		for i := range n {
+			fmt.Fprintf(&q, ` h%d: searchHeadline(document: BODY)`, i)
 		}
 		q.WriteString(` } } }`)
-		res := post(t, url, q.String(), nil)
-		if len(res.Errors) == 0 || !strings.Contains(res.Errors[0].Message, "cost") {
-			t.Fatalf("want a cost error, got %+v %s", res.Errors, res.Data)
+		return q.String()
+	}
+	t.Run("many aliases exceed the cost limit", func(t *testing.T) {
+		for _, page := range []string{"first: 100, ", ""} {
+			res := post(t, url, aliases(page, 13), nil)
+			if len(res.Errors) == 0 || !strings.Contains(res.Errors[0].Message, "cost") {
+				t.Fatalf("%q: want a cost error, got %+v %s", page, res.Errors, res.Data)
+			}
 		}
 	})
 

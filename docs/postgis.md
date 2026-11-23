@@ -542,7 +542,7 @@ filter.
 **Cost.** The metadata accessors cost a column each. The cost estimator
 charges `<field>Value` 10 and `<field>SummaryStats` 100 per row (pdbcore's
 `RasterValueCost` and `RasterSummaryStatsCost`), multiplied by the page like
-any field, so a large page of statistics hits `server.max_cost`. Filter
+any field, so a large page of statistics hits `limits.max_cost`. Filter
 predicates are not priced (only relation-aggregate filters, which run a
 subquery per row, are); the raster `intersects` filter, which tests the
 convex hull like a geometry predicate, is left unpriced like the spatial

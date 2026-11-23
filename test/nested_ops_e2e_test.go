@@ -224,27 +224,6 @@ func TestNestedMutationOperations(t *testing.T) {
 			t.Errorf("rolled-back members persisted: %v", n)
 		}
 	})
-
-	t.Run("a failed guard aborts the statement without a transaction", func(t *testing.T) {
-		plain := testServer(t, func(cfg *config.Config) {
-			cfg.TX.Mutations = false
-			cfg.Plugins.Settings.NestedMutations.ForceTransactions = false
-		})
-		res := post(t, plain.URL, fmt.Sprintf(`mutation { updateNoTeamById(id: %d, patch: {name: "no-tx", noMembersByTeamId: {create: [{name: "no-tx-kid"}], deleteById: [{id: 999999}]}}) { noTeam { id } } }`, red), nil)
-		expectError(t, res, "noMembersByTeamId.deleteById[0] matched 0 rows")
-		if n := scalar(t, `SELECT count(*) FROM no_members WHERE name = 'no-tx-kid'`); n != int64(0) {
-			t.Errorf("statement was not atomic: %v", n)
-		}
-		if name := scalar(t, `SELECT name FROM no_teams WHERE id = $1`, red); name == "no-tx" {
-			t.Error("statement was not atomic: team renamed")
-		}
-
-		res = post(t, plain.URL, `mutation { updateNoMemberById(id: 999999, patch: {team: {create: {slug: "ghost", name: "Ghost"}}}) { noMember { id } } }`, nil)
-		expectError(t, res, "updateNoMemberById matched 0 rows")
-		if n := scalar(t, `SELECT count(*) FROM no_teams WHERE slug = 'ghost'`); n != int64(0) {
-			t.Errorf("forward create persisted without its main row: %v", n)
-		}
-	})
 }
 
 // TestNestedMutationOperationsRLS checks that nested operations run under

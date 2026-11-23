@@ -63,5 +63,5 @@ int[]` stays `[Int!]`), enums, composites, ranges, PostGIS types (`GeoJSON` or
 typed geometry), and extension types such as `citext` (`String`), `hstore`,
 `ltree` and `tsvector`.
 
-Set `schema.domain_scalars: false` to type every domain as its base type
+Set `schema.domains: false` to type every domain as its base type
 (`email` columns become `String`, `small_positive` ones `Int`).

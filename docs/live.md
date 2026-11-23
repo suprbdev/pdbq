@@ -36,12 +36,13 @@ transport, authentication and limits they share (see
 [Subscriptions](subscriptions.md)):
 
 ```yaml
-server:
-  subscriptions: true
-  live: true
+subscriptions:
+  enabled: true
+live:
+  enabled: true
 ```
 
-With `server.live` off the generated schema is byte-for-byte what it is
+With `live.enabled` off the generated schema is byte-for-byte what it is
 without it: no repeated fields and no `@live` directive. With it on, the
 `Subscription` type gets one field per `Query` field (except the
 placeholder `_empty`), sharing the `Query` field's arguments, type and
@@ -50,21 +51,21 @@ The directive is declared as `directive @live on QUERY`.
 
 | Key | Default | Meaning |
 |---|---|---|
-| `server.live` | `false` | serve live queries |
-| `server.live_channel` | `pdbq_live` | LISTEN channel of change notifications; also names the triggers and their function |
-| `server.live_install_triggers` | `true` | install the change triggers at startup and after watch-mode rebuilds |
-| `server.live_throttle` | `500ms` | shortest time between two runs of one live query |
-| `server.live_concurrency` | `4` | live query runs in flight at once across the server |
-| `server.live_max_per_connection` | `10` | live queries per WebSocket connection |
-| `server.live_max_operations` | `1000` | live queries over all WebSocket connections |
+| `live.enabled` | `false` | serve live queries |
+| `live.channel` | `pdbq_live` | LISTEN channel of change notifications; also names the triggers and their function |
+| `live.install_triggers` | `true` | install the change triggers at startup and after watch-mode rebuilds |
+| `live.throttle` | `500ms` | shortest time between two runs of one live query |
+| `live.concurrency` | `4` | live query runs in flight at once across the server |
+| `live.max_per_connection` | `10` | live queries per WebSocket connection |
+| `live.max_operations` | `1000` | live queries over all WebSocket connections |
 
 ## How it works
 
 1. **Subscribe.** The operation is parsed, validated and checked against
-   every request limit once, as any subscription: `server.max_depth`,
-   `server.max_cost` (the repeated fields share the `Query` fields' cost
+   every request limit once, as any subscription: `limits.max_depth`,
+   `limits.max_cost` (the repeated fields share the `Query` fields' cost
    metadata, `@costMultiplier` included), document limits,
-   `server.persisted_only`, `server.disable_introspection` and the
+   `persisted_queries.only`, `server.introspection: false` and the
    `BeforeOperation` hooks. Then the live caps are checked.
 2. **Find the tables.** Each root field is compiled to its single SQL
    statement and `EXPLAIN (VERBOSE, FORMAT JSON)`ed, not run, under the
@@ -75,7 +76,7 @@ The directive is declared as `directive @live on QUERY`.
    read, so a policy over a membership table makes the live query follow that
    table too.
 3. **Watch.** The operation registers its tables with the tracker, which
-   LISTENs on `server.live_channel` over the subscriptions' shared LISTEN
+   LISTENs on `live.channel` over the subscriptions' shared LISTEN
    connection (opened outside the pool), and waits until that LISTEN is in
    place.
 4. **First result.** The operation runs as a query under the subscriber's
@@ -83,9 +84,9 @@ The directive is declared as `directive @live on QUERY`.
    bounded by `server.request_timeout`) and the result is sent.
 5. **Changes.** A notification names a changed table. Every live operation
    reading it is marked changed. A marked operation runs again, no earlier
-   than `server.live_throttle` after its previous run started; changes
+   than `live.throttle` after its previous run started; changes
    arriving meanwhile coalesce into that one run (leading and trailing edge,
-   as PostGraphile's `LIVE_THROTTLE`). At most `server.live_concurrency` runs
+   as PostGraphile's `LIVE_THROTTLE`). At most `live.concurrency` runs
    are in flight across the server; the others wait for a slot, so a write to
    a table many live queries read cannot take every pool connection.
 6. **Dedupe.** The SHA-256 of the encoded result is compared with the last
@@ -100,7 +101,7 @@ between subscribers, and computed columns are recomputed. When the token's
 
 ## Change detection
 
-pdbq installs, when `server.live_install_triggers` is on (the default):
+pdbq installs, when `live.install_triggers` is on (the default):
 
 - a trigger function `<channel>_notify()` (in the connecting role's current
   schema) that runs `pg_notify('<channel>', TG_ARGV[0])`;
@@ -127,7 +128,7 @@ are covered. Creating a trigger needs ownership of the table. A table the
 connecting role cannot add a trigger to is logged, and so is a live query
 reading a table without the trigger: changes to it do not refresh live
 queries. To install the triggers yourself (for example in a migration run by
-the table owner), set `server.live_install_triggers: false` and run:
+the table owner), set `live.install_triggers: false` and run:
 
 ```sql
 CREATE FUNCTION pdbq_live_notify() RETURNS trigger
@@ -205,24 +206,24 @@ lost while the LISTEN connection is down (see below).
 
 A live query costs one statement per root field each time it runs, under
 the subscriber's identity: `N` live queries on a table mean up to `N` runs
-per change, spread over `server.live_throttle` and queued behind
-`server.live_concurrency`. Keep live queries narrow (filters, small pages),
+per change, spread over `live.throttle` and queued behind
+`live.concurrency`. Keep live queries narrow (filters, small pages),
 and prefer [listen subscriptions](subscriptions.md) when thousands of
 clients watch the same data: PostGraphile likewise does not recommend live
 queries for very large deployments.
 
 Live queries count against the subscription caps
-(`server.subscriptions_max_per_connection`,
-`server.subscriptions_max_operations`, the subscribe rate) and, in
-addition, against `server.live_max_per_connection` and
-`server.live_max_operations`. A live query over a cap gets an `error`
+(`subscriptions.max_per_connection`,
+`subscriptions.max_operations`, the subscribe rate) and, in
+addition, against `live.max_per_connection` and
+`live.max_operations`. A live query over a cap gets an `error`
 message (a `data` message with `errors` then `complete` on the legacy
-protocol). The live query's statements are bounded by `server.max_cost`,
-`server.max_depth`, `server.max_page_size` and `server.request_timeout` per
+protocol). The live query's statements are bounded by `limits.max_cost`,
+`limits.max_depth`, `limits.max_page_size` and `server.request_timeout` per
 run. Any client that may call `pg_notify` can make live queries re-run; the
 throttle and the concurrency bound cap what that costs.
 
-A listen subscription cannot listen on `server.live_channel` (it gets an
+A listen subscription cannot listen on `live.channel` (it gets an
 `error` saying the topic is not allowed).
 
 ## Metrics

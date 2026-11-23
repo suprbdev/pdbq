@@ -136,12 +136,14 @@ type Options struct {
 	// MaxPageSize is the largest accepted first/last (larger is rejected)
 	// and the default page size when neither is given.
 	MaxPageSize int
-	// TxMutations wraps every mutation in a transaction.
-	TxMutations bool
 	// PartialMutations lets a request run each mutation root field in its own
-	// savepoint (transactions.partial_mutations); without it such a request
+	// savepoint (transactions.partial.enabled); without it such a request
 	// is rejected.
 	PartialMutations bool
+	// PartialMaxItems is the most mutation root fields a partial request may
+	// have (transactions.partial.max_items); larger operations are
+	// rejected. 0 means no limit.
+	PartialMaxItems int
 	// TxPerRequest wraps the entire request (queries included) in one
 	// transaction, so every root field reads a single snapshot.
 	TxPerRequest bool
@@ -164,7 +166,7 @@ type Options struct {
 	// through (errors.detail: strict). Ignored when DevErrors is set.
 	StrictErrors bool
 	// DisableIntrospection rejects __schema / __type root fields
-	// (server.disable_introspection) and validates without the "Did you
+	// (server.introspection off) and validates without the "Did you
 	// mean" suggestions, which would name schema elements close to an
 	// unknown field, argument, type or enum value. __typename is
 	// unaffected.
@@ -367,7 +369,12 @@ func (e *Executor) prepare(ctx context.Context, req Request) (context.Context, *
 		return ctx, nil, gqlerror.Errorf("server is in read-only mode: mutations are disabled")
 	}
 	if req.PartialMutations && opDef.Operation == ast.Mutation && !e.Opts.PartialMutations {
-		return ctx, nil, gqlerror.Errorf("partial mutations are disabled: set transactions.partial_mutations")
+		return ctx, nil, gqlerror.Errorf("partial mutations are disabled: set transactions.partial.enabled")
+	}
+	if req.PartialMutations && opDef.Operation == ast.Mutation && e.Opts.PartialMaxItems > 0 {
+		if n := len(collectRootFields(opDef.SelectionSet, doc.Fragments, vars)); n > e.Opts.PartialMaxItems {
+			return ctx, nil, gqlerror.Errorf("partial mutations: %d mutation fields exceed transactions.partial.max_items (%d)", n, e.Opts.PartialMaxItems)
+		}
 	}
 	if e.Opts.DisableIntrospection {
 		// __typename stays allowed: it reveals only the root type name, and
@@ -513,8 +520,7 @@ func (e *Executor) CompileRequest(ctx context.Context, req Request) ([]CompiledF
 func (e *Executor) executeOperation(ctx context.Context, op *Operation, res *Result) {
 	rootFields := collectRootFields(op.Definition.SelectionSet, op.Document.Fragments, op.Vars)
 	needTx := op.ForceTx || op.Partial ||
-		e.Opts.TxPerRequest ||
-		(op.Type == ast.Mutation && e.Opts.TxMutations) ||
+		e.Opts.TxPerRequest || op.Type == ast.Mutation ||
 		op.Role != "" || len(op.Claims) > 0 || e.Opts.ClaimsJSONSetting != ""
 	if needTx {
 		e.executeTx(ctx, op, rootFields, res)
@@ -525,9 +531,6 @@ func (e *Executor) executeOperation(ctx context.Context, op *Operation, res *Res
 		if err != nil {
 			res.Errors = append(res.Errors, e.gqlError(err, f))
 			res.Set(f.Alias, json.RawMessage("null"))
-			if op.Type == ast.Mutation {
-				break // abort remaining mutations
-			}
 			continue
 		}
 		res.Set(f.Alias, raw)
@@ -899,10 +902,13 @@ func (e *Executor) fieldResult(op *Operation, f *ast.Field, stmt *compile.Statem
 }
 
 // checkLimits enforces max depth and a simple cost heuristic (each field
-// costs 1; a paginated field multiplies its subtree by the requested
-// first/last page size — assuming 10 when neither is given — and its direct
-// list children (nodes/edges) are not multiplied again; list fields outside
-// a paginated container multiply by 10; a field with a ScanCost adds it, and
+// costs 1; a paginated field multiplies its rows by the requested
+// first/last page size — the page-size cap when neither is given, since
+// that is what the compiled LIMIT fetches: a list its whole subtree, a
+// connection its nodes and edges, while totalCount, pageInfo and the
+// aggregates count once; the direct list children (nodes/edges) are not
+// multiplied again; list fields without page arguments outside a paginated
+// container multiply by 10; a field with a ScanCost adds it, and
 // multiplies its subtree by the page-size cap when list-typed, e.g.
 // groupedAggregates; aggregate orderBy values and relation-aggregate filters
 // add their aggregates' Cost, tripled under a cursor).
@@ -912,7 +918,7 @@ func (e *Executor) checkLimits(doc *ast.QueryDocument, op *ast.OperationDefiniti
 		maxDepth = 15
 	}
 	if maxCost <= 0 {
-		maxCost = 10000
+		maxCost = 100000
 	}
 	pageCap := e.Opts.MaxPageSize
 	if pageCap <= 0 {
@@ -966,6 +972,9 @@ type measurer struct {
 	maxDepth int
 	maxCost  int
 	memo     map[fragmentKey]measured
+	// connMemo holds the per-row and once parts of fragments spread
+	// directly into a connection's selection set.
+	connMemo map[string][2]measured
 	// over is set once the limits are exceeded; the walk then unwinds.
 	over bool
 }
@@ -980,7 +989,7 @@ type fragmentKey struct {
 type measured struct{ depth, cost int }
 
 func newMeasurer(frags ast.FragmentDefinitionList, vars map[string]any, pageCap int, built *schema.Built, maxDepth, maxCost int) *measurer {
-	m := &measurer{frags: frags, vars: vars, pageCap: pageCap, built: built, maxDepth: maxDepth, maxCost: maxCost, memo: map[fragmentKey]measured{}}
+	m := &measurer{frags: frags, vars: vars, pageCap: pageCap, built: built, maxDepth: maxDepth, maxCost: maxCost, memo: map[fragmentKey]measured{}, connMemo: map[string][2]measured{}}
 	if built != nil {
 		m.meta = built.Meta
 	}
@@ -1070,7 +1079,7 @@ func (m *measurer) field(v *ast.Field, depth int, paginated bool) measured {
 		mult = min(max(n, 1), m.pageCap)
 		childPaginated = true
 	} else if hasPageArgs(v) {
-		mult = 10 // connection without explicit first/last
+		mult = m.pageCap // without first/last the compiled LIMIT is the cap
 		childPaginated = true
 	} else if !paginated && v.Definition != nil && v.Definition.Type.NamedType == "" {
 		mult = 10 // list field outside a paginated container
@@ -1091,8 +1100,70 @@ func (m *measurer) field(v *ast.Field, depth int, paginated bool) measured {
 	if len(v.SelectionSet) == 0 {
 		return measured{depth: 0, cost: satAdd(1, scan)}
 	}
+	if childPaginated && v.Definition != nil && v.Definition.Type.NamedType != "" {
+		rows, once := m.connection(v.SelectionSet, depth+1)
+		return measured{
+			depth: 1 + max(rows.depth, once.depth),
+			cost:  satAdd(satAdd(1, scan), satAdd(satMul(mult, rows.cost), once.cost)),
+		}
+	}
 	c := m.sel(v.SelectionSet, depth+1, childPaginated)
 	return measured{depth: 1 + c.depth, cost: satAdd(satAdd(1, scan), satMul(mult, c.cost))}
+}
+
+// connection walks the selection set of a connection object and splits it
+// into the part repeated for every row of the page (the nodes and edges
+// lists) and the part computed once per connection (totalCount, pageInfo,
+// aggregates, groupedAggregates).
+func (m *measurer) connection(sel ast.SelectionSet, depth int) (rows, once measured) {
+	add := func(dst *measured, r measured) {
+		dst.depth = max(dst.depth, r.depth)
+		dst.cost = satAdd(dst.cost, r.cost)
+	}
+	for _, item := range sel {
+		if m.over {
+			return rows, once
+		}
+		switch v := item.(type) {
+		case *ast.Field:
+			if compile.SkipByDirectives(v.Directives, m.vars) {
+				continue
+			}
+			r := m.field(v, depth, true)
+			if v.Definition != nil && v.Definition.Type.NamedType == "" && fieldScanCost(v, m.meta) == 0 {
+				add(&rows, r)
+			} else {
+				add(&once, r)
+			}
+		case *ast.InlineFragment:
+			if compile.SkipByDirectives(v.Directives, m.vars) {
+				continue
+			}
+			r, o := m.connection(v.SelectionSet, depth)
+			add(&rows, r)
+			add(&once, o)
+		case *ast.FragmentSpread:
+			if compile.SkipByDirectives(v.Directives, m.vars) {
+				continue
+			}
+			parts, ok := m.connMemo[v.Name]
+			if !ok {
+				if def := m.frags.ForName(v.Name); def != nil {
+					parts[0], parts[1] = m.connection(def.SelectionSet, depth)
+					if !m.over {
+						m.connMemo[v.Name] = parts
+					}
+				}
+			}
+			add(&rows, parts[0])
+			add(&once, parts[1])
+		}
+		d := max(rows.depth, once.depth)
+		if (m.maxDepth > 0 && depth+d > m.maxDepth) || (m.maxCost > 0 && satAdd(rows.cost, once.cost) > m.maxCost) {
+			m.over = true
+		}
+	}
+	return rows, once
 }
 
 // fieldCostMultiplier returns the @costMultiplier override bound to a field,

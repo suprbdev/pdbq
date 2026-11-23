@@ -22,7 +22,7 @@ func testAuth() *Authenticator {
 	return authn
 }
 
-func testServer(cfg config.Server) *Server {
+func testServer(cfg config.Config) *Server {
 	s, err := New(cfg, testAuth(), nil, "type Query { ok: Boolean }", slog.Default())
 	if err != nil {
 		panic(err)
@@ -38,17 +38,17 @@ func get(t *testing.T, h http.Handler, path string) *httptest.ResponseRecorder {
 }
 
 func TestSDLHiddenByDefault(t *testing.T) {
-	h := testServer(config.Server{}).Handler()
+	h := testServer(config.Config{}).Handler()
 	if rec := get(t, h, "/schema.graphql"); rec.Code != http.StatusNotFound {
-		t.Fatalf("/schema.graphql = %d, want 404 when expose_schema off", rec.Code)
+		t.Fatalf("/schema.graphql = %d, want 404 when introspection is off", rec.Code)
 	}
 }
 
 func TestSDLServedWhenExposed(t *testing.T) {
-	h := testServer(config.Server{ExposeSchema: true}).Handler()
+	h := testServer(config.Config{Server: config.Server{Introspection: true}}).Handler()
 	rec := get(t, h, "/schema.graphql")
 	if rec.Code != http.StatusOK {
-		t.Fatalf("/schema.graphql = %d, want 200 when expose_schema on", rec.Code)
+		t.Fatalf("/schema.graphql = %d, want 200 when introspection is on", rec.Code)
 	}
 	if rec.Body.String() != "type Query { ok: Boolean }" {
 		t.Fatalf("unexpected SDL body: %q", rec.Body.String())
@@ -56,21 +56,21 @@ func TestSDLServedWhenExposed(t *testing.T) {
 }
 
 func TestGraphiQLHiddenByDefault(t *testing.T) {
-	h := testServer(config.Server{}).Handler()
+	h := testServer(config.Config{}).Handler()
 	if rec := get(t, h, "/"); rec.Code != http.StatusNotFound {
 		t.Fatalf("/ = %d, want 404 when graphiql off", rec.Code)
 	}
 }
 
 func TestGraphiQLServedWhenEnabled(t *testing.T) {
-	h := testServer(config.Server{GraphiQL: true}).Handler()
+	h := testServer(config.Config{Server: config.Server{GraphiQL: true}}).Handler()
 	if rec := get(t, h, "/"); rec.Code != http.StatusOK {
 		t.Fatalf("/ = %d, want 200 when graphiql on", rec.Code)
 	}
 }
 
 func TestCORSHeadersAbsentByDefault(t *testing.T) {
-	h := testServer(config.Server{}).Handler()
+	h := testServer(config.Config{}).Handler()
 	req := httptest.NewRequest("GET", "/healthz", nil)
 	req.Header.Set("Origin", "https://example.com")
 	rec := httptest.NewRecorder()
@@ -81,7 +81,7 @@ func TestCORSHeadersAbsentByDefault(t *testing.T) {
 }
 
 func TestCORSAllowedOrigin(t *testing.T) {
-	h := testServer(config.Server{CORSOrigins: []string{"https://example.com"}}).Handler()
+	h := testServer(config.Config{Server: config.Server{CORSOrigins: []string{"https://example.com"}}}).Handler()
 	req := httptest.NewRequest("GET", "/healthz", nil)
 	req.Header.Set("Origin", "https://example.com")
 	rec := httptest.NewRecorder()
@@ -92,7 +92,7 @@ func TestCORSAllowedOrigin(t *testing.T) {
 }
 
 func TestCORSDisallowedOrigin(t *testing.T) {
-	h := testServer(config.Server{CORSOrigins: []string{"https://example.com"}}).Handler()
+	h := testServer(config.Config{Server: config.Server{CORSOrigins: []string{"https://example.com"}}}).Handler()
 	req := httptest.NewRequest("GET", "/healthz", nil)
 	req.Header.Set("Origin", "https://evil.com")
 	rec := httptest.NewRecorder()
@@ -103,7 +103,7 @@ func TestCORSDisallowedOrigin(t *testing.T) {
 }
 
 func TestCORSWildcard(t *testing.T) {
-	h := testServer(config.Server{CORSOrigins: []string{"*"}}).Handler()
+	h := testServer(config.Config{Server: config.Server{CORSOrigins: []string{"*"}}}).Handler()
 	req := httptest.NewRequest("GET", "/healthz", nil)
 	req.Header.Set("Origin", "https://anything.example")
 	rec := httptest.NewRecorder()
@@ -114,7 +114,7 @@ func TestCORSWildcard(t *testing.T) {
 }
 
 func TestCORSPreflight(t *testing.T) {
-	h := testServer(config.Server{CORSOrigins: []string{"https://example.com"}}).Handler()
+	h := testServer(config.Config{Server: config.Server{CORSOrigins: []string{"https://example.com"}}}).Handler()
 	req := httptest.NewRequest("OPTIONS", "/graphql", nil)
 	req.Header.Set("Origin", "https://example.com")
 	req.Header.Set("Access-Control-Request-Method", "POST")
@@ -133,7 +133,7 @@ func TestCORSPreflight(t *testing.T) {
 }
 
 func TestGzipOffByDefault(t *testing.T) {
-	h := testServer(config.Server{}).Handler()
+	h := testServer(config.Config{}).Handler()
 	req := httptest.NewRequest("GET", "/healthz", nil)
 	req.Header.Set("Accept-Encoding", "gzip")
 	rec := httptest.NewRecorder()
@@ -147,7 +147,7 @@ func TestGzipOffByDefault(t *testing.T) {
 }
 
 func TestGzipCompressesWhenAccepted(t *testing.T) {
-	h := testServer(config.Server{Compression: true}).Handler()
+	h := testServer(config.Config{Server: config.Server{Compression: true}}).Handler()
 	req := httptest.NewRequest("GET", "/healthz", nil)
 	req.Header.Set("Accept-Encoding", "gzip")
 	rec := httptest.NewRecorder()
@@ -169,7 +169,7 @@ func TestGzipCompressesWhenAccepted(t *testing.T) {
 }
 
 func TestGzipSkippedWithoutAcceptEncoding(t *testing.T) {
-	h := testServer(config.Server{Compression: true}).Handler()
+	h := testServer(config.Config{Server: config.Server{Compression: true}}).Handler()
 	rec := get(t, h, "/healthz")
 	if got := rec.Header().Get("Content-Encoding"); got != "" {
 		t.Fatalf("Content-Encoding = %q, want empty when client does not accept gzip", got)
@@ -180,7 +180,7 @@ func TestGzipSkippedWithoutAcceptEncoding(t *testing.T) {
 }
 
 func TestGzipSkipsCORSPreflight(t *testing.T) {
-	h := testServer(config.Server{Compression: true, CORSOrigins: []string{"*"}}).Handler()
+	h := testServer(config.Config{Server: config.Server{Compression: true, CORSOrigins: []string{"*"}}}).Handler()
 	req := httptest.NewRequest("OPTIONS", "/graphql", nil)
 	req.Header.Set("Origin", "https://example.com")
 	req.Header.Set("Accept-Encoding", "gzip")
@@ -198,7 +198,7 @@ func TestGzipSkipsCORSPreflight(t *testing.T) {
 }
 
 func TestCORSPreflightDisallowedOrigin(t *testing.T) {
-	h := testServer(config.Server{CORSOrigins: []string{"https://example.com"}}).Handler()
+	h := testServer(config.Config{Server: config.Server{CORSOrigins: []string{"https://example.com"}}}).Handler()
 	req := httptest.NewRequest("OPTIONS", "/graphql", nil)
 	req.Header.Set("Origin", "https://evil.com")
 	rec := httptest.NewRecorder()

@@ -20,13 +20,12 @@ without it.
 Turn it on for every table:
 
 ```yaml
-plugins:
-  settings:
-    aggregates:
-      enabled: true
+aggregates:
+  enabled: true
 ```
 
-(or `PDBQ_PLUGINS_SETTINGS_AGGREGATES_ENABLED=true`), or leave it off and opt
+(or `PDBQ_AGGREGATES_ENABLED=true`; pdbr uses the same key for its
+aggregate functions), or leave it off and opt
 individual tables in with a smart comment:
 
 ```sql
@@ -101,7 +100,7 @@ column's typmod (`geometry(Point, 4326)`), or with `min(ST_SRID(x))` on an
 unconstrained column, so the GeoJSON names the right CRS.
 
 `stUnion` and `stCollect` return a value that grows with the row set, so they
-are off unless `plugins.settings.aggregates.spatial_union_collect` is true,
+are off unless `aggregates.spatial_union_collect` is true,
 and each of their fields costs 10 × `scan_cost`. On an unconstrained column
 holding several SRIDs, `ST_Union`, `ST_Collect` and `ST_Centroid` fail with
 PostGIS's mixed-SRID error. Filter to one SRID first.
@@ -121,7 +120,7 @@ The results use the `GeoJSON` scalar even with `typed_geometry` on.
 `geography` values are cast to `geometry` first, because PostGIS defines these
 aggregates for `geometry` only, so `stCentroid` is planar. Spatial aggregates
 take no part in `having`, ordering or filtering. Turn them all off with
-`plugins.settings.aggregates.spatial: false`.
+`aggregates.spatial: false`.
 
 ## Grouped aggregates
 
@@ -161,7 +160,7 @@ values as strings (`null` outside grouped aggregates), in `groupBy` order:
   variants, `1.0` and `1.00`, nondeterministic collations) fall into one
   group. Its key is the smallest member's text under the `C` collation, so it
   is the same on every run.
-- Groups come back ordered by their keys. At most `server.max_page_size` groups
+- Groups come back ordered by their keys. At most `limits.max_page_size` groups
   are returned.
 
 ### Having
@@ -275,7 +274,8 @@ Columns hidden with `@omit read` are never aggregated. Column renames
 
 ## Settings
 
-All under `plugins.settings.aggregates`:
+All under the top-level `aggregates` section (not `plugins.settings`; the
+`aggregates` plugin can still be turned off with `plugins.disabled`):
 
 | Key | Default | Effect |
 |---|---|---|
@@ -298,7 +298,7 @@ The executor's cost estimate adds `scan_cost` for each of:
 - each aggregate comparison in a relation-aggregate filter.
 
 The last two run once per candidate row. `groupedAggregates` returns up to
-`server.max_page_size` groups, so its selection is multiplied by that cap.
+`limits.max_page_size` groups, so its selection is multiplied by that cap.
 Each `stUnion`/`stCollect` field costs 10 × `scan_cost`. All of these are
 multiplied by the enclosing connection's page size, as for any other field:
 a nested `postsByAuthorId { aggregates { ... } }` runs once per parent row.

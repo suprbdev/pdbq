@@ -56,7 +56,7 @@ Breaking changes:
   `pdbq.claims.<claim>` to `jwt.claims.<claim>` (PostGraphile's namespace).
   Update policies, or set `claims.prefix: pdbq.claims` to keep them.
 - **Strict configuration.** Unknown keys in the YAML file are errors, and so
-  are `PDBQ_*` variables inside a config section (`PDBQ_SERVER_MAX_DPETH`);
+  are `PDBQ_*` variables inside a config section (`PDBQ_LIMITS_MAX_DPETH`);
   the error suggests the closest key. Other `PDBQ_*` variables are ignored.
   `log.format` must be `text` or `json`.
 - **Plugin names are snake_case**, with no aliases: `smart_comments`,
@@ -71,7 +71,7 @@ Breaking changes:
   `PDBQ_PLUGINS_SETTINGS_ADVANCED__FILTERS_RELATIONS=false` now reach the
   plugin (they used to be strings the plugins ignored).
   `plugins.settings.nested_mutations.max_depth`/`max_operations` must be
-  `>= 1` and `plugins.settings.aggregates.scan_cost` `>= 0`.
+  `>= 1` and `aggregates.scan_cost` `>= 0`.
 - **`database.statement_timeout` defaults to `25s`** (was `30s`), below the
   30s `server.request_timeout`, so a slow statement fails with SQLSTATE
   `57014` before the request is cut off.
@@ -129,6 +129,115 @@ as a user error with its message in `errors.detail: prod`.
 | `plugins.disabled: [smart-comments]` | `plugins.disabled: [smart_comments]` | likewise `simple_names`, `advanced_filters`, `nested_mutations` |
 | `plugins.settings.advanced-filters.*` | `plugins.settings.advanced_filters.*` | |
 | `plugins.settings.nested-mutations.*` | `plugins.settings.nested_mutations.*` | |
-| `PDBQ_PLUGINS_SETTINGS_AGGREGATES_ENABLED=true` (ignored) | same variable, now applied | env plugin settings are typed |
+| `PDBQ_PLUGINS_SETTINGS_AGGREGATES_ENABLED=true` (ignored) | `PDBQ_AGGREGATES_ENABLED=true` | env settings are typed; aggregates moved to their own section (below) |
 | `database.statement_timeout` default `30s` | default `25s` | set it explicitly to keep `30s` |
 | `log.format: <anything>` | `log.format: text` or `json` | other values are rejected |
+
+### Configuration regrouped
+
+pdbq 1.0 nests the flat `server.*` keys into sections, and uses the same
+names as pdbr for the concepts both products share (`limits.*`,
+`transactions.partial.*`, `schema.domains`, `aggregates.enabled`). Every
+item below is breaking. Loading an old key fails and names its new place
+(`unknown key server.max_cost: moved to limits.max_cost`, and for
+variables `PDBQ_SERVER_MAX__COST ... moved to PDBQ_LIMITS_MAX__COST`).
+
+- **New sections.** `limits` (request limits), `persisted_queries`,
+  `subscriptions`, `live`, `incremental` and `server.document_cache`; see
+  the table below and [Configuration](configuration.md). Flags follow the
+  keys (`--limits.max_cost`, `--subscriptions.enabled`, …).
+- **`server.introspection: true` replaces `server.disable_introspection`
+  and `server.expose_schema`.** The polarity is inverted
+  (`disable_introspection: true` is `introspection: false`), and the SDL at
+  `/schema.graphql` is now served whenever introspection is on, which is
+  the default: it exposes nothing introspection does not. Both products now
+  publish their schema document by default (pdbr: `openapi.enabled`); set
+  `server.introspection: false` in production to hide the schema shape.
+- **Aggregates have a top-level section.** `plugins.settings.aggregates.*`
+  moved to `aggregates.*` (`aggregates.enabled` is the gate, named as in
+  pdbr). The plugin is still called `aggregates` in `plugins.disabled`.
+- **Partial mutations.** `transactions.partial_mutations` is
+  `transactions.partial.enabled`, and the new
+  `transactions.partial.max_items` (default 1000, as in pdbr) rejects a
+  partial request with more mutation root fields.
+- **Mutations always run in a transaction.** `transactions.mutations` and
+  `plugins.settings.nested_mutations.force_transactions` are removed (they
+  fail as unknown keys). A single statement is atomic anyway, the custom
+  mutation payload pair, nested mutations and partial mutations already
+  forced a transaction, and every request with a role or claims needs one;
+  turning it off only made a multi-field mutation operation non-atomic.
+  `op.ForceTx` stays for plugins that need a transaction around a query.
+- **No magic zero values.** `incremental.max_responses` defaults to `5`
+  and must be `>= 1` and below `database.max_conns` (`0` used to mean half
+  of the pool). `subscriptions.subscribe_rate` must be `>= 1` (`0` used to
+  disable the limit; set a large value instead). Every `limits.*` key must
+  be `>= 1`.
+- **Errors name the new keys**, for example `partial mutations are
+  disabled: set transactions.partial.enabled` and `live.enabled requires
+  subscriptions.enabled`.
+- **Embedding.** `pdbq.Config` gains `Limits`, `PersistedQueries`,
+  `Subscriptions`, `Live`, `Incremental` and `Aggregates` (types
+  `pdbq.LimitsConfig`, `PersistedQueriesConfig`, `SubscriptionsConfig`,
+  `LiveConfig`, `IncrementalConfig`, `AggregatesConfig`, plus
+  `DocumentCacheConfig` and `PartialConfig`); `ServerConfig` keeps only the
+  HTTP keys plus `DocumentCache`;
+  `Schema.DomainScalars` is `Schema.Domains`; `TX` has `Partial` instead of
+  `PartialMutations` and no `Mutations`; `Config.IncrementalResponses` is
+  gone; `nestedmutations.Settings` has no `ForceTransactions` and the
+  plugin is no longer a request hook.
+
+| 0.x | 1.0 | Notes |
+|---|---|---|
+| `server.max_body_bytes` | `limits.max_body_bytes` | |
+| `server.max_depth` | `limits.max_depth` | |
+| `server.max_cost` (default 10000) | `limits.max_cost` (default 100000) | see the cost estimate below |
+| `server.max_page_size` | `limits.max_page_size` | |
+| `server.max_headline_document` | `limits.max_headline_document` | |
+| `server.max_query_tokens` | `limits.max_query_tokens` | |
+| `server.max_input_depth` | `limits.max_input_depth` | |
+| `server.max_selections` | `limits.max_selections` | |
+| `server.max_introspection_bytes` | `limits.max_introspection_bytes` | |
+| `server.max_field_comparisons` | `limits.max_field_comparisons` | |
+| `server.document_cache_size` | `server.document_cache.size` | |
+| `server.document_cache_bytes` | `server.document_cache.bytes` | |
+| `server.document_cache_max_entry_bytes` | `server.document_cache.max_entry_bytes` | |
+| `server.apq` | `persisted_queries.apq` | |
+| `server.persisted_queries_path` | `persisted_queries.path` | |
+| `server.persisted_only` | `persisted_queries.only` | |
+| `server.disable_introspection: true` | `server.introspection: false` | inverted; default on |
+| `server.expose_schema` (default `false`) | `server.introspection` (default `true`) | `/schema.graphql` follows introspection |
+| `server.subscriptions` | `subscriptions.enabled` | |
+| `server.subscriptions_<key>` | `subscriptions.<key>` | `max_per_connection`, `max_connections`, `max_operations`, `subscribe_rate` (now `>= 1`), `topic_prefix`, `topics`, `keepalive`, `buffer` |
+| `server.live` | `live.enabled` | |
+| `server.live_<key>` | `live.<key>` | `channel`, `install_triggers`, `throttle`, `concurrency`, `max_per_connection`, `max_operations` |
+| `server.incremental_delivery` | `incremental.enabled` | |
+| `server.incremental_<key>` | `incremental.<key>` | `max_deferred`, `stream_batch_size`, `write_timeout` |
+| `server.incremental_max_responses: 0` (half the pool) | `incremental.max_responses: 5` | explicit, below `database.max_conns` |
+| `schema.domain_scalars` | `schema.domains` | same key as pdbr |
+| `transactions.partial_mutations` | `transactions.partial.enabled` | same key as pdbr |
+| — | `transactions.partial.max_items` | default 1000 |
+| `transactions.mutations` | removed | mutations always run in a transaction |
+| `plugins.settings.aggregates.<key>` | `aggregates.<key>` | `enabled` is the gate shared with pdbr |
+| `plugins.settings.nested_mutations.force_transactions` | removed | nested mutations always run in a transaction |
+| `PDBQ_SERVER_MAX__COST` | `PDBQ_LIMITS_MAX__COST` | every `PDBQ_SERVER_*` variable of a moved key follows the table |
+| `PDBQ_SERVER_SUBSCRIPTIONS` | `PDBQ_SUBSCRIPTIONS_ENABLED` | |
+| `PDBQ_SERVER_EXPOSE__SCHEMA` / `PDBQ_SERVER_DISABLE__INTROSPECTION` | `PDBQ_SERVER_INTROSPECTION` | |
+| `PDBQ_PLUGINS_SETTINGS_AGGREGATES_ENABLED` | `PDBQ_AGGREGATES_ENABLED` | |
+| `--server.<key>` flags of moved keys | `--<new key>` | e.g. `--limits.max_query_tokens`, `--live.channel` |
+
+### Cost estimate prices unbounded connections at a full page
+
+A connection or list field given neither `first` nor `last` was costed as
+10 rows, but it fetches up to `limits.max_page_size` rows (100 by default),
+so the per-row work below it (headlines, raster statistics, scores, nested
+lists) was under-priced about tenfold. It is now costed as a full page,
+like pdbr's limitless embeds, and the default `limits.max_cost` is
+`100000` (was `10000`, the same default as pdbr) so common two-level
+queries still pass: `allUsers { nodes { … postsByAuthorId { nodes { … } } } }`
+with three or four fields per level costs 40,000 to 50,000. A third unbounded
+level is rejected; give it a `first`. Queries with explicit `first`/`last`
+cost what they did, so the larger default admits about ten times more
+explicit work; set `limits.max_cost: 10000` to keep the old budget. A
+connection's `totalCount`, `pageInfo`, `aggregates` and `groupedAggregates`
+are no longer multiplied by its page size: they are computed once per
+connection, so only `nodes` and `edges` repeat per row.

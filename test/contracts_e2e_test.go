@@ -76,7 +76,6 @@ func contractsServerWith(t *testing.T, watch bool, configure func(*config.Config
 	cfg.Plugins.Disabled = []string{"simple_names"}
 	cfg.Schema.Schemas = []string{contractsSchema}
 	cfg.Filters.IndexedOnly = false
-	cfg.Server.ExposeSchema = true
 	cfg.Metrics.Enabled = true
 	cfg.Contracts = []config.Contract{
 		{Name: "internal", Path: "/"},

@@ -230,11 +230,12 @@ plugins:
 ## Cost estimation for recursive relations
 
 The executor rejects an operation whose estimated cost exceeds
-`server.max_cost` (default 10000). The estimate multiplies each subtree by the
-page size requested at that level, so a nested query costs roughly
-`page^depth`. That is right for an unrelated fan-out, but badly pessimistic
-for self-referential trees — a Reddit-style comment thread — where the
-requested page is an upper bound that almost no row reaches.
+`limits.max_cost` (default 100000). The estimate multiplies each subtree by
+the page size requested at that level (`max_page_size` when none is given),
+so a nested query costs roughly `page^depth`. That is right for an
+unrelated fan-out, but badly pessimistic for self-referential trees — a
+Reddit-style comment thread — where the requested page is an upper bound
+that almost no row reaches.
 
 A four-level thread at `first: 20` per level estimates ~345,000, which no
 reasonable `max_cost` can accommodate, even though the query returns a
@@ -268,7 +269,7 @@ Details worth knowing:
 - **It is parsed straight from the catalog**, so it works with the
   `smart_comments` plugin disabled.
 - **It changes the estimate, not the query.** Rows actually returned are still
-  bounded by `first`/`last` and `server.max_page_size`. Setting the multiplier
+  bounded by `first`/`last` and `limits.max_page_size`. Setting the multiplier
   far below real fan-out weakens the cost limit as a guard — pick a value near
   the true average, not the smallest one that makes a query pass.
 

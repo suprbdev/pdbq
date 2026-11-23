@@ -19,7 +19,7 @@ import (
 )
 
 // DefaultChannel is the default LISTEN channel of table change
-// notifications (server.live_channel).
+// notifications (live.channel).
 const DefaultChannel = "pdbq_live"
 
 // listenBuffer is the queue of the tracker's one listener; when it

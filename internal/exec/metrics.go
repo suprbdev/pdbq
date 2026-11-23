@@ -20,7 +20,7 @@ type Metrics struct {
 	Core *metrics.Metrics
 	// DocumentCache counts document cache lookups by result (hit, miss).
 	DocumentCache *metrics.Counter
-	// CostRejections counts operations rejected by server.max_cost.
+	// CostRejections counts operations rejected by limits.max_cost.
 	CostRejections *metrics.Counter
 	// FieldErrors counts errors raised while executing root fields, by
 	// class (see ErrorClass).
@@ -41,7 +41,7 @@ func NewMetrics(m *metrics.Metrics) (*Metrics, error) {
 	}
 	docs.Init("hit")
 	docs.Init("miss")
-	cost, err := m.NewCounter("cost_limit_rejections_total", "Operations rejected for exceeding server.max_cost.")
+	cost, err := m.NewCounter("cost_limit_rejections_total", "Operations rejected for exceeding limits.max_cost.")
 	if err != nil {
 		return nil, err
 	}

@@ -1,13 +1,11 @@
-// Package nestedmutations is a built-in plugin exercising every hook
-// surface. It adds postgraphile-plugin-nested-mutations style input fields
-// to the create inputs and patches of tables, one per foreign key in either
-// direction (SchemaHook): connectBy<Key>/connectByNodeId and create, plus,
-// on patches, updateBy<Key>/updateByNodeId, deleteBy<Key>/deleteByNodeId
+// Package nestedmutations is a built-in plugin exercising the schema and
+// compile hook surfaces. It adds postgraphile-plugin-nested-mutations style
+// input fields to the create inputs and patches of tables, one per foreign
+// key in either direction (SchemaHook): connectBy<Key>/connectByNodeId and
+// create, plus, on patches, updateBy<Key>/updateByNodeId, deleteBy<Key>/deleteByNodeId
 // and disconnectBy<Key>/disconnectByNodeId. Create and update mutations
 // using them compile into a single multi-CTE SQL statement respecting FK
-// direction (CompileHook), and the plugin forces a transaction for them even
-// when transactions are globally disabled (RequestHook), unless
-// plugins.settings.nested_mutations.force_transactions is false.
+// direction (CompileHook). Like every mutation they run in a transaction.
 package nestedmutations
 
 import (
@@ -21,7 +19,6 @@ import (
 	coreinflect "github.com/suprbdev/pdbcore/inflect"
 	"github.com/suprbdev/pdbcore/introspect"
 	"github.com/suprbdev/pdbq/internal/compile"
-	"github.com/suprbdev/pdbq/internal/exec"
 	"github.com/suprbdev/pdbq/internal/inflect"
 	"github.com/suprbdev/pdbq/internal/omit"
 	"github.com/suprbdev/pdbq/internal/schema"
@@ -36,7 +33,6 @@ const (
 // schema build and compilation, since compilation reads the bindings the
 // SchemaHook records.
 type Plugin struct {
-	forceTx       bool
 	maxDepth      int
 	maxOperations int
 
@@ -102,14 +98,13 @@ type opSpec struct {
 
 // Settings is the plugins.settings.nested_mutations section.
 type Settings struct {
-	ForceTransactions bool `koanf:"force_transactions" doc:"Run an operation using nested fields in a transaction even when transactions.mutations is off, so the nested writes are atomic."`
-	MaxDepth          int  `koanf:"max_depth" doc:"Maximum nesting depth of nested mutation inputs per root field."`
-	MaxOperations     int  `koanf:"max_operations" doc:"Maximum nested operations (each list item counting once) per root field."`
+	MaxDepth      int `koanf:"max_depth" doc:"Maximum nesting depth of nested mutation inputs per root field."`
+	MaxOperations int `koanf:"max_operations" doc:"Maximum nested operations (each list item counting once) per root field."`
 }
 
 // DefaultSettings returns the documented defaults.
 func DefaultSettings() Settings {
-	return Settings{ForceTransactions: true, MaxDepth: defaultMaxDepth, MaxOperations: defaultMaxOperations}
+	return Settings{MaxDepth: defaultMaxDepth, MaxOperations: defaultMaxOperations}
 }
 
 // Validate returns the problems of s, keyed by their config path.
@@ -127,7 +122,7 @@ func (s Settings) Validate() []string {
 // New builds the plugin from its settings; a MaxDepth or MaxOperations
 // below 1 takes the default.
 func New(s Settings) *Plugin {
-	p := &Plugin{forceTx: s.ForceTransactions, maxDepth: s.MaxDepth, maxOperations: s.MaxOperations}
+	p := &Plugin{maxDepth: s.MaxDepth, maxOperations: s.MaxOperations}
 	if p.maxDepth < 1 {
 		p.maxDepth = defaultMaxDepth
 	}
@@ -1450,42 +1445,3 @@ func sortedKeys(m map[string]any) []string {
 	slices.Sort(keys)
 	return keys
 }
-
-// ---- RequestHook ----
-
-// BeforeOperation forces a transaction when the operation uses nested
-// mutation fields (unless force_transactions is disabled). Root fields are
-// collected as the executor runs them, through fragments and @skip/@include.
-func (p *Plugin) BeforeOperation(ctx context.Context, op *exec.Operation) (context.Context, error) {
-	if !p.forceTx || op.Type != ast.Mutation {
-		return ctx, nil
-	}
-	var frags ast.FragmentDefinitionList
-	if op.Document != nil {
-		frags = op.Document.Fragments
-	}
-	st := stateOf(op.Built)
-	for _, f := range exec.CollectRootFields(op.Definition.SelectionSet, frags, op.Vars) {
-		if f.Definition == nil {
-			continue
-		}
-		for _, name := range [...]string{"input", "patch"} {
-			argDef := f.Definition.Arguments.ForName(name)
-			arg := f.Arguments.ForName(name)
-			if argDef == nil || arg == nil {
-				continue
-			}
-			v, err := arg.Value.Value(op.Vars)
-			if err != nil {
-				continue
-			}
-			if st.usesNested(argDef.Type.Name(), v) {
-				op.ForceTx = true
-				return ctx, nil
-			}
-		}
-	}
-	return ctx, nil
-}
-
-func (p *Plugin) AfterOperation(context.Context, *exec.Operation, *exec.Result) {}
