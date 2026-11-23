@@ -4,7 +4,7 @@ Checklist of PostgreSQL and GraphQL features pdbq supports. Checked = implemente
 
 ## Introspection (pg_catalog)
 
-- [x] Tables (including partitioned tables)
+- [x] Tables (including partitioned tables; partitions are left out unless `schema.expose_partitions` is set)
 - [x] Views (read-only)
 - [x] Materialized views (read-only)
 - [x] Columns: type, nullability, defaults, identity/generated detection
@@ -20,9 +20,10 @@ Checklist of PostgreSQL and GraphQL features pdbq supports. Checked = implemente
 - [x] Schema allowlist (`schema.schemas`)
 - [x] Composite types read into the catalog
 - [x] Composite-type columns mapped to GraphQL object types (matching `<Type>Input` on mutations; composite arrays included)
-- [ ] Domains surfaced as named scalars (currently resolved to base type) (v1.x)
-- [ ] Function argument default values / variadic args (v1.x)
-- [ ] Functions with `OUT`/`INOUT` parameters or anonymous record returns (v1.x)
+- [ ] Domains surfaced as named scalars (currently resolved to base type, through domains over domains) (v1.x)
+- [x] Function argument default values (omitted arguments take the `DEFAULT`; shown in the argument description) and `VARIADIC` arguments (a list)
+- [x] Functions with `OUT`/`INOUT`/`RETURNS TABLE` parameters (generated `<Function>Record` object types)
+- [ ] Functions returning an anonymous `record` without output parameters (skipped)
 
 ## Type mapping (Postgres → GraphQL)
 
@@ -106,11 +107,14 @@ Checklist of PostgreSQL and GraphQL features pdbq supports. Checked = implemente
 
 - [x] Stable/immutable functions → Query fields
 - [x] Volatile functions → Mutation fields
-- [x] Scalar arguments mapped from GraphQL args (named args only)
+- [x] Arguments mapped from GraphQL args (named args only; called in named notation, positional for variadic functions): scalars, enums, composites (`<Type>Input`), PostGIS values (GeoJSON/WKT), arrays
+- [x] Omitted arguments take the function's `DEFAULT`; an explicit `null` passes SQL `NULL`; omitting an argument without a default is a GraphQL error
 - [x] Scalar returns (via `to_jsonb`)
 - [x] `SETOF <table>` returns → list of the table's object type with full selection support
 - [x] `SETOF <scalar>` returns → scalar lists
 - [x] Single-row table returns with selection support
+- [x] Composite returns → the composite's object type (except `rls.auth.jwt_type`, minted into a token string)
+- [x] `OUT`/`RETURNS TABLE` record returns → `<Function>Record` object type (`[<Function>Record!]!` for `SETOF`), compiled in the same statement
 - [x] `void` returns → `Boolean`
 - [x] EXECUTE-privilege gating
 - [x] Computed columns (stable/immutable functions whose first argument is a row type → fields on that type; extra scalar args become field args; set-returning/volatile deferred)

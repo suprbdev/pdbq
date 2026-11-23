@@ -54,6 +54,7 @@ const (
 	KindFunctionInput          Kind = "function_input"            // volatile function -> input object type (LoginInput)
 	KindFunctionPayload        Kind = "function_payload"          // volatile function -> payload object type (LoginPayload)
 	KindComputedField          Kind = "computed_field"            // row-type function -> field on the row's type (postCount)
+	KindFunctionRecord         Kind = "function_record"           // OUT/TABLE-parameter function -> its row object type (SearchStatsRecord)
 )
 
 // Default is the built-in PostGraphile-flavoured verbose naming.
@@ -113,6 +114,8 @@ func Default(kind Kind, in Input) string {
 		return inflect.UpperCamel(in.Function) + "Payload"
 	case KindComputedField:
 		return inflect.LowerCamel(strings.TrimPrefix(in.Function, in.Table+"_"))
+	case KindFunctionRecord:
+		return inflect.UpperCamel(in.Function) + "Record"
 	}
 	return inflect.LowerCamel(in.Table)
 }

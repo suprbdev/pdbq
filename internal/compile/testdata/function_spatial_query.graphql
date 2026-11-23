@@ -1,0 +1,4 @@
+{
+  placesNear(pt: {type: "Point", coordinates: [-0.1281, 51.508]}) { id name }
+  placesNearWkt: placesNear(pt: "SRID=4326;POINT(-0.1281 51.508)", maxDist: 50) { id }
+}

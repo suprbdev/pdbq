@@ -1,0 +1,10 @@
+# OUT and RETURNS TABLE parameters generate a <Function>Record object type
+# whose selection compiles in the same statement; composite returns use the
+# composite's object type.
+{
+  postStats(minId: 2) { total maxTitle }
+  postTitles { id title }
+  makeAddress(street: "1 Main St", city: "Springfield") { street city mood }
+  formatAddress(a: {street: "1 Main St", city: "Springfield", mood: HAPPY})
+  userById(id: 1) { home { city } }
+}

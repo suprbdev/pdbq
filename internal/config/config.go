@@ -27,10 +27,10 @@ type Config struct {
 }
 
 // The shared sections (koanf paths and doc strings) live in pdbcore/confx;
-// Server and TX (with per_request) are pdbq's own.
+// Server, Schema (with expose_partitions) and TX (with per_request) are
+// pdbq's own.
 type (
 	Database = confx.Database
-	Schema   = confx.Schema
 	Filters  = confx.Filters
 	RLS      = confx.RLS
 	Auth     = confx.Auth
@@ -56,6 +56,21 @@ type Server struct {
 	PersistedOnly        bool          `koanf:"persisted_only" doc:"Reject requests that do not reference a persisted query via the persistedQuery extension (requires apq or persisted_queries_path)."`
 	ReadOnly             bool          `koanf:"read_only" doc:"Reject every mutation operation (read-only mode) for maintenance, demos or defense in depth. Also toggleable at runtime when embedding pdbq as a library (App.SetReadOnly)."`
 	DisableIntrospection bool          `koanf:"disable_introspection" doc:"Reject __schema / __type introspection queries (off by default). Enable in production to hide the schema shape; __typename keeps working."`
+}
+
+// Schema is confx.Schema plus expose_partitions. It repeats the shared
+// fields rather than embedding confx.Schema so composite literals keep
+// naming them directly.
+type Schema struct {
+	Schemas          []string `koanf:"schemas" doc:"PostgreSQL schemas to expose."`
+	CachePath        string   `koanf:"cache_path" doc:"Boot from this schema cache file instead of introspecting (see pdbq schema dump)."`
+	Functions        bool     `koanf:"functions" doc:"Expose PostgreSQL functions as custom queries/mutations."`
+	ExposePartitions bool     `koanf:"expose_partitions" doc:"Expose the partitions of partitioned tables as tables of their own. Off by default: their rows are reachable through the partitioned parent."`
+}
+
+// Shared returns the confx.Schema part of s.
+func (s Schema) Shared() confx.Schema {
+	return confx.Schema{Schemas: s.Schemas, CachePath: s.CachePath, Functions: s.Functions}
 }
 
 type TX struct {
@@ -124,7 +139,7 @@ func (c *Config) Validate() error {
 	// pre-pdbcore message order.
 	errs = append(errs, confx.ValidateTX(confx.TX{Mutations: c.TX.Mutations, Isolation: c.TX.Isolation})...)
 	errs = append(errs, confx.ValidateWatch(c.Watch, c.Schema.CachePath)...)
-	errs = append(errs, confx.ValidateSchema(c.Schema)...)
+	errs = append(errs, confx.ValidateSchema(c.Schema.Shared())...)
 	if c.Server.PersistedOnly && !c.Server.APQ && c.Server.PersistedQueriesPath == "" {
 		errs = append(errs, "server.persisted_only requires server.apq or server.persisted_queries_path")
 	}

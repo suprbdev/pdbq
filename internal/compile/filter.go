@@ -10,13 +10,15 @@ import (
 	"github.com/suprbdev/pdbq/internal/schema"
 )
 
-// spatialValueExpr renders a GeoJSON/WKT input value as a PostGIS constructor
-// over a single parameter. Arrays build the element expressions individually
+// spatialValueExpr renders a GeoJSON/WKT input value for col as a PostGIS
+// constructor over a single parameter, applying the column's typmod SRID (see
+// postgis.ParseFor). Arrays build the element expressions individually
 // and collect them into an ARRAY[...] literal — the element count comes from
 // the query shape, and every coordinate still travels as a parameter.
-func (s *stmt) spatialValueExpr(f postgis.Flavour, isArray bool, v any) (string, error) {
-	if !isArray {
-		val, err := postgis.Parse(v, f)
+func (s *stmt) spatialValueExpr(col *introspect.Column, v any) (string, error) {
+	f, srid := postgis.FlavourOf(col.PGType), columnSRID(col)
+	if !col.IsArray {
+		val, err := postgis.ParseFor(v, f, srid)
 		if err != nil {
 			return "", errUser("%s", err.Error())
 		}
@@ -32,7 +34,7 @@ func (s *stmt) spatialValueExpr(f postgis.Flavour, isArray bool, v any) (string,
 			parts[i] = "NULL::" + f.String()
 			continue
 		}
-		val, err := postgis.Parse(item, f)
+		val, err := postgis.ParseFor(item, f, srid)
 		if err != nil {
 			return "", errUser("%s", err.Error())
 		}
@@ -301,7 +303,7 @@ func (s *stmt) oneOp(col *introspect.Column, ref, op string, val any) (string, e
 	// comparisons below are meaningless (and mostly rejected) for PostGIS
 	// types, so they never reach a geometry column.
 	if f := postgis.FlavourOf(col.PGType); f.Spatial() {
-		return s.spatialOp(f, ref, op, val)
+		return s.spatialOp(f, columnSRID(col), ref, op, val)
 	}
 	switch op {
 	case "equalTo":
@@ -481,8 +483,8 @@ func (s *stmt) valueExpr(col *introspect.Column, v any) string {
 	if comp := s.compositeFor(col); comp != nil && v != nil {
 		return s.compositeParam(comp, col, v)
 	}
-	if f := postgis.FlavourOf(col.PGType); f.Spatial() && v != nil {
-		expr, err := s.spatialValueExpr(f, col.IsArray, v)
+	if postgis.FlavourOf(col.PGType).Spatial() && v != nil {
+		expr, err := s.spatialValueExpr(col, v)
 		if err != nil {
 			// valueExpr has no error return; record it so compilation fails
 			// with the user-facing message instead of emitting bad SQL.

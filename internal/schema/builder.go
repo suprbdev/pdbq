@@ -55,7 +55,15 @@ type Options struct {
 	AllowColumns map[string][]string
 	// Functions exposes PostgreSQL functions as custom queries/mutations.
 	Functions bool
-	Logger    *slog.Logger
+	// ExposePartitions keeps partitions (introspect.Table.IsPartition) in the
+	// schema. By default they are left out: their rows are reachable through
+	// the partitioned parent.
+	ExposePartitions bool
+	// JWTType is the "schema.type" composite that functions return to have a
+	// JWT minted (rls.auth.jwt_type). Root functions returning it keep a
+	// String result instead of the composite's object type.
+	JWTType string
+	Logger  *slog.Logger
 }
 
 // Builder is the mutable schema IR handed to SchemaHook plugins.
@@ -79,6 +87,12 @@ type Builder struct {
 	InputForComposite map[string]string
 
 	log *slog.Logger
+	// hidden holds the "schema.table" keys of tables left out of the
+	// catalog (partitions), so functions over their row types are skipped.
+	hidden map[string]bool
+	// recordTypes caches the object type generated per function returning
+	// OUT/TABLE parameter records.
+	recordTypes map[*introspect.Function]string
 }
 
 // Meta is the compiled lookup the executor/compiler use: type name -> field
@@ -129,9 +143,15 @@ type OrderSpec struct {
 }
 
 // New creates a Builder with all default types generated from the catalog.
+// Unless opts.ExposePartitions is set, partitions are dropped from (a shallow
+// copy of) cat first, so the builder and the compiler never see them.
 func New(cat *introspect.Catalog, inflector inflect.Next, opts Options) *Builder {
 	if opts.Logger == nil {
 		opts.Logger = slog.Default()
+	}
+	hidden := map[string]bool{}
+	if !opts.ExposePartitions {
+		cat, hidden = withoutPartitions(cat)
 	}
 	b := &Builder{
 		Catalog:           cat,
@@ -145,6 +165,8 @@ func New(cat *introspect.Catalog, inflector inflect.Next, opts Options) *Builder
 		TypeForComposite:  map[string]string{},
 		InputForComposite: map[string]string{},
 		log:               opts.Logger,
+		hidden:            hidden,
+		recordTypes:       map[*introspect.Function]string{},
 	}
 	// The GeoJSON scalar is only declared when the database actually has a
 	// PostGIS column, so schemas without spatial data are byte-identical to
@@ -163,6 +185,26 @@ func New(cat *introspect.Catalog, inflector inflect.Next, opts Options) *Builder
 	b.addTables()
 	b.addFunctions()
 	return b
+}
+
+// withoutPartitions returns cat without its partitions, plus the keys of the
+// tables it dropped. cat itself is returned when it has none.
+func withoutPartitions(cat *introspect.Catalog) (*introspect.Catalog, map[string]bool) {
+	hidden := map[string]bool{}
+	var kept []*introspect.Table
+	for _, t := range cat.Tables {
+		if t.IsPartition() {
+			hidden[tableKey(t.Schema, t.Name)] = true
+			continue
+		}
+		kept = append(kept, t)
+	}
+	if len(hidden) == 0 {
+		return cat, hidden
+	}
+	cp := *cat
+	cp.Tables = kept
+	return &cp, hidden
 }
 
 // addNode declares the Relay Node interface and the node(nodeId:) global
@@ -973,6 +1015,11 @@ func (b *Builder) addFunctions() {
 		return
 	}
 	for _, f := range b.Catalog.Functions {
+		if b.usesHiddenTable(f) {
+			b.log.Debug("skipping function: uses the row type of a table left out of the schema",
+				"function", f.Schema+"."+f.Name)
+			continue
+		}
 		// A function whose first argument is a table's row type is a computed
 		// column on that table's type, not a root field.
 		if len(f.Args) > 0 {
@@ -991,25 +1038,13 @@ func (b *Builder) addFunctions() {
 				"function", f.Schema+"."+f.Name)
 			continue
 		}
-		retElem := strings.TrimPrefix(f.ReturnType, "_")
-		retBase := scalarFor(retElem)
-		// An enum return type resolves to the generated enum type: a bare
-		// scalarFor would flatten it to String, and the compiler would then
-		// emit raw pg labels for a field the client reads as an enum.
-		// Composite returns deliberately stay scalars — the JWT mint path
-		// replaces a mint-composite result with a signed token string.
-		if e := b.Catalog.Enum(f.ReturnTypeSchema, retElem); e != nil {
-			retBase = b.Inflect(inflect.KindEnumTypeName, inflect.Input{Schema: e.Schema, Enum: e.Name})
-		}
-		// setof <table> -> list of the table's object type when known.
-		for key, tn := range b.TypeForTable {
-			if strings.HasSuffix(key, "."+f.ReturnType) {
-				retBase = tn
-				break
-			}
-		}
-		if f.ReturnType == "void" {
-			retBase = "Boolean"
+		// The JWT mint path replaces a mint-composite result with a signed
+		// token string, so that composite stays a String here.
+		retBase, ok := b.functionReturnBase(f, true)
+		if !ok {
+			b.log.Debug("skipping function: return type has no GraphQL representation (RETURNS record without OUT parameters?)",
+				"function", f.Schema+"."+f.Name, "type", f.ReturnType)
+			continue
 		}
 		retType := retBase
 		switch {
@@ -1038,8 +1073,9 @@ func (b *Builder) addFunctions() {
 			in := &Input{Name: inputName}
 			for _, a := range f.Args {
 				in.AddField(&InputField{
-					Name: coreinflect.LowerCamel(a.Name),
-					Type: b.argGQLType(a),
+					Name:        coreinflect.LowerCamel(a.Name),
+					Type:        b.argGQLType(a),
+					Description: argDescription(a),
 				})
 			}
 			in.AddField(&InputField{Name: "clientMutationId", Type: "String"})
@@ -1062,36 +1098,131 @@ func (b *Builder) addFunctions() {
 			})
 			continue
 		}
-		var args []Arg
-		for _, a := range f.Args {
-			args = append(args, Arg{
-				Name: coreinflect.LowerCamel(a.Name),
-				Type: b.argGQLType(a),
-			})
-		}
 		b.addRootField(b.Query, &Field{
 			Name:        fieldName,
 			Type:        retType,
 			Description: f.Comment,
-			Args:        args,
+			Args:        b.functionArgs(f.Args),
 			Meta:        &FieldMeta{Kind: KindFunction, Function: f},
 		})
 	}
 }
 
-// argGQLType maps a function argument's pg type to a GraphQL input type;
-// array types ("_uuid") become lists. Enum and composite arguments resolve to
-// their generated input types so callers pass enum value names rather than raw
-// pg labels (the compiler maps them back via coerceInput).
-func (b *Builder) argGQLType(a introspect.FuncArg) string {
-	elem := strings.TrimPrefix(a.PGType, "_")
-	base := scalarFor(elem)
-	// Enum arguments take the generated enum type so callers pass value names;
-	// the compiler maps them back to pg labels (argParam). Composite arguments
-	// stay scalars: nothing coerces a composite literal on the way in.
-	if e := b.Catalog.Enum(a.TypeSchema, elem); e != nil {
-		base = b.Inflect(inflect.KindEnumTypeName, inflect.Input{Schema: e.Schema, Enum: e.Name})
+// functionArgs maps function parameters to GraphQL field arguments. All are
+// nullable: an omitted argument is left out of the call, so a parameter with
+// a DEFAULT takes it, and an explicit null passes SQL NULL.
+func (b *Builder) functionArgs(params []introspect.FuncArg) []Arg {
+	var args []Arg
+	for _, a := range params {
+		args = append(args, Arg{
+			Name:        coreinflect.LowerCamel(a.Name),
+			Type:        b.argGQLType(a),
+			Description: argDescription(a),
+		})
 	}
+	return args
+}
+
+// argDescription documents an optional (DEFAULT) or VARIADIC parameter.
+func argDescription(a introspect.FuncArg) string {
+	var parts []string
+	if a.HasDefault {
+		if a.Default != "" {
+			parts = append(parts, "Optional; defaults to `"+a.Default+"` when omitted.")
+		} else {
+			parts = append(parts, "Optional; the function's default applies when omitted.")
+		}
+	}
+	if a.Variadic() {
+		parts = append(parts, "Variadic: pass the values as a list.")
+	}
+	return strings.Join(parts, " ")
+}
+
+// functionReturnBase resolves the GraphQL type of one value f returns (list
+// wrappers left to the caller): a table's object type, the generated record
+// type for OUT/TABLE parameters, an enum, a composite's object type, or a
+// scalar. With mint set, the JWT composite (Options.JWTType) stays a String.
+// ok is false when the result has no GraphQL representation (RETURNS record
+// without output parameters).
+func (b *Builder) functionReturnBase(f *introspect.Function, mint bool) (string, bool) {
+	elem := strings.TrimPrefix(f.ReturnType, "_")
+	switch {
+	case f.ReturnType == "void":
+		return "Boolean", true
+	case f.ReturnType == "record" && f.ReturnTypeSchema == "pg_catalog":
+		if len(f.ReturnColumns) == 0 {
+			return "", false
+		}
+		return b.functionRecordType(f), true
+	}
+	key := tableKey(f.ReturnTypeSchema, elem)
+	if tn, ok := b.TypeForTable[tableKey(f.ReturnTypeSchema, f.ReturnType)]; ok {
+		return tn, true
+	}
+	if e := b.Catalog.Enum(f.ReturnTypeSchema, elem); e != nil {
+		return b.Inflect(inflect.KindEnumTypeName, inflect.Input{Schema: e.Schema, Enum: e.Name}), true
+	}
+	if tn, ok := b.TypeForComposite[key]; ok && (!mint || key != b.Options.JWTType) {
+		return tn, true
+	}
+	return scalarFor(elem), true
+}
+
+// functionRecordType returns the object type of the rows f returns through
+// OUT/INOUT/TABLE parameters, generating it on first use: one nullable field
+// per output parameter, bound like a table column (KindColumn) to a
+// synthetic column named after the parameter.
+func (b *Builder) functionRecordType(f *introspect.Function) string {
+	if name, ok := b.recordTypes[f]; ok {
+		return name
+	}
+	name := b.uniqueTypeName(b.Inflect(inflect.KindFunctionRecord, inflect.Input{Schema: f.Schema, Function: f.Name}))
+	src := &introspect.Table{Schema: f.Schema, Name: f.Name, Kind: introspect.RelView}
+	obj := &Object{Name: name, Description: "The output parameters of " + f.Name + "."}
+	for i, a := range f.ReturnColumns {
+		c := &introspect.Column{
+			Name: a.Name, Position: i + 1,
+			PGType: a.PGType, TypeSchema: a.TypeSchema,
+			IsArray: strings.HasPrefix(a.PGType, "_"),
+		}
+		src.Columns = append(src.Columns, c)
+		obj.AddField(&Field{
+			Name: b.Inflect(inflect.KindFieldName, inflect.Input{Schema: f.Schema, Table: f.Name, Column: a.Name}),
+			Type: b.gqlTypeForColumn(c),
+			Meta: &FieldMeta{Kind: KindColumn, Table: src, Column: c},
+		})
+	}
+	b.Objects[name] = obj
+	b.recordTypes[f] = name
+	return name
+}
+
+// usesHiddenTable reports whether a parameter or the return type of f is the
+// row type of a table left out of the schema (see Options.ExposePartitions).
+func (b *Builder) usesHiddenTable(f *introspect.Function) bool {
+	if len(b.hidden) == 0 {
+		return false
+	}
+	if b.hidden[tableKey(f.ReturnTypeSchema, strings.TrimPrefix(f.ReturnType, "_"))] {
+		return true
+	}
+	for _, a := range append(append([]introspect.FuncArg{}, f.Args...), f.ReturnColumns...) {
+		if b.hidden[tableKey(a.TypeSchema, strings.TrimPrefix(a.PGType, "_"))] {
+			return true
+		}
+	}
+	return false
+}
+
+// argGQLType maps a function argument's pg type to a GraphQL input type the
+// same way a column's input type is chosen: enums take the generated enum
+// type (callers pass value names), composites their generated input type,
+// PostGIS types GeoJSON. Array types ("_uuid", and every VARIADIC
+// parameter) become lists.
+func (b *Builder) argGQLType(a introspect.FuncArg) string {
+	elem := &introspect.Column{Name: a.Name, PGType: strings.TrimPrefix(a.PGType, "_"), TypeSchema: a.TypeSchema}
+	base := b.gqlInputTypeForColumn(elem)
 	if strings.HasPrefix(a.PGType, "_") {
 		return "[" + base + "]"
 	}
@@ -1123,7 +1254,7 @@ func rowTypeArg(cat *introspect.Catalog, f *introspect.Function) string {
 // addComputedField exposes a stable/immutable function whose first argument
 // is t's row type as a computed field on t's object type. A `<table>_` name
 // prefix is stripped by the default inflector (users_post_count -> postCount);
-// remaining scalar arguments become GraphQL field arguments.
+// remaining arguments become GraphQL field arguments.
 func (b *Builder) addComputedField(t *introspect.Table, f *introspect.Function) {
 	fnKey := f.Schema + "." + f.Name
 	switch {
@@ -1138,36 +1269,25 @@ func (b *Builder) addComputedField(t *introspect.Table, f *introspect.Function) 
 	if obj == nil {
 		return
 	}
-	var fieldType string
-	if f.ReturnsSet {
-		// Set-returning computed column: SETOF <table> becomes a list of the
-		// table's object type, SETOF <scalar> a scalar list.
-		if tn, ok := b.TypeForTable[tableKey(f.ReturnTypeSchema, f.ReturnType)]; ok {
-			fieldType = "[" + tn + "!]!"
-		} else {
-			ret := &introspect.Column{PGType: f.ReturnType, TypeSchema: f.ReturnTypeSchema}
-			fieldType = "[" + b.gqlTypeForColumn(ret) + "!]!"
-		}
-	} else {
-		ret := &introspect.Column{
-			PGType:     f.ReturnType,
-			TypeSchema: f.ReturnTypeSchema,
-			IsArray:    strings.HasPrefix(f.ReturnType, "_"),
-		}
-		fieldType = b.gqlTypeForColumn(ret) // always nullable: the function may return NULL
+	base, ok := b.functionReturnBase(f, false)
+	if !ok {
+		b.log.Debug("skipping computed column: return type has no GraphQL representation", "function", fnKey)
+		return
 	}
-	var args []Arg
-	for _, a := range f.Args[1:] {
-		args = append(args, Arg{
-			Name: coreinflect.LowerCamel(a.Name),
-			Type: b.argGQLType(a),
-		})
+	var fieldType string
+	switch {
+	case f.ReturnsSet:
+		fieldType = "[" + base + "!]!"
+	case strings.HasPrefix(f.ReturnType, "_"):
+		fieldType = "[" + base + "!]"
+	default:
+		fieldType = base // always nullable: the function may return NULL
 	}
 	b.addRootField(obj, &Field{
 		Name:        b.Inflect(inflect.KindComputedField, inflect.Input{Schema: f.Schema, Table: t.Name, Function: f.Name}),
 		Type:        fieldType,
 		Description: f.Comment,
-		Args:        args,
+		Args:        b.functionArgs(f.Args[1:]),
 		Meta:        &FieldMeta{Kind: KindComputed, Table: t, Function: f},
 	})
 }
@@ -1341,6 +1461,9 @@ func (b *Builder) writeObject(out *strings.Builder, o *Object) {
 			} else {
 				parts[i] = fmt.Sprintf("%s: %s", a.Name, a.Type)
 			}
+			if a.Description != "" {
+				parts[i] = blockString(a.Description) + " " + parts[i]
+			}
 		}
 		fmt.Fprintf(out, "  %s(%s): %s%s\n", f.Name, strings.Join(parts, ", "), f.Type, deprecated)
 	}
@@ -1351,7 +1474,12 @@ func writeDesc(out *strings.Builder, desc, indent string) {
 	if desc == "" {
 		return
 	}
-	fmt.Fprintf(out, "%s\"\"\"%s\"\"\"\n", indent, strings.ReplaceAll(desc, `"""`, `\"""`))
+	fmt.Fprintf(out, "%s%s\n", indent, blockString(desc))
+}
+
+// blockString renders desc as a GraphQL block string.
+func blockString(desc string) string {
+	return `"""` + strings.ReplaceAll(desc, `"""`, `\"""`) + `"""`
 }
 
 func sortedKeys[V any](m map[string]V) []string {

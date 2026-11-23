@@ -273,3 +273,56 @@ func sdlType(sdl, header string) string {
 	}
 	return sdl[i : i+j+1]
 }
+
+func TestPartitionsHiddenByDefault(t *testing.T) {
+	partitioned := func() *introspect.Catalog {
+		cat := testutil.FixtureCatalog()
+		cols := func() []*introspect.Column {
+			return []*introspect.Column{
+				{Name: "id", Position: 1, PGType: "int4", TypeSchema: "pg_catalog", NotNull: true},
+				{Name: "at", Position: 2, PGType: "date", TypeSchema: "pg_catalog", NotNull: true},
+			}
+		}
+		privs := introspect.Privileges{Select: true, Insert: true, Update: true, Delete: true}
+		cat.Tables = append(cat.Tables,
+			&introspect.Table{
+				Schema: "public", Name: "measurements", Kind: introspect.RelTable, Partitioned: true,
+				Columns: cols(), Privileges: privs,
+				PrimaryKey: &introspect.Constraint{Name: "measurements_pkey", Columns: []string{"id", "at"}},
+			},
+			&introspect.Table{
+				Schema: "public", Name: "measurements_2026", Kind: introspect.RelTable,
+				PartitionOf: "public.measurements", Columns: cols(), Privileges: privs,
+			})
+		cat.Functions = append(cat.Functions, &introspect.Function{
+			Schema: "public", Name: "latest_2026",
+			ReturnType: "measurements_2026", ReturnTypeSchema: "public", ReturnsSet: true,
+			Volatility: introspect.VolatilityStable,
+		})
+		return cat
+	}
+	build := func(expose bool) string {
+		b := schema.New(partitioned(), inflect.Default, schema.Options{Functions: true, ExposePartitions: expose})
+		built, err := b.Build()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return built.SDL
+	}
+
+	sdl := build(false)
+	if !strings.Contains(sdl, "allMeasurements(") {
+		t.Error("partitioned parent missing")
+	}
+	for _, leaked := range []string{"Measurements2026", "measurements2026", "latest2026"} {
+		if strings.Contains(sdl, leaked) {
+			t.Errorf("partition surface %q exposed by default", leaked)
+		}
+	}
+	sdl = build(true)
+	for _, want := range []string{"allMeasurements2026s(", "latest2026: [Measurements2026!]!"} {
+		if !strings.Contains(sdl, want) {
+			t.Errorf("expose_partitions: SDL missing %q", want)
+		}
+	}
+}

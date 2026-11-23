@@ -117,7 +117,7 @@ func (p *Plugin) Inflect(kind inflect.Kind, in inflect.Input, next inflect.Next)
 			in.Enum = name
 		}
 	case inflect.KindFunctionField, inflect.KindFunctionInput, inflect.KindFunctionPayload,
-		inflect.KindComputedField:
+		inflect.KindComputedField, inflect.KindFunctionRecord:
 		if name := p.Index().Function(in.Schema, in.Function).First("name"); name != "" {
 			in.Function = name
 		}

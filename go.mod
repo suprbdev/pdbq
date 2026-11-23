@@ -32,4 +32,4 @@ require (
 	golang.org/x/text v0.29.0 // indirect
 )
 
-require github.com/suprbdev/pdbcore v0.2.0
+require github.com/suprbdev/pdbcore v0.3.0

@@ -1,0 +1,12 @@
+# variables: {"g": null}
+# Calls use named notation and pass only the arguments given: an omitted
+# argument takes the function's DEFAULT, an explicit null passes NULL, and a
+# variable the request leaves out counts as omitted.
+query ($g: String, $missing: String) {
+  omitted: greet(name: "Ada")
+  given: greet(name: "Ada", greeting: "Hi")
+  explicitNull: greet(name: "Ada", greeting: null)
+  nullVariable: greet(name: "Ada", greeting: $g)
+  missingVariable: greet(name: "Ada", greeting: $missing)
+  allUsers(first: 1) { nodes { greeting greetingWithPrefix: greeting(prefix: "Yo") } }
+}

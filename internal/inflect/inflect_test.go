@@ -22,6 +22,10 @@ func TestDefaultNames(t *testing.T) {
 		{KindRelationBackward, Input{Table: "posts", Columns: []string{"author_id"}}, "postsByAuthorId"},
 		{KindEnumValueName, Input{Value: "very happy"}, "VERY_HAPPY"},
 		{KindEnumValueName, Input{Value: "1st"}, "_1ST"},
+		{KindFunctionRecord, Input{Function: "order_status_counts"}, "OrderStatusCountsRecord"},
+		{KindTypeName, Input{Table: "purchases"}, "Purchase"},
+		{KindTypeName, Input{Table: "order_statuses"}, "OrderStatus"},
+		{KindTypeName, Input{Table: "spatial_ref_sys"}, "SpatialRefSys"},
 	}
 	for _, c := range cases {
 		if got := Default(c.kind, c.in); got != c.want {
