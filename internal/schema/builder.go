@@ -15,6 +15,7 @@ import (
 	"github.com/suprbdev/pdbcore/introspect"
 	"github.com/suprbdev/pdbcore/postgis"
 	"github.com/suprbdev/pdbcore/smarttags"
+	"github.com/suprbdev/pdbq/internal/contribtype"
 	"github.com/suprbdev/pdbq/internal/inflect"
 )
 
@@ -87,6 +88,10 @@ type Builder struct {
 	// InputForComposite maps "schema.type" to the generated input type name.
 	InputForComposite map[string]string
 
+	// contribTypes records the contrib scalar, range object and input type
+	// names declared so far (see ensureContrib).
+	contribTypes map[string]bool
+
 	log *slog.Logger
 	// hidden holds the "schema.table" keys of tables left out of the
 	// catalog (partitions), so functions over their row types are skipped.
@@ -128,6 +133,11 @@ type Built struct {
 	// FilterComputed maps filter input type name -> field name -> the
 	// computed-column function backing it (advanced-filters plugin).
 	FilterComputed map[string]map[string]*introspect.Function
+	// ContribTypes is the set of contrib output types (FullText,
+	// KeyValueHash, IntRange, ...) the schema declares. A column whose
+	// contrib type is missing here fell back to String because the name
+	// was taken; see ContribColumn.
+	ContribTypes map[string]bool
 }
 
 type OrderSpec struct {
@@ -141,6 +151,14 @@ type OrderSpec struct {
 	// Distance orders by spatial distance from the field's near: geometry
 	// (postgis plugin); Column names the spatial column measured from.
 	Distance bool
+	// Rank orders by the full-text rank of Column against the first
+	// matches* operator on it in the field's filter (contrib plugin).
+	Rank bool
+	// Similarity names the pg_trgm distance expression ("distance",
+	// "wordDistance", "strictWordDistance") ordering by similarity of
+	// Column to the field's similarTo: reference text (contrib plugin);
+	// Desc applies to the distance, so best matches first is ascending.
+	Similarity string
 }
 
 // New creates a Builder with all default types generated from the catalog.
@@ -165,6 +183,7 @@ func New(cat *introspect.Catalog, inflector inflect.Next, opts Options) *Builder
 		TypeForTable:      map[string]string{},
 		TypeForComposite:  map[string]string{},
 		InputForComposite: map[string]string{},
+		contribTypes:      map[string]bool{},
 		log:               opts.Logger,
 		hidden:            hidden,
 		recordTypes:       map[*introspect.Function]string{},
@@ -318,6 +337,11 @@ func (b *Builder) gqlTypeForColumn(c *introspect.Column) string {
 		base = b.Inflect(inflect.KindEnumTypeName, inflect.Input{Schema: e.Schema, Enum: e.Name})
 	} else if tn, ok := b.TypeForComposite[tableKey(c.TypeSchema, pg)]; ok {
 		base = tn
+	} else if ci := b.ContribColumn(c); ci.Owned() {
+		if ci.Kind == contribtype.Multirange {
+			return "[" + ci.Scalar + "!]"
+		}
+		base = ci.Scalar
 	} else {
 		base = scalarFor(pg)
 	}
@@ -325,6 +349,71 @@ func (b *Builder) gqlTypeForColumn(c *introspect.Column) string {
 		return "[" + base + "!]"
 	}
 	return base
+}
+
+// ContribColumn resolves a column's contrib mapping (see package
+// contribtype), declaring the scalar or range types it needs on first use.
+// A column whose type name is already taken by another type keeps the
+// String fallback and resolves as not owned.
+func (b *Builder) ContribColumn(c *introspect.Column) contribtype.Column {
+	ci := contribtype.For(b.Catalog, c)
+	if !ci.Owned() || b.ensureContrib(ci) {
+		return ci
+	}
+	return contribtype.Column{Vocabs: ci.Vocabs}
+}
+
+// ensureContrib declares the output (and, for ranges, input) types of a
+// contrib column once, reporting false when a name is taken by a type it
+// did not declare.
+func (b *Builder) ensureContrib(ci contribtype.Column) bool {
+	if ci.Scalar == "String" || b.contribTypes[ci.Scalar] {
+		return true
+	}
+	names := []string{ci.Scalar}
+	if ci.Kind == contribtype.Range || ci.Kind == contribtype.Multirange {
+		names = append(names, contribtype.RangeBound(ci.Scalar), ci.Input, contribtype.RangeBoundInput(ci.Scalar))
+	}
+	for _, n := range names {
+		_, obj := b.Objects[n]
+		_, in := b.Inputs[n]
+		_, en := b.Enums[n]
+		if obj || in || en || slices.Contains(b.Scalars, n) {
+			b.log.Warn("contrib type name already taken, column falls back to String", "type", n)
+			return false
+		}
+	}
+	for _, n := range names {
+		b.contribTypes[n] = true
+	}
+	if ci.Kind != contribtype.Range && ci.Kind != contribtype.Multirange {
+		b.Scalars = append(b.Scalars, ci.Scalar)
+		return true
+	}
+	bound := contribtype.RangeBound(ci.Scalar)
+	boundIn := contribtype.RangeBoundInput(ci.Scalar)
+	desc := "A range of `" + ci.ElemScalar + "`."
+	boundDesc := "The value at one end of a range. A range can either include this value, or not."
+	synthetic := func() *FieldMeta { return &FieldMeta{Kind: KindSynthetic} }
+	b.Objects[ci.Scalar] = &Object{Name: ci.Scalar, Description: desc, Fields: []*Field{
+		{Name: "start", Type: bound, Description: "The starting bound of our range; null when unbounded.", Meta: synthetic()},
+		{Name: "end", Type: bound, Description: "The ending bound of our range; null when unbounded.", Meta: synthetic()},
+		{Name: "isEmpty", Type: "Boolean!", Description: "Whether the range is empty (both bounds read as null). Not part of PostGraphile's range type.", Meta: synthetic()},
+	}}
+	b.Objects[bound] = &Object{Name: bound, Description: boundDesc, Fields: []*Field{
+		{Name: "value", Type: ci.ElemScalar + "!", Description: "The value at one end of our range.", Meta: synthetic()},
+		{Name: "inclusive", Type: "Boolean!", Description: "Whether or not the value of this bound is included in the range.", Meta: synthetic()},
+	}}
+	b.Inputs[ci.Input] = &Input{Name: ci.Input, Description: desc, Fields: []*InputField{
+		{Name: "start", Type: boundIn, Description: "The starting bound of our range; omit for unbounded."},
+		{Name: "end", Type: boundIn, Description: "The ending bound of our range; omit for unbounded."},
+		{Name: "isEmpty", Type: "Boolean", Description: "True for the empty range; the bounds are then ignored. Not part of PostGraphile's range input."},
+	}}
+	b.Inputs[boundIn] = &Input{Name: boundIn, Description: boundDesc, Fields: []*InputField{
+		{Name: "value", Type: ci.ElemScalar + "!", Description: "The value at one end of our range."},
+		{Name: "inclusive", Type: "Boolean!", Description: "Whether or not the value of this bound is included in the range."},
+	}}
+	return true
 }
 
 // gqlInputTypeForColumn is gqlTypeForColumn for input positions: composite
@@ -337,6 +426,11 @@ func (b *Builder) gqlInputTypeForColumn(c *introspect.Column) string {
 			return "[" + in + "!]"
 		}
 		return in
+	}
+	if ci := b.ContribColumn(c); ci.Kind == contribtype.Range {
+		return ci.Input
+	} else if ci.Kind == contribtype.Multirange {
+		return "[" + ci.Input + "!]"
 	}
 	return b.gqlTypeForColumn(c)
 }
@@ -407,7 +501,7 @@ func (b *Builder) addTables() {
 }
 
 func (b *Builder) uniqueTypeName(name string) string {
-	for b.Objects[name] != nil || b.Enums[name] != nil || b.Inputs[name] != nil {
+	for b.Objects[name] != nil || b.Enums[name] != nil || b.Inputs[name] != nil || slices.Contains(b.Scalars, name) {
 		b.log.Warn("type name collision, appending suffix", "name", name)
 		name += "_"
 	}
@@ -561,9 +655,7 @@ func (b *Builder) addFilter(t *introspect.Table) string {
 		if postgis.IsSpatial(c.PGType) {
 			continue
 		}
-		gqlType := b.gqlTypeForColumn(c)
-		elem := strings.TrimSuffix(strings.TrimPrefix(gqlType, "["), "!]")
-		opInput := b.opInputFor(elem, c.PGType, c.IsArray)
+		opInput := b.FilterOpsInputFor(c)
 		in.AddField(&InputField{
 			Name:   b.Inflect(inflect.KindFieldName, inflect.Input{Table: t.Name, Column: c.Name}),
 			Type:   opInput,
@@ -614,6 +706,9 @@ func (b *Builder) FilterableColumns(t *introspect.Table) []*introspect.Column {
 // a column-shaped value — exported for SchemaHook plugins adding filterable
 // fields (e.g. advanced-filters computed columns).
 func (b *Builder) FilterOpsInputFor(c *introspect.Column) string {
+	if ci := b.ContribColumn(c); ci.Owned() && ci.OpsInput != "" {
+		return b.contribOpInput(ci)
+	}
 	gqlType := b.gqlTypeForColumn(c)
 	elem := strings.TrimSuffix(strings.TrimPrefix(gqlType, "["), "!]")
 	return b.opInputFor(elem, c.PGType, c.IsArray)
@@ -637,6 +732,22 @@ func (b *Builder) opInputFor(gqlType, pgType string, isArray bool) string {
 	}
 	b.Inputs[name] = in
 	return name
+}
+
+// contribOpInput returns (creating if needed) the shared operator input of a
+// contrib type (FullTextFilterOps, KeyValueHashFilterOps, ...) holding its
+// generic comparison operators; the contrib plugin adds the vocabulary
+// operators.
+func (b *Builder) contribOpInput(ci contribtype.Column) string {
+	if _, ok := b.Inputs[ci.OpsInput]; ok {
+		return ci.OpsInput
+	}
+	in := &Input{Name: ci.OpsInput}
+	for _, op := range contribFilterOps(ci) {
+		in.AddField(&InputField{Name: op.Name, Type: op.Type})
+	}
+	b.Inputs[ci.OpsInput] = in
+	return ci.OpsInput
 }
 
 // addDistinctOn creates the <Types>DistinctOn column enum backing the
@@ -1221,6 +1332,13 @@ func (b *Builder) functionReturnBase(f *introspect.Function, mint bool) (string,
 	if tn, ok := b.TypeForComposite[key]; ok && (!mint || key != b.Options.JWTType) {
 		return tn, true
 	}
+	ret := &introspect.Column{PGType: f.ReturnType, TypeSchema: f.ReturnTypeSchema, IsArray: strings.HasPrefix(f.ReturnType, "_")}
+	if ci := b.ContribColumn(ret); ci.Owned() {
+		if ci.Kind == contribtype.Multirange {
+			return "[" + ci.Scalar + "!]", true
+		}
+		return ci.Scalar, true
+	}
 	return scalarFor(elem), true
 }
 
@@ -1274,11 +1392,16 @@ func (b *Builder) usesHiddenTable(f *introspect.Function) bool {
 // same way a column's input type is chosen: enums take the generated enum
 // type (callers pass value names), composites their generated input type,
 // PostGIS types GeoJSON. Array types ("_uuid", and every VARIADIC
-// parameter) become lists.
+// parameter) become lists; arrays of contrib types other than ltree[] are
+// lists of their text form, like array columns of those types.
 func (b *Builder) argGQLType(a introspect.FuncArg) string {
 	elem := &introspect.Column{Name: a.Name, PGType: strings.TrimPrefix(a.PGType, "_"), TypeSchema: a.TypeSchema}
 	base := b.gqlInputTypeForColumn(elem)
 	if strings.HasPrefix(a.PGType, "_") {
+		arr := &introspect.Column{Name: a.Name, PGType: a.PGType, TypeSchema: a.TypeSchema, IsArray: true}
+		if b.ContribColumn(elem).Owned() && !b.ContribColumn(arr).Owned() {
+			base = "String"
+		}
 		return "[" + base + "]"
 	}
 	return base
@@ -1380,6 +1503,7 @@ func (b *Builder) Build() (*Built, error) {
 		InputColumns:        map[string]map[string]string{},
 		FilterRelations:     map[string]map[string]*FilterRelation{},
 		FilterComputed:      map[string]map[string]*introspect.Function{},
+		ContribTypes:        b.contribTypes,
 	}
 	for _, e := range b.Catalog.Enums {
 		built.EnumTypeForPG[e.Schema+"."+e.Name] = b.Inflect(inflect.KindEnumTypeName, inflect.Input{Schema: e.Schema, Enum: e.Name})
@@ -1401,7 +1525,10 @@ func (b *Builder) Build() (*Built, error) {
 		values := map[string]string{}
 		for _, v := range en.Values {
 			if v.Column != "" || v.Computed != nil || v.Relation != nil {
-				ordered[v.Name] = OrderSpec{Column: v.Column, Desc: v.Desc, Computed: v.Computed, Relation: v.Relation, Distance: v.Distance}
+				ordered[v.Name] = OrderSpec{
+					Column: v.Column, Desc: v.Desc, Computed: v.Computed, Relation: v.Relation,
+					Distance: v.Distance, Rank: v.Rank, Similarity: v.Similarity,
+				}
 			}
 			if v.PGValue != "" {
 				values[v.Name] = v.PGValue

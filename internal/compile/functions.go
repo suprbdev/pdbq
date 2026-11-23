@@ -145,9 +145,13 @@ func fnReturnColumn(fn *introspect.Function) *introspect.Column {
 }
 
 // fnValueJSON renders an already-materialized function result value (a stable
-// reference such as "__fn.v", not a call expression) as response JSON.
-func (s *stmt) fnValueJSON(ref string, fn *introspect.Function) string {
+// reference such as "__fn.v", not a call expression) as response JSON; sel
+// is the result field's selection (range objects).
+func (s *stmt) fnValueJSON(ref string, fn *introspect.Function, sel ast.SelectionSet) string {
 	ret := fnReturnColumn(fn)
+	if expr, ok := s.contribJSON(ref, ret, sel); ok {
+		return expr
+	}
 	if ret.IsArray {
 		if expr, ok := s.enumArrayJSON(ref, ret); ok {
 			return expr
@@ -201,7 +205,7 @@ func (s *stmt) function(meta *schema.FieldMeta, f *ast.Field) (string, error) {
 			return fmt.Sprintf("SELECT coalesce(jsonb_agg(%s), '[]'::jsonb) AS data FROM (SELECT %s AS v) AS __v", expr, call), nil
 		}
 		return fmt.Sprintf("SELECT coalesce(jsonb_agg(%s), '[]'::jsonb) AS data FROM %s AS __v",
-			s.fnValueJSON("__v", fn), call), nil
+			s.fnValueJSON("__v", fn, f.SelectionSet), call), nil
 	}
 	switch shape {
 	case fnRows:
@@ -228,7 +232,7 @@ func (s *stmt) function(meta *schema.FieldMeta, f *ast.Field) (string, error) {
 	// arrays), and subscripting the call directly would re-evaluate it per
 	// element.
 	return fmt.Sprintf("SELECT %s AS data FROM (SELECT %s AS v) AS __fn",
-		s.fnValueJSON("__fn.v", fn), call), nil
+		s.fnValueJSON("__fn.v", fn, f.SelectionSet), call), nil
 }
 
 // functionMutation compiles a volatile function with the Relay-classic shape
@@ -274,7 +278,9 @@ func (s *stmt) functionMutation(meta *schema.FieldMeta, f *ast.Field) (string, e
 	}
 
 	shape, comp := fnScalar, (*introspect.Composite)(nil)
+	var resultSel ast.SelectionSet
 	if resultField != nil {
+		resultSel = resultField.SelectionSet
 		shape, comp = s.fnResultShape(fn, resultField.SelectionSet)
 	}
 	// Pick the row source (always containing the call) and the result
@@ -300,7 +306,7 @@ func (s *stmt) functionMutation(meta *schema.FieldMeta, f *ast.Field) (string, e
 			from = fmt.Sprintf("(SELECT coalesce(jsonb_agg(%s), '[]'::jsonb) AS data FROM (SELECT %s AS v) AS __v) AS __agg", expr, call)
 		default:
 			from = fmt.Sprintf("(SELECT coalesce(jsonb_agg(%s), '[]'::jsonb) AS data FROM %s AS __v) AS __agg",
-				s.fnValueJSON("__v", fn), call)
+				s.fnValueJSON("__v", fn, resultSel), call)
 		}
 		resultExpr = "__agg.data"
 	case fn.ReturnType == "void":
@@ -323,7 +329,7 @@ func (s *stmt) functionMutation(meta *schema.FieldMeta, f *ast.Field) (string, e
 		}
 	default:
 		from = fmt.Sprintf("(SELECT %s AS v) AS __fn", call)
-		resultExpr = s.fnValueJSON("__fn.v", fn)
+		resultExpr = s.fnValueJSON("__fn.v", fn, resultSel)
 	}
 	if resultField != nil {
 		pairs = append(pairs, quoteLiteral(resultField.Alias), resultExpr)
@@ -379,8 +385,12 @@ func (s *stmt) computedJSON(meta *schema.FieldMeta, f *ast.Field, alias string, 
 	}
 	if fn.ReturnsSet {
 		elem := s.alias("v")
+		value, ok := s.contribJSON(elem+".v", ret, f.SelectionSet)
+		if !ok {
+			value = s.exprJSON(elem+".v", ret)
+		}
 		return fmt.Sprintf("(SELECT coalesce(jsonb_agg(%s), '[]'::jsonb) FROM %s AS %s(v))",
-			s.exprJSON(elem+".v", ret), call, elem), nil
+			value, call, elem), nil
 	}
 	if ret.IsArray {
 		// A function call is not a stable reference: enumArrayJSON would
@@ -391,6 +401,9 @@ func (s *stmt) computedJSON(meta *schema.FieldMeta, f *ast.Field, alias string, 
 			return fmt.Sprintf("(SELECT %s FROM (SELECT %s AS v) AS %s)", mapped, call, sub), nil
 		}
 		return "to_jsonb(" + call + ")", nil
+	}
+	if expr, ok := s.contribJSON(call, ret, f.SelectionSet); ok {
+		return expr, nil
 	}
 	return s.exprJSON(call, ret), nil
 }

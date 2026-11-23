@@ -14,12 +14,15 @@ import (
 
 // FuzzFilter drives arbitrary values through the filter-input -> SQL path
 // and asserts the invariant that makes injection impossible: user values
-// never appear in the SQL text, only in the parameter list.
+// never appear in the SQL text, only in the parameter list. It runs against
+// the contrib fixture so the contrib vocabulary operators (full-text,
+// pg_trgm, hstore, ltree, citext, ranges, inet), the codec-typed generic
+// comparisons, rank and similarity ordering are covered too.
 func FuzzFilter(f *testing.F) {
-	built := build(f)
+	built := buildContrib(f)
 	compiler := compile.New(built)
 
-	const query = `query ($e: String, $tag: [String!], $n: Int) {
+	const query = `query ($e: String, $tag: [String!], $n: Int!, $h: KeyValueHash, $b: Boolean!, $d: Datetime, $ip: InternetAddress, $ips: [InternetAddress!], $cfg: String) {
 		allUsers(filter: {
 			and: [
 				{email: {like: $e, startsWith: $e}}
@@ -27,6 +30,23 @@ func FuzzFilter(f *testing.F) {
 				{settings: {pathExists: $e, pathMatch: $e}}
 			]
 		}) { nodes { id } }
+		allDocuments(
+			filter: {
+				search: {matches: $e, matchesWebsearch: $e, config: $cfg}
+				title: {similarTo: $e, wordSimilarTo: $e, strictWordSimilarTo: $e}
+				slug: {equalTo: $e, in: $tag, likeInsensitive: $e, startsWith: $e}
+				attrs: {containsKey: $e, containsAllKeys: $tag, contains: $h, equalTo: $h}
+				path: {ancestorOf: $e, matchesLquery: $e, matchesAnyLquery: $tag, in: $tag}
+				paths: {descendantOf: $e, equalTo: $tag}
+				span: {overlaps: {start: {value: $n, inclusive: $b}, end: {value: $n, inclusive: true}}, containsElement: $n}
+				avail: {equalTo: [{start: {value: $n, inclusive: $b}}], containsElement: $n}
+				during: {containsElement: $d}
+				ip: {containedBy: $ip, in: $ips}
+			}
+			condition: {slug: $e, attrs: $h}
+			similarTo: {label: $e}
+			orderBy: [SEARCH_RANK_DESC, LABEL_SIMILARITY_DESC]
+		) { nodes { id searchRank attrs span { start { value inclusive } } } }
 	}`
 	doc, perr := parser.ParseQuery(&ast.Source{Input: query})
 	if perr != nil {
@@ -37,24 +57,29 @@ func FuzzFilter(f *testing.F) {
 	}
 	op := doc.Operations[0]
 
-	compileWith := func(t testing.TB, email, tag string, n int) *compile.Statement {
+	compileWith := func(t testing.TB, email, tag string, n int) []*compile.Statement {
 		t.Helper()
 		vars, verr := validator.VariableValues(built.Schema, op, map[string]any{
-			"e": email, "tag": []any{tag}, "n": n,
+			"e": email, "tag": []any{tag}, "n": n, "h": map[string]any{tag: email}, "b": n%2 == 0,
+			"d": email, "ip": email, "ips": []any{tag}, "cfg": "c" + email,
 		})
 		if verr != nil {
 			t.Skipf("rejected variables: %v", verr)
 		}
-		stmt, err := compiler.Compile(context.Background(), &compile.Request{
-			Field:    op.SelectionSet[0].(*ast.Field),
-			Vars:     vars,
-			Built:    built,
-			MaxDepth: 15,
-		})
-		if err != nil {
-			t.Fatalf("compile error on valid input: %v", err)
+		var out []*compile.Statement
+		for _, sel := range op.SelectionSet {
+			stmt, err := compiler.Compile(context.Background(), &compile.Request{
+				Field:    sel.(*ast.Field),
+				Vars:     vars,
+				Built:    built,
+				MaxDepth: 15,
+			})
+			if err != nil {
+				t.Fatalf("compile error on valid input: %v", err)
+			}
+			out = append(out, stmt)
 		}
-		return stmt
+		return out
 	}
 	// The invariant that makes injection impossible: the SQL text is a pure
 	// function of the query shape — values only move through the parameter
@@ -67,12 +92,13 @@ func FuzzFilter(f *testing.F) {
 	f.Add("", "", 1<<30)
 
 	f.Fuzz(func(t *testing.T, email, tag string, n int) {
-		stmt := compileWith(t, email, tag, n)
-		if stmt.SQL != baseline.SQL {
-			t.Fatalf("SQL text varied with input values:\n--- baseline ---\n%s\n--- got ---\n%s", baseline.SQL, stmt.SQL)
-		}
-		if len(stmt.Args) != len(baseline.Args) {
-			t.Fatalf("parameter count varied: %d != %d", len(stmt.Args), len(baseline.Args))
+		for i, stmt := range compileWith(t, email, tag, n) {
+			if stmt.SQL != baseline[i].SQL {
+				t.Fatalf("SQL text varied with input values:\n--- baseline ---\n%s\n--- got ---\n%s", baseline[i].SQL, stmt.SQL)
+			}
+			if len(stmt.Args) != len(baseline[i].Args) {
+				t.Fatalf("parameter count varied: %d != %d", len(stmt.Args), len(baseline[i].Args))
+			}
 		}
 	})
 }

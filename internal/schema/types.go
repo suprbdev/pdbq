@@ -44,6 +44,11 @@ const (
 	// named by Meta.Nested["suffix"] and compiles to a PostGIS call over
 	// Meta.Column in the same statement.
 	KindSpatialDerived FieldKind = "spatial_derived"
+	// KindFullTextRank is the <field>Rank: Float sibling of a tsvector
+	// column (contrib plugin): the full-text rank of Meta.Column against the
+	// first matches* operator on it in the enclosing list field's filter,
+	// null without one.
+	KindFullTextRank FieldKind = "fulltext_rank"
 )
 
 // FieldMeta binds a GraphQL field to the catalog for SQL compilation.
@@ -244,6 +249,13 @@ type EnumValue struct {
 	// the reference geometry in the field's near: argument (postgis plugin).
 	// Column names the spatial column being measured from.
 	Distance bool
+	// Rank marks orderBy enum values sorting by full-text rank of Column
+	// against the field's matches* filter on it (contrib plugin).
+	Rank bool
+	// Similarity marks orderBy enum values sorting by a pg_trgm distance
+	// expression ("distance", "wordDistance", "strictWordDistance") of
+	// Column from the field's similarTo: reference (contrib plugin).
+	Similarity string
 	// PGValue backs catalog enum values.
 	PGValue string
 }

@@ -1,0 +1,18 @@
+# hstore reads as a KeyValueHash JSON object, ranges as PostGraphile-shaped
+# {start {value inclusive} end {...}} objects (a bound is null when
+# unbounded or the range is empty; BigFloat values are strings), multiranges
+# as lists of them; tsvector, ltree, inet and cidr read as their text form.
+{
+  allDocuments(first: 2) {
+    nodes {
+      id slug search attrs path paths ip net
+      during { start { value inclusive } end { value inclusive } }
+      span { __typename lower: start { value } end { inclusive __typename } }
+      avail { start { value inclusive } end { value inclusive } }
+      price { start { value } end { value } }
+      window { start { value } end { value } }
+      ...on Document { span { end { value } } }
+    }
+  }
+  empty: documentById(id: 1) { span { isEmpty start { value } } avail { isEmpty } stay { nights { isEmpty end { value } } extras } }
+}

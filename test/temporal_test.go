@@ -117,10 +117,10 @@ func TestTemporal(t *testing.T) {
 		if len(page.Nodes) != 1 {
 			t.Fatalf("nodes = %+v", page.Nodes)
 		}
-		res = post(t, hs.URL, `query($id: ID!) { node(nodeId: $id) { ... on RoomBooking { guest validAt } } }`,
+		res = post(t, hs.URL, `query($id: ID!) { node(nodeId: $id) { ... on RoomBooking { guest validAt { start { value } end { value inclusive } } } } }`,
 			map[string]any{"id": page.Nodes[0].NodeID})
 		requireNoErrors(t, res)
-		if got := normalize(t, res.Data["node"]); got != `{"guest":"Grace","validAt":"[2026-03-05,2026-03-10)"}` {
+		if got := normalize(t, res.Data["node"]); got != `{"guest":"Grace","validAt":{"end":{"inclusive":false,"value":"2026-03-10"},"start":{"value":"2026-03-05"}}}` {
 			t.Errorf("node: got %s", got)
 		}
 	})
@@ -159,9 +159,9 @@ func TestTemporal(t *testing.T) {
 	t.Run("integrity errors", func(t *testing.T) {
 		prod := testServer(t, func(c *config.Config) { c.Errors.Detail = "prod" })
 		cases := []struct{ name, query, code, msg string }{
-			{"overlapping temporal key", `mutation { createRoomBooking(input: {roomId: 1, validAt: "[2026-03-02,2026-03-03)", guest: "Overlap"}) { roomBooking { guest } } }`,
+			{"overlapping temporal key", `mutation { createRoomBooking(input: {roomId: 1, validAt: {start: {value: "2026-03-02", inclusive: true}, end: {value: "2026-03-03", inclusive: false}}, guest: "Overlap"}) { roomBooking { guest } } }`,
 				"23P01", `conflicting key value violates exclusion constraint "room_bookings_pkey"`},
-			{"period not covered", `mutation { createBookingNote(input: {roomId: 2, validAt: "[2030-01-01,2030-01-02)", note: "orphan", authorId: 1}) { bookingNote { id } } }`,
+			{"period not covered", `mutation { createBookingNote(input: {roomId: 2, validAt: {start: {value: "2030-01-01", inclusive: true}, end: {value: "2030-01-02", inclusive: false}}, note: "orphan", authorId: 1}) { bookingNote { id } } }`,
 				"23503", `insert or update on table "booking_notes" violates foreign key constraint "booking_notes_room_id_valid_at_fkey"`},
 			{"restrict", `mutation { deleteBookingNoteById(id: 2) { bookingNote { id } } }`,
 				"23001", `update or delete on table "booking_notes" violates RESTRICT setting of foreign key constraint "note_pins_note_id_fkey" on table "note_pins"`},
@@ -191,19 +191,19 @@ func TestTemporal(t *testing.T) {
 
 	t.Run("nested mutations follow the PERIOD foreign key", func(t *testing.T) {
 		query(t, `mutation { createBookingNote(input: {
-			validAt: "[2026-03-04,2026-03-06)", note: "Connected", authorId: 1,
+			validAt: {start: {value: "2026-03-04", inclusive: true}, end: {value: "2026-03-06", inclusive: false}}, note: "Connected", authorId: 1,
 			roomBookingsByRoomIdAndValidAt: {connect: {roomId: 1}}
 		}) { bookingNote { note roomId roomBookingsByRoomIdAndValidAt { nodes { guest } } } } }`,
 			`{"createBookingNote":{"bookingNote":{"note":"Connected","roomBookingsByRoomIdAndValidAt":{"nodes":[{"guest":"Ada"},{"guest":"Grace"}]},"roomId":1}}}`)
 		query(t, `mutation { createRoomBooking(input: {
-			roomId: 3, validAt: "[2026-05-01,2026-05-10)", guest: "Barbara",
-			bookingNotesByRoomIdAndValidAt: {create: [{validAt: "[2026-05-02,2026-05-03)", note: "Nested", authorId: 2}]}
+			roomId: 3, validAt: {start: {value: "2026-05-01", inclusive: true}, end: {value: "2026-05-10", inclusive: false}}, guest: "Barbara",
+			bookingNotesByRoomIdAndValidAt: {create: [{validAt: {start: {value: "2026-05-02", inclusive: true}, end: {value: "2026-05-03", inclusive: false}}, note: "Nested", authorId: 2}]}
 		}) { roomBooking { guest bookingNotesByRoomIdAndValidAt { nodes { note roomId } } } } }`,
 			`{"createRoomBooking":{"roomBooking":{"bookingNotesByRoomIdAndValidAt":{"nodes":[{"note":"Nested","roomId":3}]},"guest":"Barbara"}}}`)
 	})
 
 	t.Run("update by the full temporal key", func(t *testing.T) {
-		query(t, `mutation { updateRoomBookingByRoomIdAndValidAt(roomId: 2, validAt: "[2026-03-02,2026-03-04)", patch: {guest: "Linus T"}) { roomBooking { guest } } }`,
+		query(t, `mutation { updateRoomBookingByRoomIdAndValidAt(roomId: 2, validAt: {start: {value: "2026-03-02", inclusive: true}, end: {value: "2026-03-04", inclusive: false}}, patch: {guest: "Linus T"}) { roomBooking { guest } } }`,
 			`{"updateRoomBookingByRoomIdAndValidAt":{"roomBooking":{"guest":"Linus T"}}}`)
 	})
 }

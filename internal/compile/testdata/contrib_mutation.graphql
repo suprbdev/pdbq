@@ -1,0 +1,31 @@
+# Inputs go through the type's codec: hstore($1::text[]) from a JSON object,
+# range constructors from {start, end} bound objects (a missing bound is
+# unbounded), multiranges from lists of them, and schema-qualified casts for
+# citext and ltree.
+mutation {
+  createDocument(input: {
+    title: "t"
+    slug: "Hello"
+    search: "'cat':1 'dog':2"
+    attrs: {color: "red", size: null}
+    path: "a.b.c"
+    paths: ["a.b", "x"]
+    during: {start: {value: "2024-01-01T00:00:00Z", inclusive: true}}
+    span: {start: {value: 1, inclusive: true}, end: {value: 10, inclusive: false}}
+    avail: [{start: {value: 1, inclusive: true}, end: {value: 3, inclusive: false}}, {start: {value: 7, inclusive: true}, end: {value: 9, inclusive: true}}]
+    price: {start: {value: "9.99", inclusive: true}, end: {value: "19.99", inclusive: true}}
+    ip: "192.168.0.1"
+    net: "10.0.0.0/8"
+  }) {
+    document { id attrs span { start { value inclusive } end { value inclusive } } }
+  }
+  updateDocumentBySlug(slug: "Hello", patch: {attrs: {}, avail: [], span: {}}) {
+    document { id }
+  }
+  updateDocuments(filter: {attrs: {containsKey: "stale"}}, patch: {path: "archive"}) {
+    affectedCount
+  }
+  emptyRange: createDocument(input: {title: "e", span: {isEmpty: true}, stay: {nights: {start: {value: 1, inclusive: true}, end: {value: 3, inclusive: false}}, extras: {a: "x \"y\"", b: null}}}) {
+    document { span { isEmpty } stay { nights { start { value } } extras } }
+  }
+}

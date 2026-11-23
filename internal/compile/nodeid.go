@@ -87,6 +87,16 @@ func (s *stmt) keyParam(col *introspect.Column, v any) any {
 	return s.coerce(col, v)
 }
 
+// keyValue renders a decoded nodeId or cursor key value for column c: a
+// bare parameter, or the codec expression for contrib-owned types (whose
+// keys arrive in their JSON form: text, or an object for hstore).
+func (s *stmt) keyValue(c *introspect.Column, v any) string {
+	if s.contrib(c).Owned() {
+		return s.valueExpr(c, s.keyParam(c, v))
+	}
+	return s.param(s.keyParam(c, v))
+}
+
 // keyCondsFromValues builds `alias."col" = $n` for decoded key values.
 func (s *stmt) keyCondsFromValues(t *introspect.Table, cols []string, vals []any, alias string) ([]string, error) {
 	if len(cols) != len(vals) {
@@ -98,7 +108,7 @@ func (s *stmt) keyCondsFromValues(t *introspect.Table, cols []string, vals []any
 		if c == nil {
 			return nil, fmt.Errorf("compile: unknown key column %q", cn)
 		}
-		conds = append(conds, fmt.Sprintf("%s.%s = %s", alias, quoteIdent(cn), s.param(s.keyParam(c, vals[i]))))
+		conds = append(conds, fmt.Sprintf("%s.%s %s %s", alias, quoteIdent(cn), s.contrib(c).Operator("="), s.keyValue(c, vals[i])))
 	}
 	return conds, nil
 }

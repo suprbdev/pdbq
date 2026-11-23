@@ -11,9 +11,11 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/vektah/gqlparser/v2/ast"
 
+	pgcontrib "github.com/suprbdev/pdbcore/contrib"
 	"github.com/suprbdev/pdbcore/introspect"
 	"github.com/suprbdev/pdbcore/postgis"
 	"github.com/suprbdev/pdbq/internal/schema"
@@ -48,6 +50,10 @@ type Func func(ctx context.Context, req *Request) (*Statement, error)
 // Compiler compiles GraphQL fields against a built schema.
 type Compiler struct {
 	Built *schema.Built
+
+	// contribCache memoizes contrib type resolution per column type (see
+	// stmt.contrib).
+	contribCache sync.Map
 }
 
 func New(built *schema.Built) *Compiler { return &Compiler{Built: built} }
@@ -99,6 +105,9 @@ func (c *Compiler) Compile(ctx context.Context, req *Request) (*Statement, error
 	if err := s.err(); err != nil {
 		return nil, err
 	}
+	if sql, err = s.resolveRanks(sql); err != nil {
+		return nil, err
+	}
 	return &Statement{
 		SQL:  sql,
 		Args: s.args,
@@ -137,6 +146,16 @@ type stmt struct {
 	// column — RETURNING * would demand SELECT on every column and break
 	// tables using column-level grants).
 	mutAliases []string
+	// ranks holds the first full-text match compiled per filtered column
+	// reference, and rankRefs the rank expressions waiting for them (see
+	// rankMarker).
+	ranks    map[string]rankSource
+	rankRefs []rankRef
+	// rankScope is set while compiling the conjunctive top level of a list
+	// field's filter (the root object and nested and lists), the only
+	// place a full-text match can rank rows: matches under or, not or a
+	// relation filter do not hold for every returned row.
+	rankScope bool
 }
 
 // fail records an error from a rendering helper that cannot return one. The
@@ -320,7 +339,7 @@ func (s *stmt) keyConds(t *introspect.Table, keyCols []string, f *ast.Field, ali
 			return nil, fmt.Errorf("compile: field %s: missing key argument %q", f.Name, argDef.Name)
 		}
 		c := t.Column(col)
-		conds = append(conds, fmt.Sprintf("%s.%s = %s", alias, quoteIdent(col), s.valueExpr(c, v)))
+		conds = append(conds, fmt.Sprintf("%s.%s %s %s", alias, quoteIdent(col), s.contrib(c).Operator("="), s.valueExpr(c, v)))
 	}
 	return conds, nil
 }
@@ -383,7 +402,9 @@ func (s *stmt) whereClause(t *introspect.Table, f *ast.Field, alias, extraCond s
 	}
 	if fv, ok := s.argValue(f, "filter"); ok {
 		filterType := argTypeName(f, "filter")
+		s.rankScope = true
 		cond, err := s.filterCond(t, filterType, fv, alias)
+		s.rankScope = false
 		if err != nil {
 			return "", err
 		}
@@ -417,12 +438,26 @@ type orderTerm struct {
 	// near set: order by spatial distance from this already-parameterized
 	// geometry expression to col (postgis plugin).
 	near string
-	desc bool
+	// rank set: order by full-text rank of col against the match on the
+	// column reference rankKey (contrib plugin); value is the orderBy value.
+	rank    bool
+	rankKey string
+	value   string
+	// trgm set: order by this pg_trgm distance expression of col from the
+	// reference text bound to trgmArgs (contrib plugin).
+	trgm     *pgcontrib.Expr
+	trgmArgs []string
+	desc     bool
 }
 
-// orderTerms maps orderBy enum values to order terms, always appending the
-// primary key for a stable order when available.
-func (s *stmt) orderTerms(t *introspect.Table, f *ast.Field) []orderTerm {
+// plain reports whether the term sorts by col itself.
+func (t orderTerm) plain() bool {
+	return t.fn == nil && t.rel == nil && t.near == "" && !t.rank && t.trgm == nil
+}
+
+// orderTerms maps orderBy enum values to order terms for rows of t read at
+// alias, always appending the primary key for a stable order when available.
+func (s *stmt) orderTerms(t *introspect.Table, f *ast.Field, alias string) []orderTerm {
 	var terms []orderTerm
 	usedPK := false
 	if ov, ok := s.argValue(f, "orderBy"); ok {
@@ -437,6 +472,22 @@ func (s *stmt) orderTerms(t *introspect.Table, f *ast.Field) []orderTerm {
 		for _, v := range vals {
 			name, _ := v.(string)
 			if spec, ok := specs[name]; ok {
+				if spec.Rank {
+					terms = append(terms, orderTerm{
+						col: spec.Column, rank: true, rankKey: alias + "." + quoteIdent(spec.Column),
+						value: name, desc: spec.Desc,
+					})
+					continue
+				}
+				if spec.Similarity != "" {
+					term, err := s.similarityTerm(t, f, name, spec)
+					if err != nil {
+						s.fail(err)
+						continue
+					}
+					terms = append(terms, term)
+					continue
+				}
 				near := ""
 				if spec.Distance {
 					// Distance ordering needs a reference geometry; without
@@ -498,7 +549,7 @@ func (s *stmt) renderOrder(t *introspect.Table, terms []orderTerm, alias string,
 // computed functions and relational subqueries always can; plain columns
 // only when not declared NOT NULL.
 func orderTermNullable(t *introspect.Table, term orderTerm) bool {
-	if term.fn != nil || term.rel != nil {
+	if !term.plain() {
 		return true
 	}
 	c := t.Column(term.col)
@@ -513,6 +564,12 @@ func (s *stmt) orderExprSQL(t *introspect.Table, term orderTerm, alias string) s
 		// <-> is the KNN operator: a GiST index answers it directly, which is
 		// what makes "nearest N" cheap.
 		return postgis.KNNSQL(alias+"."+quoteIdent(term.col), term.near)
+	}
+	if term.rank {
+		return s.rankMarker(rankRef{key: term.rankKey, render: alias + "." + quoteIdent(term.col), order: term.value})
+	}
+	if term.trgm != nil {
+		return term.trgm.Render(alias+"."+quoteIdent(term.col), term.trgmArgs...)
 	}
 	if term.rel != nil {
 		return s.relationOrderSQL(term, alias)
@@ -535,9 +592,9 @@ func (s *stmt) relationOrderSQL(term orderTerm, alias string) string {
 	const sub = "__ro"
 	var join string
 	if rel.Forward {
-		join = fkJoinSQL(rel.FK, alias, sub, true)
+		join = s.fkJoinSQL(rel.FK, alias, sub, true)
 	} else {
-		join = fkJoinSQL(rel.FK, sub, alias, false)
+		join = s.fkJoinSQL(rel.FK, sub, alias, false)
 	}
 	expr := sub + "." + quoteIdent(rel.Column)
 	if !rel.Forward || !rel.FK.ReferencesOne() {
@@ -552,7 +609,7 @@ func (s *stmt) relationOrderSQL(term orderTerm, alias string) string {
 }
 
 func (s *stmt) orderClause(t *introspect.Table, f *ast.Field, alias string) string {
-	return s.renderOrder(t, s.orderTerms(t, f), alias, false)
+	return s.renderOrder(t, s.orderTerms(t, f, alias), alias, false)
 }
 
 // distinctCols resolves the distinctOn argument to column names via the
@@ -597,7 +654,7 @@ func reorderForDistinct(terms []orderTerm, dcols []string) []orderTerm {
 		used[dc] = true
 		desc := false
 		for _, term := range terms {
-			if term.fn == nil && term.col == dc {
+			if term.plain() && term.col == dc {
 				desc = term.desc
 				break
 			}
@@ -605,7 +662,7 @@ func reorderForDistinct(terms []orderTerm, dcols []string) []orderTerm {
 		out = append(out, orderTerm{col: dc, desc: desc})
 	}
 	for _, term := range terms {
-		if term.fn == nil && used[term.col] {
+		if term.plain() && used[term.col] {
 			continue
 		}
 		out = append(out, term)
