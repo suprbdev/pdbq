@@ -62,7 +62,7 @@ $ pdbq config example   # print the full annotated reference
 | `filters.indexed_only` | `true` | see [filtering.md](filtering.md) |
 | `filters.allow_columns` | `{}` | per-table extra filterable columns, overriding `indexed_only` |
 | `rls.enabled` | `true` | see [rls.md](rls.md) for the `rls.*` and `rls.auth.*` keys |
-| `transactions.mutations` | `true` | wrap each mutation in a tx |
+| `transactions.mutations` | `true` | wrap each mutation in a tx (a custom mutation whose payload is read by a second statement runs in one regardless; see [Mutations](mutations.md#what-the-payload-sees)) |
 | `transactions.per_request` | `false` | one tx for the whole request instead of one per operation |
 | `transactions.isolation` | `read_committed` | or `repeatable_read`, `serializable`; `read_committed` uses the server's `default_transaction_isolation` (read committed unless changed): queries run in the pipeline's implicit transaction, mutations in a plain `BEGIN` |
 | `transactions.max_retries` | 0 | automatic retries on serialization failure/deadlock (40001/40P01) |

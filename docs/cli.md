@@ -41,6 +41,11 @@ SELECT json_build_object(...) AS data FROM ...
 -- args: [2]
 ```
 
+A custom mutation whose payload reads tables compiles to two statements (see
+[What the payload sees](mutations.md#what-the-payload-sees)): the second
+follows the first under a `-- then:` line, and reads the first one's result
+as `$1`, so its parameter list starts at `$2`.
+
 Nothing is executed — mutations are safe to inspect this way. Combined with
 `--schema.cache_path` it needs no database connection at all. Introspection
 root fields (`__schema`, `__type`) are resolved in memory and produce no SQL,

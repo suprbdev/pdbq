@@ -1,0 +1,9 @@
+# A SETOF table result reading only columns stays one statement.
+mutation {
+  publishPosts(input: {postIds: [1, 2]}) {
+    posts {
+      id
+      title
+    }
+  }
+}

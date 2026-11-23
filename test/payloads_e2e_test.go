@@ -3,14 +3,17 @@ package e2e
 import (
 	"context"
 	"encoding/json"
+	"strconv"
 	"testing"
+
+	"github.com/suprbdev/pdbq/internal/config"
 )
 
 // TestMutationPayloads covers the PostGraphile payload fields: the result
 // field named after its type (plural for SETOF and arrays, the output
 // parameter's name, none for void), query, the forward relations of a
-// returned row and its edge, on custom and table mutations alike, and the
-// snapshot a custom mutation's payload reads.
+// returned row and its edge, on custom and table mutations alike, and a
+// custom mutation's payload seeing what its function wrote.
 func TestMutationPayloads(t *testing.T) {
 	conn := testConn(t)
 	execAll(t, conn,
@@ -37,13 +40,27 @@ func TestMutationPayloads(t *testing.T) {
 				INSERT INTO pay_posts (id, author_id, title) VALUES (10, 10, post_title) RETURNING * INTO r;
 				RETURN r;
 			END $$`,
+		`CREATE FUNCTION pay_add_author(author_id integer, author_name text) RETURNS integer VOLATILE LANGUAGE sql AS $$
+			INSERT INTO pay_authors VALUES (author_id, author_name);
+			SELECT count(*)::integer FROM pay_authors $$`,
+		`CREATE FUNCTION pay_newest() RETURNS SETOF pay_posts VOLATILE LANGUAGE sql AS $$
+			SELECT * FROM pay_posts WHERE id IN (1, 2) ORDER BY id DESC $$`,
+		`CREATE FUNCTION pay_boom(post_id integer, post_title text) RETURNS pay_posts VOLATILE LANGUAGE sql AS $$
+			INSERT INTO pay_posts (id, author_id, title) VALUES (post_id, 1, post_title) RETURNING * $$`,
+		`CREATE FUNCTION pay_posts_checked(p pay_posts) RETURNS text STABLE LANGUAGE plpgsql AS $$
+			BEGIN
+				IF p.title = 'boom' THEN RAISE EXCEPTION 'boom'; END IF;
+				RETURN p.title;
+			END $$`,
 		`COMMENT ON FUNCTION pay_titles() IS '@resultFieldName titles'`,
 	)
 	t.Cleanup(func() {
-		_, _ = conn.Exec(context.Background(), `DROP FUNCTION pay_hit, pay_hit_all, pay_touch, pay_count, pay_titles, pay_write;
+		_, _ = conn.Exec(context.Background(), `DROP FUNCTION pay_hit, pay_hit_all, pay_touch, pay_count, pay_titles, pay_write,
+				pay_add_author, pay_newest, pay_boom, pay_posts_checked;
 			DROP TABLE pay_posts; DROP TABLE pay_authors`)
 	})
 	hs := testServer(t, nil)
+	noTx := testServer(t, func(cfg *config.Config) { cfg.TX.Mutations = false })
 
 	t.Run("row result with relations, edge and query", func(t *testing.T) {
 		res := post(t, hs.URL, `mutation {
@@ -88,19 +105,53 @@ func TestMutationPayloads(t *testing.T) {
 		expectField(t, res, "payTitles", `{"titles": ["one", "two"]}`)
 	})
 
-	t.Run("custom mutation payload reads the pre-statement snapshot", func(t *testing.T) {
+	t.Run("custom mutation payload sees the function's writes", func(t *testing.T) {
 		res := post(t, hs.URL, `mutation {
 		  payWrite(input: {authorName: "grace", postTitle: "ten"}) {
-		    payPost { id title }
+		    payPost { id title author { name } }
 		    author { name }
+		    payPostEdge { node { author { name } } }
 		    query { payAuthorById(id: 10) { name } allPayPosts { totalCount } }
 		  }
 		}`, nil)
-		expectField(t, res, "payWrite", `{"payPost": {"id": 10, "title": "ten"}, "author": null,
-			"query": {"payAuthorById": null, "allPayPosts": {"totalCount": 2}}}`)
-		res = post(t, hs.URL, `{ payPostById(id: 10) { author { name } } allPayPosts { totalCount } }`, nil)
-		expectField(t, res, "payPostById", `{"author": {"name": "grace"}}`)
-		expectField(t, res, "allPayPosts", `{"totalCount": 3}`)
+		requireNoErrors(t, res)
+		expectField(t, res, "payWrite", `{"payPost": {"id": 10, "title": "ten", "author": {"name": "grace"}},
+			"author": {"name": "grace"}, "payPostEdge": {"node": {"author": {"name": "grace"}}},
+			"query": {"payAuthorById": {"name": "grace"}, "allPayPosts": {"totalCount": 3}}}`)
+	})
+
+	t.Run("scalar result with query", func(t *testing.T) {
+		for i, url := range []string{hs.URL, noTx.URL} {
+			res := post(t, url, `mutation ($id: Int!) {
+			  payAddAuthor(input: {authorId: $id, authorName: "ken", clientMutationId: "a"}) {
+			    integer
+			    clientMutationId
+			    query { payAuthorById(id: $id) { name } }
+			  }
+			}`, map[string]any{"id": 40 + i})
+			requireNoErrors(t, res)
+			expectField(t, res, "payAddAuthor", `{"integer": `+strconv.Itoa(3+i)+`, "clientMutationId": "a",
+				"query": {"payAuthorById": {"name": "ken"}}}`)
+		}
+	})
+
+	t.Run("setof result keeps the function's order", func(t *testing.T) {
+		res := post(t, hs.URL, `mutation { payNewest(input: {}) { payPosts { id author { name } } } }`, nil)
+		expectField(t, res, "payNewest", `{"payPosts": [{"id": 2, "author": {"name": "ada"}}, {"id": 1, "author": {"name": "ada"}}]}`)
+	})
+
+	t.Run("payload error rolls back the function", func(t *testing.T) {
+		for i, url := range []string{hs.URL, noTx.URL} {
+			res := post(t, url, `mutation ($id: Int!) {
+			  payBoom(input: {postId: $id, postTitle: "boom"}) { payPost { id checked } }
+			}`, map[string]any{"id": 30 + i})
+			if len(res.Errors) != 1 || string(res.Data["payBoom"]) != "null" {
+				raw, _ := json.Marshal(res)
+				t.Fatalf("want the payload's error, got %s", raw)
+			}
+			res = post(t, url, `query ($id: Int!) { payPostById(id: $id) { id } }`, map[string]any{"id": 30 + i})
+			expectField(t, res, "payPostById", `null`)
+		}
 	})
 
 	t.Run("table mutation payload", func(t *testing.T) {

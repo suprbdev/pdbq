@@ -194,7 +194,8 @@ func functionFixtures() []*introspect.Function {
 }
 
 // TestGolden compiles each testdata/*.graphql document and compares the SQL
-// (plus parameters) against the .sql golden next to it. Run with -update to
+// (plus parameters) against the .sql golden next to it; a statement's Then
+// statement follows it under a "-- then:" line, its args listing $2 on. Run with -update to
 // regenerate. Documents named spatial_typed_* compile against the schema
 // built with plugins.settings.postgis.typed_geometry on, temporal_* ones
 // against the catalog extended with temporalTables, through the
@@ -271,7 +272,12 @@ func TestGolden(t *testing.T) {
 					continue
 				}
 				argsJSON, _ := json.Marshal(stmt.Args)
-				fmt.Fprintf(&out, "-- field: %s\n%s\n-- args: %s\n\n", f.Name, stmt.SQL, argsJSON)
+				fmt.Fprintf(&out, "-- field: %s\n%s\n-- args: %s\n", f.Name, stmt.SQL, argsJSON)
+				if stmt.Then != nil {
+					thenJSON, _ := json.Marshal(stmt.Then.Args)
+					fmt.Fprintf(&out, "-- then:\n%s\n-- args: %s\n", stmt.Then.SQL, thenJSON)
+				}
+				out.WriteString("\n")
 			}
 
 			goldenPath := filepath.Join("testdata", name+".sql")

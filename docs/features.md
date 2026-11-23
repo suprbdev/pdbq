@@ -129,7 +129,7 @@ Checklist of PostgreSQL and GraphQL features pdbq supports. Checked = implemente
 - [x] Computed columns (stable/immutable functions whose first argument is a row type → fields on that type; extra scalar args become field args; set-returning/volatile deferred)
 - [x] Set-returning computed columns (`SETOF <scalar>`/`SETOF <table>` row-type functions → list fields with full selection support)
 - [ ] Functions with table-valued arguments or polymorphic types
-- [x] Custom mutations with PostGraphile payloads: the result field named after its type (`post`, `posts`, `integer`, the `OUT` parameter's name, none for `void`; `@resultFieldName` overrides), `clientMutationId`, `query`, and for a returned table row its forward relations and `<row>Edge`; one statement, the payload reading the pre-statement snapshot — see [Mutations](mutations.md)
+- [x] Custom mutations with PostGraphile payloads: the result field named after its type (`post`, `posts`, `integer`, the `OUT` parameter's name, none for `void`; `@resultFieldName` overrides), `clientMutationId`, `query`, and for a returned table row its forward relations and `<row>Edge`; a payload that reads tables (relations, `query`, computed columns) is read by a second statement after the call, in the same transaction, so it sees the function's writes; one statement otherwise — see [Mutations](mutations.md)
 
 ## RLS & auth
 
@@ -151,7 +151,7 @@ Checklist of PostgreSQL and GraphQL features pdbq supports. Checked = implemente
 - [x] One transaction per operation; mutations abort remaining root fields on error
 - [x] Queries transaction-free unless RLS context requires one
 - [x] Plugins can force a transaction (`op.ForceTx`)
-- [x] Transactions sent as one pipelined batch (identity, root field statements, commit): one round trip for queries, two for single-statement mutations; multi-statement mutations run statement by statement
+- [x] Transactions sent as one pipelined batch (identity, root field statements, commit): one round trip for queries, two for single-statement mutations; multi-statement mutations (and custom mutations whose payload is read by a second statement) run statement by statement
 - [x] Isolation level config (read_committed / repeatable_read / serializable)
 - [x] Statement timeout per connection (`database.statement_timeout`)
 - [x] PG error → GraphQL error mapping with `errors.detail: dev|prod` (constraint violations pass through in prod, internals sanitized)

@@ -234,9 +234,12 @@ func (s *stmt) function(meta *schema.FieldMeta, f *ast.Field) (string, error) {
 // whatever the payload selects. A function returning one table row is the
 // payload row: its relations and edge read the returned row.
 //
-// The statement's own reads (relations, query) use the snapshot taken when
-// it started, so they do not see what the function wrote; only the result
-// itself carries the function's changes.
+// A statement reads the snapshot taken when it started, which does not
+// include what the function writes. When the payload reads tables (query,
+// the returned row's relations, computed columns), the call runs alone and
+// its Then statement reads the payload in the same transaction, after it
+// (see functionPayloadThen). Otherwise the payload compiles into the call's
+// statement.
 func (s *stmt) functionMutation(meta *schema.FieldMeta, f *ast.Field) (string, error) {
 	fn := meta.Function
 	input, _ := s.argValue(f, "input")
@@ -245,9 +248,214 @@ func (s *stmt) functionMutation(meta *schema.FieldMeta, f *ast.Field) (string, e
 	if err != nil {
 		return "", err
 	}
-
 	payloadType := fieldTypeName(f)
 	fields := s.expandFor(f.SelectionSet, payloadType)
+	table := s.c.Built.Catalog.Table(fn.ReturnTypeSchema, fn.ReturnType)
+	if !s.payloadReadsTables(fn, table, payloadType, fields) {
+		return s.functionPayload(fn, call, f, payloadType, fields)
+	}
+
+	then := &stmt{c: s.c, req: s.req, maxDepth: s.maxDepth, maxPageSize: s.maxPageSize, args: []any{nil}}
+	var first, second string
+	if table != nil {
+		alias := s.alias("t")
+		first = fmt.Sprintf("SELECT coalesce(json_agg(%s::text), '[]'::json) AS data\nFROM %s AS %s", alias, call, alias)
+		second, err = then.functionRowsPayload(fn, table, f, payloadType, fields)
+	} else {
+		var results []*ast.Field
+		for _, sub := range fields {
+			if m := s.fieldMeta(payloadType, sub.Name); m != nil && m.Kind == schema.KindPayloadResult {
+				results = append(results, sub)
+			}
+		}
+		if first, err = s.functionPayload(fn, call, f, payloadType, results); err == nil {
+			second, err = then.functionResultsPayload(f, payloadType, fields)
+		}
+	}
+	if err != nil {
+		return "", err
+	}
+	if err := then.err(); err != nil {
+		return "", err
+	}
+	if second, err = then.resolveRanks(second); err != nil {
+		return "", err
+	}
+	s.then = &Statement{SQL: second, Args: then.args[1:]}
+	return first, nil
+}
+
+// payloadReadsTables reports whether the payload fields of a custom mutation
+// of fn read tables: a query field other than __typename, a forward
+// relation of the returned row, or a selection of the returned table row
+// (result or edge node) reaching beyond its own columns.
+func (s *stmt) payloadReadsTables(fn *introspect.Function, table *introspect.Table, payloadType string, fields []*ast.Field) bool {
+	for _, sub := range fields {
+		m := s.fieldMeta(payloadType, sub.Name)
+		if m == nil {
+			continue
+		}
+		switch m.Kind {
+		case schema.KindRelationForward:
+			return true
+		case schema.KindPayloadQuery:
+			for _, qf := range s.expandFor(sub.SelectionSet, "Query") {
+				if qf.Name != "__typename" {
+					return true
+				}
+			}
+		case schema.KindPayloadResult:
+			if table != nil && !s.columnsOnly(s.rowsTypeName(fn, sub), sub.SelectionSet) {
+				return true
+			}
+		case schema.KindPayloadEdge:
+			typeName := s.c.Built.TypeForTable[table.Schema+"."+table.Name]
+			for _, ef := range s.expandFor(sub.SelectionSet, typeName+"Edge") {
+				if ef.Name == "node" && !s.columnsOnly(typeName, ef.SelectionSet) {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// columnsOnly reports whether sel, a selection on the row type typeName,
+// reads nothing but the row's own column values.
+func (s *stmt) columnsOnly(typeName string, sel ast.SelectionSet) bool {
+	for _, f := range s.expandFor(sel, typeName) {
+		if f.Name == "__typename" {
+			continue
+		}
+		m := s.fieldMeta(typeName, f.Name)
+		if m == nil {
+			return false
+		}
+		switch m.Kind {
+		case schema.KindColumn, schema.KindNodeID, schema.KindFullTextRank, schema.KindSpatialDerived:
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// returnedRows renders, as a row source under alias, the table rows a
+// function returned, from the JSON array of their text forms bound to $1 of
+// a Then statement. The text form round-trips every column type exactly.
+// With ordinal, the element alias it returns also carries n, the row's
+// position in the array.
+func (s *stmt) returnedRows(t *introspect.Table, alias string, ordinal bool) (string, string) {
+	r := s.alias("r")
+	elems := fmt.Sprintf("json_array_elements_text($1::json) AS %s(v)", r)
+	if ordinal {
+		elems = fmt.Sprintf("json_array_elements_text($1::json) WITH ORDINALITY AS %s(v, n)", r)
+	}
+	return fmt.Sprintf("%s\nCROSS JOIN LATERAL (SELECT (%s.v::%s).*) AS %s", elems, r, tableRef(t), alias), r
+}
+
+// functionRowsPayload compiles the Then statement of a custom mutation of fn
+// returning rows of t: the payload over the returned rows, which $1 holds
+// as the JSON array of their text forms. The result field is built from the
+// returned values, not re-read from t (so the role's RLS policies on t do
+// not hide them); relations, computed columns and query read the database
+// as the function left it.
+func (s *stmt) functionRowsPayload(fn *introspect.Function, t *introspect.Table, f *ast.Field, payloadType string, fields []*ast.Field) (string, error) {
+	var from, alias string
+	if !fn.ReturnsSet {
+		alias = s.alias("t")
+		from, _ = s.returnedRows(t, alias, false)
+	}
+	var pairs, laterals []string
+	for _, sub := range fields {
+		key := quoteLiteral(sub.Alias)
+		if sub.Name == "__typename" {
+			pairs = append(pairs, key, quoteLiteral(payloadType)+"::text")
+			continue
+		}
+		subMeta := s.fieldMeta(payloadType, sub.Name)
+		if subMeta == nil {
+			continue
+		}
+		switch subMeta.Kind {
+		case schema.KindPayloadResult:
+			if !fn.ReturnsSet {
+				expr, lats, err := s.rowJSONAs(s.rowsTypeName(fn, sub), sub.SelectionSet, alias, 1)
+				if err != nil {
+					return "", err
+				}
+				pairs = append(pairs, key, nullRow(alias, expr))
+				laterals = append(laterals, lats...)
+				continue
+			}
+			rowAlias := s.alias("t")
+			jsonExpr, lats, err := s.rowJSONAs(s.rowsTypeName(fn, sub), sub.SelectionSet, rowAlias, 1)
+			if err != nil {
+				return "", err
+			}
+			rows, r := s.returnedRows(t, rowAlias, true)
+			agg := s.alias("s")
+			pairs = append(pairs, key, fmt.Sprintf("(SELECT coalesce(json_agg(%s.data ORDER BY %s.n), '[]'::json) FROM (\n%s\n) AS %s)",
+				agg, agg, indent(fmt.Sprintf("SELECT %s AS data, %s.n\nFROM %s%s", jsonExpr, r, rows, joinLaterals(lats))), agg))
+		case schema.KindPayloadEdge:
+			expr, lats, err := s.payloadEdge(t, sub, alias)
+			if err != nil {
+				return "", err
+			}
+			pairs = append(pairs, key, nullRow(alias, expr))
+			laterals = append(laterals, lats...)
+		default:
+			expr, lats, ok, err := s.payloadCommon(subMeta, f, sub, alias)
+			if err != nil {
+				return "", err
+			}
+			if ok {
+				pairs = append(pairs, key, expr)
+				laterals = append(laterals, lats...)
+			}
+		}
+	}
+	sql := "SELECT " + buildJSONObject(pairs) + " AS data"
+	if from != "" {
+		sql += "\nFROM " + from + joinLaterals(laterals)
+	}
+	return sql, nil
+}
+
+// functionResultsPayload compiles the Then statement of a custom mutation
+// whose function returns no table rows: $1 holds the result fields, keyed by
+// response key, as the call's statement computed them, and the payload's
+// query reads the database as the function left it.
+func (s *stmt) functionResultsPayload(f *ast.Field, payloadType string, fields []*ast.Field) (string, error) {
+	var pairs []string
+	for _, sub := range fields {
+		key := quoteLiteral(sub.Alias)
+		if sub.Name == "__typename" {
+			pairs = append(pairs, key, quoteLiteral(payloadType)+"::text")
+			continue
+		}
+		subMeta := s.fieldMeta(payloadType, sub.Name)
+		if subMeta == nil {
+			continue
+		}
+		if subMeta.Kind == schema.KindPayloadResult {
+			pairs = append(pairs, key, "($1::json -> "+key+")")
+			continue
+		}
+		expr, _, ok, err := s.payloadCommon(subMeta, f, sub, "")
+		if err != nil {
+			return "", err
+		}
+		if ok {
+			pairs = append(pairs, key, expr)
+		}
+	}
+	return "SELECT " + buildJSONObject(pairs) + " AS data", nil
+}
+
+// functionPayload compiles the payload fields of a custom mutation of fn
+// into the statement making call.
+func (s *stmt) functionPayload(fn *introspect.Function, call string, f *ast.Field, payloadType string, fields []*ast.Field) (string, error) {
 	var resultField *ast.Field
 	for _, sub := range fields {
 		if m := s.fieldMeta(payloadType, sub.Name); m != nil && m.Kind == schema.KindPayloadResult {
@@ -303,6 +511,7 @@ func (s *stmt) functionMutation(meta *schema.FieldMeta, f *ast.Field) (string, e
 			resultExpr = nullRow(alias, jsonExpr)
 		}
 	case shape == fnComposite:
+		var err error
 		from = fmt.Sprintf("(SELECT %s AS v) AS __fn", call)
 		resultExpr, err = s.fnCompositeJSON("__fn.v", fn, comp, resultSel, 1)
 		if err != nil {

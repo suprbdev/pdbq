@@ -18,7 +18,8 @@ import (
 // the contrib fixture so the contrib vocabulary operators (full-text,
 // pg_trgm, hstore, ltree, citext, ranges, inet), the codec-typed generic
 // comparisons, rank and similarity ordering are covered too, and against
-// the aggregates schema for having and relation-aggregate filters.
+// the aggregates schema for having and relation-aggregate filters, and
+// through a custom mutation whose payload compiles to a Then statement.
 func FuzzFilter(f *testing.F) {
 	built := buildContrib(f)
 	aggBuilt := buildAggregates(f)
@@ -72,6 +73,13 @@ func FuzzFilter(f *testing.F) {
 			groupedAggregates(groupBy: [CREATED_AT_TRUNCATED_TO_DAY], having: {max: {createdAt: {greaterThan: $d}}}) { keys }
 		}
 	}`
+	const mutationQuery = `mutation ($e: String, $n: Int!) {
+		publishPost(input: {postId: $n, clientMutationId: $e}) {
+			clientMutationId
+			post { title author { email } }
+			query { allUsers(filter: {email: {startsWith: $e}}) { totalCount } }
+		}
+	}`
 	type target struct {
 		built *schema.Built
 		op    *ast.OperationDefinition
@@ -80,7 +88,7 @@ func FuzzFilter(f *testing.F) {
 	for _, tc := range []struct {
 		built *schema.Built
 		query string
-	}{{built, query}, {aggBuilt, aggQuery}} {
+	}{{built, query}, {aggBuilt, aggQuery}, {built, mutationQuery}} {
 		doc, perr := parser.ParseQuery(&ast.Source{Input: tc.query})
 		if perr != nil {
 			f.Fatal(perr)
@@ -121,6 +129,9 @@ func FuzzFilter(f *testing.F) {
 	// function of the query shape — values only move through the parameter
 	// list, so any two value sets must produce byte-identical SQL.
 	baseline := compileWith(f, "a@example.com", "admin", 5)
+	if baseline[len(baseline)-1].Then == nil {
+		f.Fatal("the custom mutation compiled without a Then statement")
+	}
 
 	f.Add("a@example.com", "admin", 5)
 	f.Add(`'; DROP TABLE users; --`, `"]}`, -1)
@@ -134,6 +145,10 @@ func FuzzFilter(f *testing.F) {
 			}
 			if len(stmt.Args) != len(baseline[i].Args) {
 				t.Fatalf("parameter count varied: %d != %d", len(stmt.Args), len(baseline[i].Args))
+			}
+			then, want := stmt.Then, baseline[i].Then
+			if (then == nil) != (want == nil) || then != nil && (then.SQL != want.SQL || len(then.Args) != len(want.Args)) {
+				t.Fatalf("Then statement varied with input values:\n--- baseline ---\n%+v\n--- got ---\n%+v", want, then)
 			}
 		}
 	})

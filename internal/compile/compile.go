@@ -29,6 +29,13 @@ type Statement struct {
 	Args []any
 	// ReturnsRow is false when zero rows means null (single lookups).
 	Mutation bool
+	// Then, when set, is a second statement to run after this one in the
+	// same transaction; its data is the field's value, and this
+	// statement's data is only its input. Then.SQL reads that data value
+	// (json) as $1, so its own parameters, Then.Args, start at $2. A
+	// custom mutation whose payload reads tables compiles to such a pair,
+	// so that the payload sees what the function wrote.
+	Then *Statement
 }
 
 // Request is one root field to compile.
@@ -99,6 +106,7 @@ func (c *Compiler) Compile(ctx context.Context, req *Request) (*Statement, error
 	return &Statement{
 		SQL:  sql,
 		Args: s.args,
+		Then: s.then,
 		Mutation: meta.Kind == schema.KindCreate || meta.Kind == schema.KindUpdate ||
 			meta.Kind == schema.KindDelete || meta.Kind == schema.KindUpsert ||
 			meta.Kind == schema.KindCreateMany || meta.Kind == schema.KindUpdateMany ||
@@ -164,6 +172,8 @@ type stmt struct {
 	// rankMarker).
 	ranks    map[string]rankSource
 	rankRefs []rankRef
+	// then is the Then statement of the compiled field (functionMutation).
+	then *Statement
 	// rankScope is set while compiling the conjunctive top level of a list
 	// field's filter (the root object and nested and lists), the only
 	// place a full-text match can rank rows: matches under or, not or a
