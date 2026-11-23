@@ -24,7 +24,7 @@
 //     over geometry/geography columns, returned as GeoJSON.
 //
 // The plugin is opt-in like upstream: with the default
-// plugins.settings.aggregates.enabled: false it adds nothing unless a table
+// aggregates.enabled: false it adds nothing unless a table
 // opts in with the @aggregates smart tag, so the schema stays byte-identical.
 // enabled: true turns aggregates on for every table, and @aggregates off,
 // @omit aggregates or @behavior -aggregates opts a table out again. Like the
@@ -66,10 +66,10 @@ type Plugin struct {
 	relationsOptIn bool
 }
 
-// Name is the plugin's name in plugins.disabled and plugins.settings.
+// Name is the plugin's name in plugins.disabled.
 const Name = "aggregates"
 
-// Settings is the plugins.settings.aggregates section.
+// Settings is the top-level aggregates config section.
 type Settings struct {
 	Enabled             bool `koanf:"enabled" doc:"Aggregates for every table; otherwise only for tables tagged @aggregates."`
 	Grouped             bool `koanf:"grouped" doc:"groupedAggregates, <Type>GroupBy and <Type>HavingInput."`
@@ -89,7 +89,7 @@ func DefaultSettings() Settings {
 // Validate returns the problems of s, keyed by their config path.
 func (s Settings) Validate() []string {
 	if s.ScanCost < 0 {
-		return []string{"plugins.settings." + Name + ".scan_cost must be >= 0"}
+		return []string{"aggregates.scan_cost must be >= 0"}
 	}
 	return nil
 }

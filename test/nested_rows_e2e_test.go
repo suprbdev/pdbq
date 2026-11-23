@@ -69,7 +69,6 @@ func setupNestedRows(t *testing.T) {
 
 func nestedRowsConfig(cfg *config.Config) {
 	cfg.Schema.Schemas = []string{nestedRowsSchema}
-	cfg.Server.ExposeSchema = true
 	cfg.Filters.IndexedOnly = false
 }
 

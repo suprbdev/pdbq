@@ -90,8 +90,7 @@ func setupDomains(t *testing.T) {
 func domainServer(t *testing.T, scalars bool) string {
 	hs := testServer(t, func(c *config.Config) {
 		c.Schema.Schemas = []string{domainSchema}
-		c.Schema.DomainScalars = scalars
-		c.Server.ExposeSchema = true
+		c.Schema.Domains = scalars
 		c.Filters.IndexedOnly = false
 	})
 	return hs.URL
@@ -106,7 +105,7 @@ func sdlOf(t *testing.T, url string) string {
 	return string(sdl)
 }
 
-// TestDomainScalars covers schema.domain_scalars (on by default): one
+// TestDomainScalars covers schema.domains (on by default): one
 // custom scalar per domain over a built-in scalar, named after the domain
 // (or its @name), described by its comment and constraints, used by
 // columns, arrays, composite attributes and function parameters and
@@ -182,7 +181,7 @@ func TestDomainScalars(t *testing.T) {
 	})
 }
 
-// TestDomainScalarsOff checks that schema.domain_scalars: false types
+// TestDomainScalarsOff checks that schema.domains: false types
 // domains as their base types.
 func TestDomainScalarsOff(t *testing.T) {
 	setupDomains(t)
@@ -197,7 +196,7 @@ func TestDomainScalarsOff(t *testing.T) {
 		}
 	}
 	if strings.Contains(sdl, "scalar Email") || strings.Contains(sdl, "scalar Percent") {
-		t.Error("domain scalars declared with domain_scalars off")
+		t.Error("domain scalars declared with schema.domains off")
 	}
 	res := post(t, url, `{ doubleScore(s: 21) personById(id: 1) { score visits } }`, nil)
 	requireNoErrors(t, res)

@@ -46,7 +46,7 @@ func TestCostSpatialBuffer(t *testing.T) {
 }
 
 // TestCostHeadline charges a headline contrib.HeadlineDocumentCost of the
-// document bound per row: the default bound, or server.max_headline_document.
+// document bound per row: the default bound, or limits.max_headline_document.
 func TestCostHeadline(t *testing.T) {
 	for _, maxDoc := range []int{0, 1000, 100000} {
 		want := maxDoc

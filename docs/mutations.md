@@ -206,9 +206,8 @@ before the modification.
     returned row's own columns (`id`, `nodeId`, …). Otherwise the payload
     compiles into the call's statement: `publishPost { post { id title }
     clientMutationId }` is one statement.
-  - The pair always runs in a transaction, also with
-    `transactions.mutations: false` (then that root field alone runs in
-    one). An error in the second statement, and a serialization failure
+  - The pair runs in the operation's transaction, like every mutation.
+    An error in the second statement, and a serialization failure
     retried under `transactions.max_retries`, roll back the function's
     writes; a retry re-runs both statements.
   - `pdbq query --print-sql` prints the second statement after the first,
@@ -227,7 +226,9 @@ the other fields commit. An operator enables it first:
 
 ```yaml
 transactions:
-  partial_mutations: true   # default false
+  partial:
+    enabled: true   # default false
+    max_items: 1000 # most mutation fields per partial request
 ```
 
 and a request asks for it with a request extension:
@@ -252,7 +253,7 @@ off, and it works with persisted queries (it is not part of the document).
 It is read from the HTTP body (or the `extensions` query parameter of a
 GET, which cannot run a mutation anyway) and from WebSocket `subscribe`
 messages; only the JSON value `true` turns it on, and it has no effect on a
-query. While `transactions.partial_mutations` is off, a mutation asking for
+query. While `transactions.partial.enabled` is off, a mutation asking for
 it is rejected with `partial mutations are disabled` before anything runs,
 so a client never believes it got partial semantics that it did not.
 
@@ -281,7 +282,7 @@ Interactions:
 | Retries (`transactions.max_retries`) | A serialization failure or deadlock is never a field error: it aborts the transaction and the **whole operation** re-runs, savepoints included. When the retries run out, nothing is committed and the response has one error without a `path` and no `data`. The same holds for any failure at `COMMIT`. |
 | RLS identity | `SET LOCAL ROLE` and the claims are applied once, when the transaction begins, and every field runs under them; a savepoint rollback does not undo them. A row-level security violation (`42501`) in one field is that field's error and the others commit as the same role. |
 | Nested mutations | A root field is the unit: the nested creates, updates, connects and deletes of one field commit or fail together. |
-| `transactions.mutations: false` | A partial request still runs in a transaction. |
+| `transactions.partial.max_items` | An operation with more mutation root fields is rejected before it runs. |
 | `transactions.isolation` | Applies to the one transaction, so every field shares its snapshot rules. |
 | Defer and stream | Ignored in mutations, as always; a mutation is delivered in one response. |
 | `Prefer: tx=rollback` | pdbq has no such preference; see pdbr for the equivalent. |

@@ -94,10 +94,13 @@ any other key:
 
 ```console
 $ PDBQ_PLUGINS_SETTINGS_ADVANCED__FILTERS_RELATIONS=false pdbq serve
-$ PDBQ_PLUGINS_SETTINGS_AGGREGATES_ENABLED=true PDBQ_PLUGINS_SETTINGS_AGGREGATES_SCAN__COST=20 pdbq serve
+$ PDBQ_PLUGINS_SETTINGS_NESTED__MUTATIONS_MAX__DEPTH=2 pdbq serve
 ```
 
-(`__` keeps the underscore inside `advanced_filters` and `scan_cost`.)
+(`__` keeps the underscore inside `advanced_filters` and `max_depth`.) The
+`aggregates` plugin is the exception: it is configured by the top-level
+`aggregates` section (`PDBQ_AGGREGATES_ENABLED=true`), whose `enabled`
+gate has the same name in pdbr; see [Aggregates](aggregates.md#settings).
 
 | Key | Default | Effect |
 |---|---|---|
@@ -113,14 +116,6 @@ $ PDBQ_PLUGINS_SETTINGS_AGGREGATES_ENABLED=true PDBQ_PLUGINS_SETTINGS_AGGREGATES
 | `postgis.typed_geometry` | `false` | typed geometry objects instead of `GeoJSON` |
 | `contrib.filters` | `true` | contrib filter operators and rank fields ([Contrib](contrib.md#settings)) |
 | `contrib.ordering` | `true` | rank, similarity and distance ordering |
-| `aggregates.enabled` | `false` | aggregates on every table ([Aggregates](aggregates.md#settings)) |
-| `aggregates.grouped` | `true` | `groupedAggregates` |
-| `aggregates.order` | `true` | relational aggregate orderBy values |
-| `aggregates.filters` | `true` | relation-aggregate filters |
-| `aggregates.spatial` | `true` | `stExtent`, `stCentroid` |
-| `aggregates.spatial_union_collect` | `false` | `stUnion`, `stCollect` |
-| `aggregates.scan_cost` | `10` | cost surcharge per aggregate (`>= 0`) |
-| `nested_mutations.force_transactions` | `true` | force a transaction around nested writes |
 | `nested_mutations.max_depth` | `3` | nesting levels per root field (`>= 1`) |
 | `nested_mutations.max_operations` | `50` | nested operations per root field (`>= 1`) |
 
@@ -229,8 +224,8 @@ surfaces they hide.
 
 ## Worked example 4: nested_mutations
 
-`internal/plugins/nestedmutations` exercises every hook surface. Its input
-shapes follow
+`internal/plugins/nestedmutations` exercises the schema and compile hook
+surfaces. Its input shapes follow
 [postgraphile-plugin-nested-mutations](https://github.com/mlipscombe/postgraphile-plugin-nested-mutations).
 
 ### Input shape
@@ -377,9 +372,3 @@ update/delete/disconnect, and there is no `deleteOthers`.
   read), and each CTE's `RETURNING` list is resolved to the columns the
   payload, the visibility CTEs and the other CTEs (FK copies, child
   matching, exclusion keys) read from it.
-- **RequestHook** — collects the operation's root fields as the executor
-  does (`exec.CollectRootFields`: fragments, inline fragments,
-  `@skip`/`@include`), detects nested fields in a mutation's `input` or
-  `patch` and sets `op.ForceTx`, so nested mutations (and the other fields
-  of the operation) are atomic even when `transactions.mutations: false`
-  (`plugins.settings.nested_mutations.force_transactions: false` opts out).

@@ -29,7 +29,7 @@ or times out; `/healthz` only reports that the process is serving.
 | `POST /graphql` | the API; the body must be `Content-Type: application/json` (`415` otherwise). `GET` with `?query=` runs queries only (`405` for mutations and subscriptions); see [CSRF](#csrf) |
 | `GET /` | GraphiQL (opt-in via `server.graphiql: true`; off by default) |
 | `GET /healthz`, `/readyz` | liveness / readiness (`/readyz` pings the database; `503` when unreachable) |
-| `GET /schema.graphql` | generated SDL (opt-in via `server.expose_schema: true`; off by default) |
+| `GET /schema.graphql` | generated SDL (served with `server.introspection`, on by default) |
 | `GET /metrics` | Prometheus metrics (opt-in via `metrics.enabled: true`; path `metrics.path`, or on its own listener with `metrics.addr`); see [metrics.md](metrics.md) |
 
 GET requests carry the query and variables in the URL, so proxy, load
@@ -65,11 +65,12 @@ truncating the query string in intermediary log formats.
   `schema.schemas`) gets a generic message such as `foreign key violation`
   (see [Contracts](contracts.md#security)). Use `strict` if constraint/column names in error
   messages are themselves sensitive (hides all database error messages).
-- Leave `server.graphiql` and `server.expose_schema` off (their defaults)
-  unless you want the playground and full SDL public — both hand an attacker
-  a map of every table, column and relation. GraphQL introspection reveals
-  the same map; set `server.disable_introspection: true` to close that
-  channel too (breaks GraphiQL and schema-aware clients). It also leaves the
+- Set `server.introspection: false` in production unless you want the
+  schema public: introspection and the SDL at `/schema.graphql` (both on by
+  default, like pdbr's OpenAPI document) hand an attacker a map of every
+  table, column and relation. Turning it off closes both channels (and
+  breaks GraphiQL and schema-aware clients; leave `server.graphiql` off,
+  its default). It also leaves the
   "Did you mean …" suggestions out of validation errors, which would
   otherwise let a client rebuild the schema by guessing names. The base
   messages still name the parent type of an unknown field (`Cannot query
@@ -77,7 +78,7 @@ truncating the query string in intermediary log formats.
   in graphql-js and Apollo Server.
 - Boot from a schema cache (see [caching.md](caching.md)) so the runtime
   role needs no catalog privileges; leave `watch.enabled` off.
-- Set `server.max_depth` / `server.max_cost` to fit your workload;
+- Set `limits.max_depth` / `limits.max_cost` to fit your workload;
   `database.statement_timeout` (default 25s, below the 30s
   `server.request_timeout`) backstops runaway queries.
 - Resource limits: `database.max_conns` bounds the pool; each request uses
@@ -115,16 +116,16 @@ the browser and were never exposed. GraphiQL and the usual GraphQL clients
 
 ## Persisted queries / APQ
 
-- `server.apq: true` enables Apollo automatic persisted queries: clients send
+- `persisted_queries.apq: true` enables Apollo automatic persisted queries: clients send
   `extensions.persistedQuery = {version: 1, sha256Hash}` instead of the query
   text; a miss returns the standard `PersistedQueryNotFound` response and the
   client retries once with the full document, registering it in an in-memory
   cache (bounded, FIFO eviction; empty after every restart until clients
   re-register).
-- `server.persisted_queries_path` preloads a JSON file of
+- `persisted_queries.path` preloads a JSON file of
   `{"<sha256 hex>": "<GraphQL document>"}` entries (validated at startup,
   never evicted).
-- `server.persisted_only: true` locks the endpoint down to persisted queries:
+- `persisted_queries.only: true` locks the endpoint down to persisted queries:
   requests without a `persistedQuery` extension are rejected. Combine with a
   file (and `apq: false`) for a strict build-time allowlist — client
   registration is refused without `apq`.
@@ -132,17 +133,17 @@ the browser and were never exposed. GraphiQL and the usual GraphQL clients
 ## Rate limiting
 
 pdbq has **no built-in rate limiter** for HTTP requests. The per-request
-protections (`server.max_body_bytes`, `server.max_query_tokens`,
-`server.max_input_depth`, `server.max_selections`, `server.max_introspection_bytes`,
-`server.max_field_comparisons`, `server.request_timeout`,
-`server.max_depth`, `server.max_cost`, `server.max_page_size`,
+protections (`limits.max_body_bytes`, `limits.max_query_tokens`,
+`limits.max_input_depth`, `limits.max_selections`, `limits.max_introspection_bytes`,
+`limits.max_field_comparisons`, `server.request_timeout`,
+`limits.max_depth`, `limits.max_cost`, `limits.max_page_size`,
 `database.statement_timeout`) bound the cost of a single request, but
 nothing stops a client from sending many maximally-expensive requests in
 parallel. WebSocket subscriptions are bounded per connection
-(`server.subscriptions_max_per_connection`,
-`server.subscriptions_subscribe_rate`) and per server
-(`server.subscriptions_max_connections`,
-`server.subscriptions_max_operations`), but not per client.
+(`subscriptions.max_per_connection`,
+`subscriptions.subscribe_rate`) and per server
+(`subscriptions.max_connections`,
+`subscriptions.max_operations`), but not per client.
 
 Run a rate limiter in front of pdbq in production:
 

@@ -12,8 +12,8 @@ schema has no `Subscription` type and is byte-for-byte what it was before
 subscriptions existed.
 
 ```yaml
-server:
-  subscriptions: true
+subscriptions:
+  enabled: true
 ```
 
 Live queries, which re-send a query's result whenever its data changes, build
@@ -41,7 +41,7 @@ and `relatedNode` are `null`, but `query` resolves as usual.
 
 ## Sending events
 
-The channel is `server.subscriptions_topic_prefix` (`postgraphile:` by
+The channel is `subscriptions.topic_prefix` (`postgraphile:` by
 default) followed by the topic. The payload is text. When it is a JSON object
 with a `__node__` array of `["TypeName", primary key...]`, that array names
 the related row:
@@ -112,8 +112,8 @@ or mutation sent over the socket and the resolution of each subscription
 event, but not the life of the connection. There is no cap on the number of
 connections, so put one in the load balancer if you need it. A browser
 connection's `Origin` must be the server's own host or match
-`server.cors_origins` (`*` accepts any origin). `server.max_body_bytes`
-limits the size of each incoming message. With `server.subscriptions_keepalive`
+`server.cors_origins` (`*` accepts any origin). `limits.max_body_bytes`
+limits the size of each incoming message. With `subscriptions.keepalive`
 set, the server sends a WebSocket ping every interval and drops a peer that
 does not answer within the interval. Legacy clients also receive a `ka`
 message every interval. On shutdown every socket is closed with `1001`.
@@ -143,13 +143,13 @@ following [`auth.mode`](rls.md):
 A topic must consist of letters, digits and `_ . : / -`, and the full channel
 (prefix plus topic) must fit PostgreSQL's 63-byte identifier limit. A longer
 channel name would be silently truncated by `LISTEN` and rejected by
-`pg_notify`. `server.subscriptions_topics` restricts topics to an allowlist:
+`pg_notify`. `subscriptions.topics` restricts topics to an allowlist:
 
 ```yaml
-server:
-  subscriptions: true
-  subscriptions_topic_prefix: "app:"
-  subscriptions_topics: ["announcements", "chat:*"]   # chat:<anything>
+subscriptions:
+  enabled: true
+  topic_prefix: "app:"
+  topics: ["announcements", "chat:*"]   # chat:<anything>
 ```
 
 Channel names are always sent as quoted identifiers (`LISTEN "app:chat:1"`)
@@ -179,7 +179,7 @@ PostGraphile's `pgSubscriptionAuthorizationFunction` is not supported.
   than 10 seconds replaces the connection, so a silently dropped connection
   is noticed.
 - **Fan-out.** Each notification is copied into a bounded queue per
-  subscription (`server.subscriptions_buffer`). A subscriber whose queue is
+  subscription (`subscriptions.buffer`). A subscriber whose queue is
   full gets an `error` message and its subscription ends. Other subscribers
   are not slowed down by it. Writes to a client time out after 10 seconds,
   and a timed-out write drops the connection.
@@ -195,18 +195,18 @@ PostGraphile's `pgSubscriptionAuthorizationFunction` is not supported.
   topics cheap by selecting `relatedNodeId` and fetching on the client, or
   by narrowing topics.
 - **Limits.** The subscription document goes through the usual validation,
-  `server.max_depth` / `server.max_cost`, `server.disable_introspection`
+  `limits.max_depth` / `limits.max_cost`, `server.introspection: false`
   (it also covers `__schema` inside `query`), persisted-query rules
-  (`server.persisted_only` applies to WebSocket operations too) and the
+  (`persisted_queries.only` applies to WebSocket operations too) and the
   `BeforeOperation` request hooks, once, when it is subscribed. Plugins'
   `AfterOperation` hooks do not run for subscription events.
-  `server.subscriptions_max_per_connection` caps the operations running at
+  `subscriptions.max_per_connection` caps the operations running at
   once on one socket; an operation counts until it has stopped, not just
   until the client completes it, so a client that completes operations
-  faster than they stop waits for them. `server.subscriptions_subscribe_rate`
+  faster than they stop waits for them. `subscriptions.subscribe_rate`
   slows down a socket that subscribes faster than that many times a second,
-  `server.subscriptions_max_connections` and
-  `server.subscriptions_max_operations` cap the sockets and operations of
+  `subscriptions.max_connections` and
+  `subscriptions.max_operations` cap the sockets and operations of
   the whole server, and at most 1024 new channels wait for their `LISTEN`
   at once (a subscribe beyond that gets an `error` saying to try again).
 - **Watch mode.** A subscription keeps resolving against the schema it was
@@ -214,7 +214,7 @@ PostGraphile's `pgSubscriptionAuthorizationFunction` is not supported.
 
 ## Embedding
 
-`App.Serve` and `App.Handler` set everything up when `server.subscriptions`
+`App.Serve` and `App.Handler` set everything up when `subscriptions.enabled`
 is on. `App.Close` closes the WebSockets and the LISTEN connection, because
 `net/http`'s graceful shutdown does not track hijacked WebSocket
 connections. `App.Serve` also closes them when its context ends.

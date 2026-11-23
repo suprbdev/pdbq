@@ -47,11 +47,10 @@ func incServer(t *testing.T, mutate func(*config.Config)) *incFixture {
 	cfg.Roles.Allowed = []string{"anonymous", "app_user"}
 	cfg.Errors.Detail = "dev"
 	cfg.Plugins.Disabled = []string{"simple_names"}
-	cfg.Server.Subscriptions = true
-	cfg.Server.SubscriptionsKeepalive = 0
-	cfg.Server.ExposeSchema = true
-	cfg.Server.IncrementalDelivery = true
-	cfg.Server.IncrementalStreamBatchSize = 2
+	cfg.Subscriptions.Enabled = true
+	cfg.Subscriptions.Keepalive = 0
+	cfg.Incremental.Enabled = true
+	cfg.Incremental.StreamBatchSize = 2
 	if mutate != nil {
 		mutate(&cfg)
 	}
@@ -70,7 +69,7 @@ func incServer(t *testing.T, mutate func(*config.Config)) *incFixture {
 		t.Fatal(err)
 	}
 	ex := app.Executor(built)
-	srv, err := server.New(cfg.Server, mustAuthenticator(t, cfg), ex, built.SDL, nil)
+	srv, err := server.New(cfg, mustAuthenticator(t, cfg), ex, built.SDL, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -426,7 +425,7 @@ func TestIncrementalRLS(t *testing.T) {
 // the snapshot of the first.
 func TestIncrementalSnapshot(t *testing.T) {
 	f := incServer(t, func(c *config.Config) {
-		c.Server.IncrementalStreamBatchSize = 1
+		c.Incremental.StreamBatchSize = 1
 		noIdentity(c)
 	})
 	ctx := context.Background()
@@ -474,7 +473,7 @@ func TestIncrementalSnapshot(t *testing.T) {
 
 func TestIncrementalSchemaToggle(t *testing.T) {
 	on := incServer(t, nil)
-	off := incServer(t, func(c *config.Config) { c.Server.IncrementalDelivery = false })
+	off := incServer(t, func(c *config.Config) { c.Incremental.Enabled = false })
 	sdl := func(url string) string {
 		b, err := httpGet(strings.TrimSuffix(url, "/graphql") + "/schema.graphql")
 		if err != nil {
@@ -501,8 +500,8 @@ func TestIncrementalSchemaToggle(t *testing.T) {
 
 func TestIncrementalLimits(t *testing.T) {
 	f := incServer(t, func(c *config.Config) {
-		c.Server.IncrementalMaxDeferred = 1
-		c.Server.MaxCost = 500
+		c.Incremental.MaxDeferred = 1
+		c.Limits.MaxCost = 500
 	})
 	cases := map[string]string{
 		`{ userById(id: 1) { ... @defer { id } ... @defer { email } } }`:                                   "more than 1 selections",

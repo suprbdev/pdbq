@@ -74,7 +74,7 @@ func TestStatementTimeoutBelowRequestTimeout(t *testing.T) {
 
 func TestLoadRejectsUnknownKeys(t *testing.T) {
 	t.Run("typo", func(t *testing.T) {
-		wantLoadError(t, writeConfig(t, "server:\n  max_dpeth: 3\n"), "unknown key server.max_dpeth", "did you mean server.max_depth?")
+		wantLoadError(t, writeConfig(t, "limits:\n  max_dpeth: 3\n"), "unknown key limits.max_dpeth", "did you mean limits.max_depth?")
 	})
 	t.Run("rls section", func(t *testing.T) {
 		wantLoadError(t, writeConfig(t, "rls:\n  enabled: false\n  anonymous_role: web\n  auth:\n    jwt_secret: s\n"),
@@ -112,8 +112,8 @@ func TestUnrelatedEnvIgnored(t *testing.T) {
 func TestPluginSettingsFromEnv(t *testing.T) {
 	t.Setenv("PDBQ_AUTH_JWT_SECRET", "s")
 	t.Setenv("PDBQ_PLUGINS_SETTINGS_ADVANCED__FILTERS_RELATIONS", "false")
-	t.Setenv("PDBQ_PLUGINS_SETTINGS_AGGREGATES_ENABLED", "true")
-	t.Setenv("PDBQ_PLUGINS_SETTINGS_AGGREGATES_SCAN__COST", "7")
+	t.Setenv("PDBQ_AGGREGATES_ENABLED", "true")
+	t.Setenv("PDBQ_AGGREGATES_SCAN__COST", "7")
 	t.Setenv("PDBQ_PLUGINS_SETTINGS_NESTED__MUTATIONS_MAX__DEPTH", "2")
 	cfg, err := Load("", nil)
 	if err != nil {
@@ -123,10 +123,10 @@ func TestPluginSettingsFromEnv(t *testing.T) {
 	if s.AdvancedFilters.Relations || !s.AdvancedFilters.Computed {
 		t.Errorf("advanced_filters = %+v, want relations off and the defaults kept", s.AdvancedFilters)
 	}
-	if !s.Aggregates.Enabled || s.Aggregates.ScanCost != 7 || !s.Aggregates.Grouped {
-		t.Errorf("aggregates = %+v", s.Aggregates)
+	if a := cfg.Aggregates; !a.Enabled || a.ScanCost != 7 || !a.Grouped {
+		t.Errorf("aggregates = %+v", a)
 	}
-	if s.NestedMutations.MaxDepth != 2 || s.NestedMutations.MaxOperations != 50 || !s.NestedMutations.ForceTransactions {
+	if s.NestedMutations.MaxDepth != 2 || s.NestedMutations.MaxOperations != 50 {
 		t.Errorf("nested_mutations = %+v", s.NestedMutations)
 	}
 }
@@ -196,5 +196,10 @@ func TestExampleYAMLLoadsStrictly(t *testing.T) {
 	}
 	if cfg.Plugins.Settings != DefaultPluginSettings() {
 		t.Errorf("plugin settings = %+v, want the defaults", cfg.Plugins.Settings)
+	}
+	def := DefaultConfig()
+	if cfg.Limits != def.Limits || cfg.Server.DocumentCache != def.Server.DocumentCache || cfg.Incremental != def.Incremental ||
+		cfg.Live != def.Live || cfg.PersistedQueries != def.PersistedQueries || cfg.TX != def.TX || cfg.Aggregates != def.Aggregates {
+		t.Errorf("reference config does not load the defaults: %+v", cfg)
 	}
 }

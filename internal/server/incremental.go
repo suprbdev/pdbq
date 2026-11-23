@@ -50,7 +50,7 @@ func incrementalAccept(r *http.Request) (format exec.IncrementalFormat, ok, unsu
 // through serveIncremental, outside the request timeout handler and gzip,
 // which would buffer its payloads.
 func (s *Server) streamsIncremental(r *http.Request) bool {
-	if !s.cfg.IncrementalDelivery || r.URL.Path != "/graphql" {
+	if !s.cfg.Incremental.Enabled || r.URL.Path != "/graphql" {
 		return false
 	}
 	_, ok, unsupported := incrementalAccept(r)
@@ -62,9 +62,9 @@ func (s *Server) streamsIncremental(r *http.Request) bool {
 // response with one application/json part per payload, flushed as it is
 // produced; any other result is a plain application/json response.
 // server.request_timeout bounds the whole response, and
-// server.incremental_write_timeout each payload: a client that stops
+// incremental.write_timeout each payload: a client that stops
 // reading gets its response aborted and its transaction rolled back. Beyond
-// server.incremental_max_responses responses in flight, the request is
+// incremental.max_responses responses in flight, the request is
 // answered by one result.
 func (s *Server) serveIncremental(w http.ResponseWriter, r *http.Request, ex *exec.Executor, req exec.Request) {
 	format, _, unsupported := incrementalAccept(r)
@@ -73,14 +73,14 @@ func (s *Server) serveIncremental(w http.ResponseWriter, r *http.Request, ex *ex
 		return
 	}
 	ctx := r.Context()
-	if t := s.cfg.RequestTimeout; t > 0 {
+	if t := s.cfg.Server.RequestTimeout; t > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, t)
 		defer cancel()
 	}
-	out := &boundedWriter{w: w, rc: http.NewResponseController(w), ctx: ctx, timeout: s.cfg.IncrementalWriteTimeout}
+	out := &boundedWriter{w: w, rc: http.NewResponseController(w), ctx: ctx, timeout: s.cfg.Incremental.WriteTimeout}
 	defer func() { _ = out.wait() }()
-	if !s.incremental.acquire(s.cfg.IncrementalMaxResponses) {
+	if !s.incremental.acquire(s.cfg.Incremental.MaxResponses) {
 		body, err := ex.Execute(ctx, req).AppendJSON(nil)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "internal error")
@@ -128,7 +128,7 @@ func (s *Server) serveIncremental(w http.ResponseWriter, r *http.Request, ex *ex
 }
 
 // errWriteStalled fails a payload the client did not take within
-// server.incremental_write_timeout.
+// incremental.write_timeout.
 var errWriteStalled = errors.New("incremental response: client stopped reading")
 
 // boundedWriter writes and flushes the payloads of one incremental

@@ -21,7 +21,7 @@ Checklist of PostgreSQL and GraphQL features pdbq supports. Checked = implemente
 - [x] Schema allowlist (`schema.schemas`)
 - [x] Composite types read into the catalog
 - [x] Composite-type columns mapped to GraphQL object types (matching `<Type>Input` on mutations; composite arrays included)
-- [x] Domains surfaced as named scalars (`schema.domain_scalars`, on by default as in PostGraphile; described by the domain's comment and CHECK constraints; domains over domains, arrays of domains, composite attributes, function arguments and results) — see [Domains](domains.md)
+- [x] Domains surfaced as named scalars (`schema.domains`, on by default as in PostGraphile; described by the domain's comment and CHECK constraints; domains over domains, arrays of domains, composite attributes, function arguments and results) — see [Domains](domains.md)
 - [x] Function argument default values (omitted arguments take the `DEFAULT`; shown in the argument description) and `VARIADIC` arguments (a list)
 - [x] Functions with `OUT`/`INOUT`/`RETURNS TABLE` parameters (generated `<Function>Record` object types)
 - [x] Functions returning an anonymous `record` without output parameters: skipped like PostGraphile, with one startup log line per function
@@ -76,10 +76,10 @@ Checklist of PostgreSQL and GraphQL features pdbq supports. Checked = implemente
 - [x] Named + inline fragments
 - [x] GraphQL variables with coercion and default values
 - [x] Multiple root fields per operation
-- [x] Depth limit and cost limit per operation; document limits (tokens, input nesting, expanded selections, field-merge comparisons) checked before validation
+- [x] Depth limit and cost limit per operation (`limits.*`; a connection without `first`/`last` is priced at the page it fetches, `limits.max_page_size`, and its `totalCount`/`pageInfo`/aggregates once); document limits (tokens, input nesting, expanded selections, field-merge comparisons) checked before validation
 - [x] Aggregate fields — built-in `aggregates` plugin (opt-in, `@graphile/pg-aggregates` shape): connection `aggregates` (`sum distinctCount min max average stddevSample stddevPopulation varianceSample variancePopulation`), `groupedAggregates(groupBy:, having:)` with `_TRUNCATED_TO_HOUR`/`_DAY` timestamp derivatives, `<REL>_COUNT_*`/`<REL>_<AGGREGATE>_<COLUMN>_*` ordering, `aggregates` in to-many relation filters, PostGIS `stExtent stCentroid` (plus opt-in `stUnion stCollect`); one statement, RLS and cost limits apply — see [Aggregates](aggregates.md)
-- [x] Simple subscriptions (PostGraphile `--simple-subscriptions` parity): `subscription { listen(topic:, initialEvent:) { relatedNodeId relatedNode query } }` over LISTEN/NOTIFY, served over WebSocket (`graphql-transport-ws` and legacy `graphql-ws`); one shared LISTEN connection, events resolved under each subscriber's RLS identity; opt-in via `server.subscriptions` — see [Subscriptions](subscriptions.md)
-- [x] Live queries (PostGraphile `--live` parity): every `Query` field repeated on `Subscription`, plus `query @live`; tables found by `EXPLAIN`ing the compiled statements under the subscriber's identity (views and RLS policy tables included), change detection by per-table `NOTIFY` triggers installed opt-in, re-run under each subscriber's RLS identity with throttle, a server-wide concurrency bound and result dedupe; per-connection and server caps; opt-in via `server.live` — see [Live queries](live.md)
+- [x] Simple subscriptions (PostGraphile `--simple-subscriptions` parity): `subscription { listen(topic:, initialEvent:) { relatedNodeId relatedNode query } }` over LISTEN/NOTIFY, served over WebSocket (`graphql-transport-ws` and legacy `graphql-ws`); one shared LISTEN connection, events resolved under each subscriber's RLS identity; opt-in via `subscriptions.enabled` — see [Subscriptions](subscriptions.md)
+- [x] Live queries (PostGraphile `--live` parity): every `Query` field repeated on `Subscription`, plus `query @live`; tables found by `EXPLAIN`ing the compiled statements under the subscriber's identity (views and RLS policy tables included), change detection by per-table `NOTIFY` triggers installed opt-in, re-run under each subscriber's RLS identity with throttle, a server-wide concurrency bound and result dedupe; per-connection and server caps; opt-in via `live.enabled` — see [Live queries](live.md)
 
 ## Filtering & ordering
 
@@ -113,7 +113,7 @@ Checklist of PostgreSQL and GraphQL features pdbq supports. Checked = implemente
 - [x] Generated and identity `ALWAYS` columns excluded from inputs; identity `BY DEFAULT`, serial and defaulted columns optional
 - [x] Privilege-gated generation (no INSERT grant → no create mutation)
 - [x] Not-found update/delete → GraphQL error, transaction rolled back
-- [x] Nested mutations via built-in plugin (postgraphile-plugin-nested-mutations shapes): `connectBy<Key>`/`connectByNodeId`, `create`, `updateBy<Key>`/`updateByNodeId`, `deleteBy<Key>`/`deleteByNodeId`, `disconnectBy<Key>`/`disconnectByNodeId` on forward and backward relations, on create and update mutations; multi-CTE single statement, bounded depth, forced transaction
+- [x] Nested mutations via built-in plugin (postgraphile-plugin-nested-mutations shapes): `connectBy<Key>`/`connectByNodeId`, `create`, `updateBy<Key>`/`updateByNodeId`, `deleteBy<Key>`/`deleteByNodeId`, `disconnectBy<Key>`/`disconnectByNodeId` on forward and backward relations, on create and update mutations; multi-CTE single statement, bounded depth
 - [x] Update/delete by unique constraints (`updateUserByEmail`, `deleteUserByEmail`, mirroring the lookup surface)
 - [x] Upsert (`ON CONFLICT`) — `upsert<Type>By<Unique>(input:)` per non-generated key target; provided non-key columns update from `EXCLUDED`
 - [x] Bulk mutations (`createUsers(input: [...])`, `updateUsers(filter:, patch:)`, `deleteUsers(filter:)`; payload = mutated rows + `affectedCount`)
@@ -156,7 +156,7 @@ Checklist of PostgreSQL and GraphQL features pdbq supports. Checked = implemente
 
 ## Transactions & execution
 
-- [x] Every mutation in a transaction by default (`transactions.mutations`)
+- [x] Every mutation in a transaction
 - [x] One transaction per operation; mutations abort remaining root fields on error
 - [x] Queries transaction-free unless RLS context requires one
 - [x] Plugins can force a transaction (`op.ForceTx`)
@@ -165,7 +165,7 @@ Checklist of PostgreSQL and GraphQL features pdbq supports. Checked = implemente
 - [x] Statement timeout per connection (`database.statement_timeout`)
 - [x] PG error → GraphQL error mapping with `errors.detail: dev|prod` (constraint violations pass through in prod, internals sanitized)
 - [x] One transaction per request spanning operations (`transactions.per_request`)
-- [x] Opt-in partial success for mutations: each root field in its own savepoint, a failed field is reported and the rest commit (`transactions.partial_mutations` + request `extensions.partialMutations`) — see [Mutations](mutations.md#partial-success)
+- [x] Opt-in partial success for mutations: each root field in its own savepoint, a failed field is reported and the rest commit (`transactions.partial.enabled` + request `extensions.partialMutations`) — see [Mutations](mutations.md#partial-success)
 - [x] Automatic retry on serialization failures (`transactions.max_retries`; SQLSTATE 40001/40P01, whole-operation re-run)
 
 ## Server & protocol
@@ -173,15 +173,15 @@ Checklist of PostgreSQL and GraphQL features pdbq supports. Checked = implemente
 - [x] `POST /graphql` (JSON body) and `GET /graphql` (query params)
 - [x] CSRF prevention per GraphQL-over-HTTP: `POST` requires `Content-Type: application/json` (`415` otherwise); `GET` runs queries only (`405` with `Allow: POST` for mutations and subscriptions, persisted ones included)
 - [x] GraphQL introspection (`__schema`, `__type`, `__typename`), resolved in-process and exempt from depth/cost limits
-- [x] `server.disable_introspection`: rejects `__schema`/`__type` and drops "Did you mean …" suggestions from validation errors
+- [x] `server.introspection: false`: rejects `__schema`/`__type`, stops serving `/schema.graphql` and drops "Did you mean …" suggestions from validation errors
 - [x] Embedded GraphiQL playground (opt-in, off by default)
 - [x] `GET /healthz` (liveness) / `/readyz` (bounded pool ping, `server.readyz_timeout`, `503` when the database is unreachable)
-- [x] `GET /schema.graphql` (SDL export; opt-in, off by default)
+- [x] `GET /schema.graphql` (SDL export; served with `server.introspection`, on by default)
 - [x] Request timeout, max body size
 - [x] Atomic schema hot-swap (in-flight requests finish on the old schema)
 - [x] `/metrics` (Prometheus) endpoint (opt-in `metrics.enabled`, optional separate `metrics.addr`; see [metrics.md](metrics.md))
-- [x] Persisted queries / APQ (`server.apq` Apollo protocol, `server.persisted_queries_path` allowlist file, `server.persisted_only` lockdown)
-- [x] `@defer` / `@stream` incremental delivery (opt-in `server.incremental_delivery`): `multipart/mixed` over HTTP (`incrementalSpec=v0.2` and `deferSpec=20220824` shapes), `next` messages over WebSocket; deferred fragments and stream batches run as their own statements in one repeatable read snapshot under the request's RLS identity — see [Incremental delivery](incremental.md)
+- [x] Persisted queries / APQ (`persisted_queries.apq` Apollo protocol, `persisted_queries.path` allowlist file, `persisted_queries.only` lockdown)
+- [x] `@defer` / `@stream` incremental delivery (opt-in `incremental.enabled`): `multipart/mixed` over HTTP (`incrementalSpec=v0.2` and `deferSpec=20220824` shapes), `next` messages over WebSocket; deferred fragments and stream batches run as their own statements in one repeatable read snapshot under the request's RLS identity — see [Incremental delivery](incremental.md)
 - [x] Schema contracts — named schema variants that hide tagged tables, columns, functions and relations per audience (e.g. `public`/`partner`/`internal`), each with its own SDL export (`schema print --contract`) and served endpoint; builds on the `@omit` machinery in `smart_comments` ([contracts.md](contracts.md))
 - [x] CORS configuration (`server.cors_origins`: exact-match allowlist or `*`)
 - [x] Response compression (gzip, opt-in via `server.compression`)
@@ -223,7 +223,7 @@ Checklist of PostgreSQL and GraphQL features pdbq supports. Checked = implemente
 - [x] Built-in: `nested_mutations`
 - [x] Built-in: `contrib` (full-text, pg_trgm, unaccent, fuzzystrmatch, hstore, ltree, intarray, range, inet and cube operators; rank, similarity, Levenshtein, pgvector, cube and earthdistance distance ordering and scores, distance thresholds; ltree, hstore and intarray value fields, filters and ordering; `plugins.settings.contrib.{filters,ordering}`)
 - [x] Built-in: `advanced_filters` (relation filters + computed-column filtering/ordering; halves toggle via `plugins.settings.advanced_filters.{relations,computed}`)
-- [x] Built-in: `aggregates` (connection, grouped, relational-order and relational-filter aggregates; off unless `plugins.settings.aggregates.enabled` or an `@aggregates` table tag; see [Aggregates](aggregates.md))
+- [x] Built-in: `aggregates` (connection, grouped, relational-order and relational-filter aggregates; off unless `aggregates.enabled` or an `@aggregates` table tag; see [Aggregates](aggregates.md))
 - [ ] Out-of-process plugins (go-plugin gRPC or wasm) — the existing hook interfaces are the contract either way
 - [x] Built-in: smart_comments plugin (`docs/smart-comments.md`) — `@omit` (per-action on tables, columns, FKs, unique constraints, functions), `@name`, `@fieldName`/`@foreignFieldName`, `@deprecated`, `@notNull`/`@nullable`, `@filterable`/`@sortable`, and logical `@primaryKey`/`@unique`/`@foreignKey` on views; `advanced_filters` honors the tags per object (`@omit filter,order` on relations/computed functions) and gains `relations_opt_in`/`computed_opt_in` for explicit `@filterable` opt-in
 

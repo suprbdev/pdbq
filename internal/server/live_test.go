@@ -18,15 +18,15 @@ import (
 	"github.com/suprbdev/pdbq/internal/subscribe"
 )
 
-func liveTestServer(t *testing.T, mutate func(*config.Server)) (*Server, *exec.Executor) {
+func liveTestServer(t *testing.T, mutate func(*config.Config)) (*Server, *exec.Executor) {
 	t.Helper()
 	built, err := schema.New(testutil.FixtureCatalog(), inflect.Default, schema.Options{FilterIndexedOnly: true, Subscriptions: true, Live: true}).Build()
 	if err != nil {
 		t.Fatal(err)
 	}
 	ex := exec.New(nil, built, compile.New(built).Compile, nil, exec.Options{MaxDepth: 15, MaxCost: 10000})
-	cfg := config.DefaultConfig().Server
-	cfg.Subscriptions, cfg.Live = true, true
+	cfg := config.DefaultConfig()
+	cfg.Subscriptions.Enabled, cfg.Live.Enabled = true, true
 	if mutate != nil {
 		mutate(&cfg)
 	}
@@ -36,7 +36,7 @@ func liveTestServer(t *testing.T, mutate func(*config.Server)) (*Server, *exec.E
 	}
 	mc := &memConn{notified: make(chan *pgconn.Notification, 16)}
 	hub := subscribe.NewHub(func(context.Context) (subscribe.Conn, error) { return mc, nil }, nil)
-	tracker := live.NewTracker(hub, live.Options{Channel: cfg.LiveChannel})
+	tracker := live.NewTracker(hub, live.Options{Channel: cfg.Live.Channel})
 	srv.SetSubscriptions(hub)
 	srv.SetLive(tracker)
 	t.Cleanup(func() {
@@ -86,18 +86,18 @@ func TestLiveFields(t *testing.T) {
 		})
 	}
 
-	off, exOff := liveTestServer(t, func(c *config.Server) { c.Live = false })
+	off, exOff := liveTestServer(t, func(c *config.Config) { c.Live.Enabled = false })
 	_, op, err := exOff.Prepare(context.Background(), exec.Request{Query: `query @live { allUsers { totalCount } }`})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := off.liveFields(exOff, op); ok {
-		t.Error("live query served with server.live off")
+		t.Error("live query served with live.enabled off")
 	}
 }
 
 func TestListenRejectsLiveChannel(t *testing.T) {
-	srv, ex := liveTestServer(t, func(c *config.Server) { c.SubscriptionsTopicPrefix = "" })
+	srv, ex := liveTestServer(t, func(c *config.Config) { c.Subscriptions.TopicPrefix = "" })
 	ctx, op, err := ex.Prepare(context.Background(), exec.Request{Query: `subscription { listen(topic: "pdbq_live") { relatedNodeId } }`})
 	if err != nil {
 		t.Fatal(err)
@@ -108,21 +108,21 @@ func TestListenRejectsLiveChannel(t *testing.T) {
 }
 
 func TestLiveCapsUnit(t *testing.T) {
-	srv, _ := liveTestServer(t, func(c *config.Server) { c.LiveMaxOperations = 2 })
+	srv, _ := liveTestServer(t, func(c *config.Config) { c.Live.MaxOperations = 2 })
 	for range 2 {
 		if !srv.reserveLiveOperation() {
 			t.Fatal("reserve below the cap failed")
 		}
 	}
 	if srv.reserveLiveOperation() {
-		t.Fatal("reserve beyond live_max_operations succeeded")
+		t.Fatal("reserve beyond live.max_operations succeeded")
 	}
 	srv.releaseLiveOperation()
 	if !srv.reserveLiveOperation() {
 		t.Fatal("released slot not reusable")
 	}
 	c := &wsSession{s: srv}
-	srv.cfg.LiveMaxPerConnection = 1
+	srv.cfg.Live.MaxPerConnection = 1
 	if !c.reserveLive() {
 		t.Fatal("reserve below the per-connection cap failed")
 	}

@@ -154,7 +154,7 @@ func TestPartialMutationsOptIn(t *testing.T) {
 	})
 	t.Run("default stays all or nothing", func(t *testing.T) {
 		f := &fakeBatch{attempts: []attempt{{stmts: map[string]outcome{"a": {raw: `{"user":{"id":1}}`}}}}}
-		e := newBatchExecutor(t, Options{PartialMutations: true, TxMutations: true}, f)
+		e := newBatchExecutor(t, Options{PartialMutations: true}, f)
 		r := &txRun{tx: &spTx{}}
 		e.runTx = r.runTx
 		res := e.Execute(context.Background(), Request{Query: `mutation { a: createUser(input: {email: "a@b.c"}) { user { id } } }`})
@@ -170,12 +170,16 @@ func TestPartialMutationsOptIn(t *testing.T) {
 			t.Fatalf("response = %s", resultJSON(t, res))
 		}
 	})
-	t.Run("forces a transaction when mutations are not transactional", func(t *testing.T) {
-		r := &txRun{tx: &spTx{rows: map[string]outcome{"a": {raw: `{}`}}}}
-		e := newPartialExecutor(t, Options{PartialMutations: true, TxMutations: false}, r)
+	t.Run("rejected above max_items", func(t *testing.T) {
+		r := &txRun{tx: &spTx{}}
+		e := newPartialExecutor(t, Options{PartialMutations: true, PartialMaxItems: 1}, r)
+		res := e.Execute(context.Background(), Request{Query: partialQuery, PartialMutations: true})
+		if len(res.Errors) != 1 || !strings.Contains(res.Errors[0].Message, "exceed transactions.partial.max_items (1)") || r.calls != 0 {
+			t.Fatalf("response = %s, runTx calls = %d", resultJSON(t, res), r.calls)
+		}
 		e.Execute(context.Background(), Request{Query: `mutation { a: createUser(input: {email: "a@b.c"}) { user { id } } }`, PartialMutations: true})
 		if r.calls != 1 {
-			t.Fatalf("runTx calls = %d, want 1", r.calls)
+			t.Fatalf("one field: runTx calls = %d, want 1", r.calls)
 		}
 	})
 }

@@ -39,8 +39,8 @@ func subsServer(t *testing.T) *subsFixture {
 	cfg.Roles.Allowed = []string{"anonymous", "app_user"}
 	cfg.Errors.Detail = "dev"
 	cfg.Plugins.Disabled = []string{"simple_names"}
-	cfg.Server.Subscriptions = true
-	cfg.Server.SubscriptionsKeepalive = 0
+	cfg.Subscriptions.Enabled = true
+	cfg.Subscriptions.Keepalive = 0
 	if err := cfg.Validate(); err != nil {
 		t.Fatal(err)
 	}
@@ -55,7 +55,7 @@ func subsServer(t *testing.T) *subsFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv, err := server.New(cfg.Server, mustAuthenticator(t, cfg), app.Executor(built), built.SDL, nil)
+	srv, err := server.New(cfg, mustAuthenticator(t, cfg), app.Executor(built), built.SDL, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -312,7 +312,7 @@ func TestSubscriptionsReconnect(t *testing.T) {
 	cfg.Database.URL = url
 	noIdentity(&cfg)
 	cfg.Plugins.Disabled = []string{"simple_names"}
-	cfg.Server.Subscriptions = true
+	cfg.Subscriptions.Enabled = true
 	app := pdbq.New(cfg)
 	t.Cleanup(app.Close)
 	ctx := context.Background()

@@ -18,12 +18,12 @@ func TestDefaultsValid(t *testing.T) {
 func TestSubscriptionSettingsIgnoredWhileOff(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.Auth.JWT.Secret = "s"
-	cfg.Server.SubscriptionsTopics = []string{"bad topic"}
+	cfg.Subscriptions.Topics = []string{"bad topic"}
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("subscription settings checked while off: %v", err)
 	}
-	cfg.Server.Subscriptions = true
-	cfg.Server.SubscriptionsTopics = []string{"chat", "user:*"}
+	cfg.Subscriptions.Enabled = true
+	cfg.Subscriptions.Topics = []string{"chat", "user:*"}
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("valid subscription settings rejected: %v", err)
 	}
@@ -53,39 +53,44 @@ func TestValidateRejects(t *testing.T) {
 		"watch+cache":   func(c *Config) { c.Watch.Enabled = true; c.Schema.CachePath = "x" },
 		"no schemas":    func(c *Config) { c.Schema.Schemas = nil },
 		"log level":     func(c *Config) { c.Log.Level = "loud" },
-		"max page size": func(c *Config) { c.Server.MaxPageSize = 0 },
+		"max page size": func(c *Config) { c.Limits.MaxPageSize = 0 },
 		"readyz":        func(c *Config) { c.Server.ReadyzTimeout = 0 },
-		"doc cache":     func(c *Config) { c.Server.DocumentCacheSize = -1 },
-		"query tokens":  func(c *Config) { c.Server.MaxQueryTokens = 0 },
-		"input depth":   func(c *Config) { c.Server.MaxInputDepth = 0 },
-		"selections":    func(c *Config) { c.Server.MaxSelections = 0 },
-		"introspection": func(c *Config) { c.Server.MaxIntrospectionBytes = 0 },
-		"comparisons":   func(c *Config) { c.Server.MaxFieldComparisons = 0 },
-		"cache bytes":   func(c *Config) { c.Server.DocumentCacheBytes = 0 },
-		"cache entry":   func(c *Config) { c.Server.DocumentCacheMaxEntryBytes = 0 },
+		"doc cache":     func(c *Config) { c.Server.DocumentCache.Size = -1 },
+		"query tokens":  func(c *Config) { c.Limits.MaxQueryTokens = 0 },
+		"input depth":   func(c *Config) { c.Limits.MaxInputDepth = 0 },
+		"selections":    func(c *Config) { c.Limits.MaxSelections = 0 },
+		"introspection": func(c *Config) { c.Limits.MaxIntrospectionBytes = 0 },
+		"comparisons":   func(c *Config) { c.Limits.MaxFieldComparisons = 0 },
+		"cache bytes":   func(c *Config) { c.Server.DocumentCache.Bytes = 0 },
+		"cache entry":   func(c *Config) { c.Server.DocumentCache.MaxEntryBytes = 0 },
 		"anon role":     func(c *Config) { c.Auth.Mode = "none" },
 		"log format":    func(c *Config) { c.Log.Format = "xml" },
 		"headers mode":  func(c *Config) { c.Auth.Mode = "headers" },
 		"plugin name":   func(c *Config) { c.Plugins.Disabled = []string{"simple-names"} },
 		"nested depth":  func(c *Config) { c.Plugins.Settings.NestedMutations.MaxDepth = 0 },
 		"nested ops":    func(c *Config) { c.Plugins.Settings.NestedMutations.MaxOperations = 0 },
-		"scan cost":     func(c *Config) { c.Plugins.Settings.Aggregates.ScanCost = -1 },
+		"scan cost":     func(c *Config) { c.Aggregates.ScanCost = -1 },
+		"max cost":      func(c *Config) { c.Limits.MaxCost = 0 },
+		"max depth":     func(c *Config) { c.Limits.MaxDepth = 0 },
+		"body bytes":    func(c *Config) { c.Limits.MaxBodyBytes = 0 },
+		"partial items": func(c *Config) { c.TX.Partial.MaxItems = 0 },
+		"pq only":       func(c *Config) { c.PersistedQueries.Only = true },
 		"watch channel": func(c *Config) { c.Watch.Enabled = true; c.Watch.Channel = "bad$$chan" },
 		"trusted proxy": func(c *Config) { c.Auth.Headers.TrustedProxies = []string{"10.0.0.0/8", "not-an-ip"} },
 		"metrics path":  func(c *Config) { c.Metrics.Enabled = true; c.Metrics.Path = "metrics" },
 		"metrics route": func(c *Config) { c.Metrics.Enabled = true; c.Metrics.Path = "/graphql" },
 		"metrics addr":  func(c *Config) { c.Metrics.Enabled = true; c.Metrics.Addr = c.Server.Addr },
-		"subs max":      func(c *Config) { c.Server.Subscriptions = true; c.Server.SubscriptionsMaxPerConnection = 0 },
-		"subs buffer":   func(c *Config) { c.Server.Subscriptions = true; c.Server.SubscriptionsBuffer = 0 },
-		"subs ka":       func(c *Config) { c.Server.Subscriptions = true; c.Server.SubscriptionsKeepalive = -1 },
-		"subs conns":    func(c *Config) { c.Server.Subscriptions = true; c.Server.SubscriptionsMaxConnections = 0 },
-		"subs ops":      func(c *Config) { c.Server.Subscriptions = true; c.Server.SubscriptionsMaxOperations = 0 },
-		"subs rate":     func(c *Config) { c.Server.Subscriptions = true; c.Server.SubscriptionsSubscribeRate = -1 },
+		"subs max":      func(c *Config) { c.Subscriptions.Enabled = true; c.Subscriptions.MaxPerConnection = 0 },
+		"subs buffer":   func(c *Config) { c.Subscriptions.Enabled = true; c.Subscriptions.Buffer = 0 },
+		"subs ka":       func(c *Config) { c.Subscriptions.Enabled = true; c.Subscriptions.Keepalive = -1 },
+		"subs conns":    func(c *Config) { c.Subscriptions.Enabled = true; c.Subscriptions.MaxConnections = 0 },
+		"subs ops":      func(c *Config) { c.Subscriptions.Enabled = true; c.Subscriptions.MaxOperations = 0 },
+		"subs rate":     func(c *Config) { c.Subscriptions.Enabled = true; c.Subscriptions.SubscribeRate = 0 },
 		"subs prefix": func(c *Config) {
-			c.Server.Subscriptions = true
-			c.Server.SubscriptionsTopicPrefix = strings.Repeat("p", 63)
+			c.Subscriptions.Enabled = true
+			c.Subscriptions.TopicPrefix = strings.Repeat("p", 63)
 		},
-		"subs topics":   func(c *Config) { c.Server.Subscriptions = true; c.Server.SubscriptionsTopics = []string{"bad topic"} },
+		"subs topics":   func(c *Config) { c.Subscriptions.Enabled = true; c.Subscriptions.Topics = []string{"bad topic"} },
 		"contract name": func(c *Config) { c.Contracts = []Contract{{Name: "Public"}} },
 		"contract metrics": func(c *Config) {
 			c.Contracts = []Contract{{Name: "public"}}
@@ -97,19 +102,20 @@ func TestValidateRejects(t *testing.T) {
 			c.Contracts = []Contract{{Name: "a"}}
 			c.Plugins.Disabled = []string{"smart_comments"}
 		},
-		"inc deferred":      func(c *Config) { c.Server.IncrementalDelivery = true; c.Server.IncrementalMaxDeferred = 0 },
-		"inc batch":         func(c *Config) { c.Server.IncrementalDelivery = true; c.Server.IncrementalStreamBatchSize = 0 },
-		"inc write timeout": func(c *Config) { c.Server.IncrementalDelivery = true; c.Server.IncrementalWriteTimeout = 0 },
-		"inc responses":     func(c *Config) { c.Server.IncrementalDelivery = true; c.Server.IncrementalMaxResponses = -1 },
-		"live no subs":      func(c *Config) { c.Server.Live = true },
-		"live channel":      func(c *Config) { c.Server.Subscriptions, c.Server.Live, c.Server.LiveChannel = true, true, "pdbq-live" },
+		"inc deferred":       func(c *Config) { c.Incremental.Enabled = true; c.Incremental.MaxDeferred = 0 },
+		"inc batch":          func(c *Config) { c.Incremental.Enabled = true; c.Incremental.StreamBatchSize = 0 },
+		"inc write timeout":  func(c *Config) { c.Incremental.Enabled = true; c.Incremental.WriteTimeout = 0 },
+		"inc responses":      func(c *Config) { c.Incremental.Enabled = true; c.Incremental.MaxResponses = 0 },
+		"inc responses pool": func(c *Config) { c.Incremental.Enabled = true; c.Incremental.MaxResponses = int(c.Database.MaxConns) },
+		"live no subs":       func(c *Config) { c.Live.Enabled = true },
+		"live channel":       func(c *Config) { c.Subscriptions.Enabled, c.Live.Enabled, c.Live.Channel = true, true, "pdbq-live" },
 		"live channel length": func(c *Config) {
-			c.Server.Subscriptions, c.Server.Live, c.Server.LiveChannel = true, true, strings.Repeat("c", 55)
+			c.Subscriptions.Enabled, c.Live.Enabled, c.Live.Channel = true, true, strings.Repeat("c", 55)
 		},
-		"live throttle":    func(c *Config) { c.Server.Subscriptions, c.Server.Live, c.Server.LiveThrottle = true, true, -1 },
-		"live concurrency": func(c *Config) { c.Server.Subscriptions, c.Server.Live, c.Server.LiveConcurrency = true, true, 0 },
-		"live per conn":    func(c *Config) { c.Server.Subscriptions, c.Server.Live, c.Server.LiveMaxPerConnection = true, true, 0 },
-		"live ops":         func(c *Config) { c.Server.Subscriptions, c.Server.Live, c.Server.LiveMaxOperations = true, true, 0 },
+		"live throttle":    func(c *Config) { c.Subscriptions.Enabled, c.Live.Enabled, c.Live.Throttle = true, true, -1 },
+		"live concurrency": func(c *Config) { c.Subscriptions.Enabled, c.Live.Enabled, c.Live.Concurrency = true, true, 0 },
+		"live per conn":    func(c *Config) { c.Subscriptions.Enabled, c.Live.Enabled, c.Live.MaxPerConnection = true, true, 0 },
+		"live ops":         func(c *Config) { c.Subscriptions.Enabled, c.Live.Enabled, c.Live.MaxOperations = true, true, 0 },
 	}
 	for name, mutate := range cases {
 		if err := bad(mutate); err == nil {
@@ -192,8 +198,8 @@ roles:
 	if cfg.Server.Addr != ":7777" {
 		t.Errorf("env did not override file: %q", cfg.Server.Addr)
 	}
-	if cfg.Server.MaxDepth != 15 {
-		t.Errorf("default lost: %d", cfg.Server.MaxDepth)
+	if cfg.Limits.MaxDepth != 15 {
+		t.Errorf("default lost: %d", cfg.Limits.MaxDepth)
 	}
 }
 
@@ -221,6 +227,8 @@ func TestExampleYAMLCoversEverything(t *testing.T) {
 		"roles:", "switch:", "anonymous:", "claims:", "json_setting:", "transactions:", "watch:", "errors:",
 		"plugins:", "advanced_filters:", "relations_opt_in:", "postgis:", "typed_geometry:", "contrib:",
 		"aggregates:", "scan_cost:", "nested_mutations:", "max_operations:", "log:",
+		"limits:", "max_cost:", "persisted_queries:", "subscriptions:", "live:", "incremental:",
+		"document_cache:", "introspection:", "domains:", "partial:", "max_items:",
 	} {
 		if !strings.Contains(out, key) {
 			t.Errorf("example yaml missing %q", key)
@@ -298,25 +306,13 @@ func TestContractsFromEnv(t *testing.T) {
 	}
 }
 
-func TestIncrementalResponses(t *testing.T) {
+func TestIncrementalMaxResponsesUnboundedPool(t *testing.T) {
 	cfg := DefaultConfig()
-	for _, tc := range []struct {
-		maxConns  int32
-		responses int
-		want      int
-	}{
-		{10, 0, 5},
-		{1, 0, 1},
-		{3, 0, 1},
-		{10, 7, 7},
-	} {
-		cfg.Database.MaxConns, cfg.Server.IncrementalMaxResponses = tc.maxConns, tc.responses
-		if got := cfg.IncrementalResponses(); got != tc.want {
-			t.Errorf("max_conns %d, incremental_max_responses %d: IncrementalResponses() = %d, want %d", tc.maxConns, tc.responses, got, tc.want)
-		}
-	}
-	cfg.Database.MaxConns, cfg.Server.IncrementalMaxResponses = 0, 0
-	if got := cfg.IncrementalResponses(); got < 2 {
-		t.Errorf("pgxpool default pool: IncrementalResponses() = %d, want at least 2", got)
+	cfg.Auth.JWT.Secret = "s"
+	cfg.Incremental.Enabled = true
+	cfg.Database.MaxConns = 0
+	cfg.Incremental.MaxResponses = 50
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("max_responses with the pgxpool default pool: %v", err)
 	}
 }

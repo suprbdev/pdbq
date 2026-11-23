@@ -23,7 +23,7 @@ const (
 )
 
 // IncrementalOptions configure the defer and stream directives
-// (server.incremental_delivery).
+// (incremental.enabled).
 type IncrementalOptions struct {
 	// Enabled plans query operations for incremental delivery and enforces
 	// the directives' validation rules. The schema must declare the

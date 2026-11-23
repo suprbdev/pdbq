@@ -72,7 +72,6 @@ func TestTypedGeometryFunctions(t *testing.T) {
 	server := func(typed bool) string {
 		return testServer(t, func(c *config.Config) {
 			c.Schema.Schemas = []string{geoFnSchema}
-			c.Server.ExposeSchema = true
 			c.Filters.IndexedOnly = false
 			if typed {
 				c.Plugins.Settings.Postgis.TypedGeometry = true

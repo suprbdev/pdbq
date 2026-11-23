@@ -2,6 +2,7 @@ package exec
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/vektah/gqlparser/v2/ast"
@@ -43,8 +44,8 @@ func typedPostgis() *postgisplugin.Settings {
 	return &s
 }
 
-// defaultMaxCost mirrors config.DefaultConfig().Server.MaxCost.
-const defaultMaxCost = 10000
+// defaultMaxCost mirrors config.DefaultConfig().Limits.MaxCost.
+const defaultMaxCost = 100000
 
 // costFor is costWith with the postgis plugin applied first when
 // postgisSettings is non-nil.
@@ -114,13 +115,39 @@ func TestCostFirstOneCheaperThanUnpaginated(t *testing.T) {
 
 func TestCostPaginationNotChargedTwice(t *testing.T) {
 	// The page multiplier applies once at the connection field; nodes under
-	// it must not add the ×10 list default on top. An explicit first equal
-	// to the default-page assumption (10) therefore costs the same as no
-	// first at all.
+	// it must not add the ×10 list default on top. A connection without
+	// first/last fetches a full page, so it costs the same as first equal
+	// to the page-size cap.
 	def := cost(t, `{ allUsers { nodes { id } } }`, nil)
-	ten := cost(t, `{ allUsers(first: 10) { nodes { id } } }`, nil)
-	if ten != def {
-		t.Fatalf("cost(first:10)=%d != cost(no first)=%d; pagination charged twice", ten, def)
+	full := cost(t, `{ allUsers(first: 100) { nodes { id } } }`, nil)
+	if full != def {
+		t.Fatalf("cost(first:100)=%d != cost(no first)=%d; pagination charged twice", full, def)
+	}
+}
+
+func TestCostUnboundedConnectionPricedAtPageSize(t *testing.T) {
+	for _, q := range []string{
+		`{ allUsers { nodes { id email } } }`,
+		`{ allUsers { edges { cursor node { id } } } }`,
+		`{ userById(id: 1) { postsByAuthorId { nodes { id title } } } }`,
+	} {
+		unbounded := cost(t, q, nil)
+		half := cost(t, strings.Replace(strings.Replace(q, "allUsers", "allUsers(first: 50)", 1), "postsByAuthorId", "postsByAuthorId(first: 50)", 1), nil)
+		if unbounded <= half {
+			t.Errorf("%s: cost without first %d is not above cost with first: 50 (%d)", q, unbounded, half)
+		}
+	}
+}
+
+func TestCostDefaultMaxCostAdmitsTwoLevels(t *testing.T) {
+	two := cost(t, `{ allUsers { totalCount nodes { id email fullName createdAt
+		postsByAuthorId { totalCount nodes { id title body published } } } } }`, nil)
+	if two > defaultMaxCost {
+		t.Errorf("two-level query without first costs %d, over the default max_cost %d", two, defaultMaxCost)
+	}
+	three := cost(t, `{ allUsers { nodes { id postsByAuthorId { nodes { id commentsByPostId { nodes { id } } } } } } }`, nil)
+	if three <= defaultMaxCost {
+		t.Errorf("three-level query without first costs %d, within the default max_cost %d", three, defaultMaxCost)
 	}
 }
 

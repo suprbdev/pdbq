@@ -38,7 +38,7 @@ func (h *captureHook) BeforeOperation(ctx context.Context, op *exec.Operation) (
 
 func (h *captureHook) AfterOperation(context.Context, *exec.Operation, *exec.Result) {}
 
-func identityServer(t *testing.T, a config.Auth, r config.Roles, srv config.Server) (http.Handler, *captureHook) {
+func identityServer(t *testing.T, a config.Auth, r config.Roles, srv config.Config) (http.Handler, *captureHook) {
 	t.Helper()
 	built, err := schema.New(testutil.FixtureCatalog(), inflect.Default, schema.Options{FilterIndexedOnly: true}).Build()
 	if err != nil {
@@ -50,7 +50,7 @@ func identityServer(t *testing.T, a config.Auth, r config.Roles, srv config.Serv
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv.MaxBodyBytes = 1 << 20
+	srv.Limits.MaxBodyBytes = 1 << 20
 	s, err := New(srv, authn, ex, built.SDL, slog.Default())
 	if err != nil {
 		t.Fatal(err)
@@ -88,7 +88,7 @@ func postIdentity(h http.Handler, header http.Header) *httptest.ResponseRecorder
 }
 
 func TestAnonymousRefusedByDefault(t *testing.T) {
-	h, hook := identityServer(t, jwtAuth(), config.DefaultConfig().Roles, config.Server{})
+	h, hook := identityServer(t, jwtAuth(), config.DefaultConfig().Roles, config.Config{})
 	rec := postIdentity(h, nil)
 	if rec.Code != http.StatusUnauthorized || rec.Header().Get("WWW-Authenticate") != "Bearer" {
 		t.Fatalf("status %d, WWW-Authenticate %q, want 401 Bearer", rec.Code, rec.Header().Get("WWW-Authenticate"))
@@ -104,7 +104,7 @@ func TestAnonymousRefusedByDefault(t *testing.T) {
 func TestAnonymousRoleWhenConfigured(t *testing.T) {
 	r := config.DefaultConfig().Roles
 	r.Anonymous = "anonymous"
-	h, hook := identityServer(t, jwtAuth(), r, config.Server{})
+	h, hook := identityServer(t, jwtAuth(), r, config.Config{})
 	postIdentity(h, nil)
 	if hook.calls != 1 || hook.role != "anonymous" {
 		t.Fatalf("calls %d, role %q, want the anonymous role", hook.calls, hook.role)
@@ -112,7 +112,7 @@ func TestAnonymousRoleWhenConfigured(t *testing.T) {
 }
 
 func TestInvalidTokenChallenge(t *testing.T) {
-	h, _ := identityServer(t, jwtAuth(), config.DefaultConfig().Roles, config.Server{})
+	h, _ := identityServer(t, jwtAuth(), config.DefaultConfig().Roles, config.Config{})
 	rec := postIdentity(h, http.Header{"Authorization": {"Bearer not-a-token"}})
 	if rec.Code != http.StatusUnauthorized || rec.Header().Get("WWW-Authenticate") != `Bearer error="invalid_token"` {
 		t.Fatalf("status %d, WWW-Authenticate %q", rec.Code, rec.Header().Get("WWW-Authenticate"))
@@ -122,7 +122,7 @@ func TestInvalidTokenChallenge(t *testing.T) {
 func TestRoleNotAllowedChallenge(t *testing.T) {
 	r := config.DefaultConfig().Roles
 	r.Allowed = []string{"app_user"}
-	h, hook := identityServer(t, jwtAuth(), r, config.Server{})
+	h, hook := identityServer(t, jwtAuth(), r, config.Config{})
 	rec := postIdentity(h, http.Header{"Authorization": {"Bearer " + signedToken(t, jwt.MapClaims{"role": "admin"})}})
 	if rec.Code != http.StatusUnauthorized || rec.Header().Get("WWW-Authenticate") != `Bearer error="insufficient_scope"` {
 		t.Fatalf("status %d, WWW-Authenticate %q", rec.Code, rec.Header().Get("WWW-Authenticate"))
@@ -133,7 +133,7 @@ func TestRoleNotAllowedChallenge(t *testing.T) {
 }
 
 func TestBearerSchemeCaseInsensitive(t *testing.T) {
-	h, hook := identityServer(t, jwtAuth(), config.DefaultConfig().Roles, config.Server{})
+	h, hook := identityServer(t, jwtAuth(), config.DefaultConfig().Roles, config.Config{})
 	tok := signedToken(t, jwt.MapClaims{"role": "app_user", "user_id": "7"})
 	for _, scheme := range []string{"bearer", "BEARER", "Bearer"} {
 		hook.calls = 0
@@ -147,7 +147,7 @@ func TestBearerSchemeCaseInsensitive(t *testing.T) {
 func TestRoleSwitchOffRunsAsConnectionRole(t *testing.T) {
 	r := config.DefaultConfig().Roles
 	r.Switch = false
-	h, hook := identityServer(t, jwtAuth(), r, config.Server{})
+	h, hook := identityServer(t, jwtAuth(), r, config.Config{})
 	postIdentity(h, http.Header{"Authorization": {"Bearer " + signedToken(t, jwt.MapClaims{"role": "app_user", "user_id": "7"})}})
 	if hook.calls != 1 || hook.role != "" || hook.claims["user_id"] != "7" {
 		t.Fatalf("calls %d, role %q, claims %v, want the connection role with the claims", hook.calls, hook.role, hook.claims)
@@ -170,7 +170,7 @@ func TestHeadersModeUntrustedPeer(t *testing.T) {
 	a := config.DefaultConfig().Auth
 	a.Mode = "headers"
 	a.Headers.TrustedProxies = []string{"10.0.0.1"}
-	h, hook := identityServer(t, a, config.DefaultConfig().Roles, config.Server{})
+	h, hook := identityServer(t, a, config.DefaultConfig().Roles, config.Config{})
 	rec := postIdentity(h, http.Header{"X-Pdbq-Claim-Role": {"app_user"}})
 	if rec.Code != http.StatusUnauthorized || hook.calls != 0 {
 		t.Fatalf("claim headers from an untrusted peer: status %d, executor calls %d", rec.Code, hook.calls)
@@ -180,7 +180,7 @@ func TestHeadersModeUntrustedPeer(t *testing.T) {
 func TestCORSHeaders(t *testing.T) {
 	r := config.DefaultConfig().Roles
 	r.Anonymous = "anonymous"
-	h, _ := identityServer(t, jwtAuth(), r, config.Server{CORSOrigins: []string{"https://app.example"}, Compression: true})
+	h, _ := identityServer(t, jwtAuth(), r, config.Config{Server: config.Server{CORSOrigins: []string{"https://app.example"}, Compression: true}})
 	rec := postIdentity(h, http.Header{"Origin": {"https://app.example"}, "Accept-Encoding": {"gzip"}})
 	vary := strings.Join(rec.Header().Values("Vary"), ", ")
 	if !strings.Contains(vary, "Origin") || !strings.Contains(vary, "Accept-Encoding") {

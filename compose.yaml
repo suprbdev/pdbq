@@ -33,6 +33,5 @@ services:
       PDBQ_AUTH_MODE: none # dev stack; see docs/rls.md for production
       PDBQ_ROLES_SWITCH: "false" # dev stack: runs as the connection role
       PDBQ_SERVER_GRAPHIQL: "true" # dev stack; off by default
-      PDBQ_SERVER_EXPOSE__SCHEMA: "true" # dev stack; off by default
       PDBQ_ERRORS_DETAIL: dev
       PDBQ_LOG_LEVEL: debug

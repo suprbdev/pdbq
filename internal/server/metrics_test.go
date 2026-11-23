@@ -15,7 +15,7 @@ func TestMetricsEndpointAndRouteClasses(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := testServer(config.Server{GraphiQL: true, ExposeSchema: true})
+	s := testServer(config.Config{Server: config.Server{GraphiQL: true, Introspection: true}})
 	s.SetMetrics(m, "/metrics")
 	h := s.Handler()
 	for _, p := range []string{"/healthz", "/readyz", "/", "/schema.graphql", "/nope"} {
@@ -52,7 +52,7 @@ func TestMetricsPathNotServedWithoutPath(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := testServer(config.Server{})
+	s := testServer(config.Config{})
 	s.SetMetrics(m, "")
 	if rec := get(t, s.Handler(), "/metrics"); rec.Code != http.StatusNotFound {
 		t.Fatalf("/metrics status %d, want 404 when served elsewhere", rec.Code)
@@ -63,7 +63,7 @@ func TestMetricsPathNotServedWithoutPath(t *testing.T) {
 }
 
 func TestNoMetricsByDefault(t *testing.T) {
-	if rec := get(t, testServer(config.Server{}).Handler(), "/metrics"); rec.Code != http.StatusNotFound {
+	if rec := get(t, testServer(config.Config{}).Handler(), "/metrics"); rec.Code != http.StatusNotFound {
 		t.Fatalf("/metrics status %d, want 404", rec.Code)
 	}
 }

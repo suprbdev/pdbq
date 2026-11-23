@@ -18,9 +18,9 @@ import (
 // when enabled. A Server mounted at "/" serves the usual root paths.
 // /healthz, /readyz and the metrics endpoint are served at the root, and
 // every other path is a 404. The WebSocket connection and operation limits
-// and server.incremental_max_responses count over all mounted servers.
+// and incremental.max_responses count over all mounted servers.
 type Group struct {
-	cfg         config.Server
+	cfg         config.Config
 	log         *slog.Logger
 	mounts      []groupMount
 	ws          *wsLimits
@@ -38,7 +38,7 @@ type groupMount struct {
 
 // NewGroup returns an empty Group; cfg supplies the listen address,
 // request timeout and readyz timeout.
-func NewGroup(cfg config.Server, log *slog.Logger) *Group {
+func NewGroup(cfg config.Config, log *slog.Logger) *Group {
 	if log == nil {
 		log = slog.Default()
 	}
@@ -101,10 +101,10 @@ func (g *Group) ListenAndServe(ctx context.Context) error {
 		paths[i] = m.prefix + "/graphql"
 	}
 	return httpx.ListenAndServe(ctx, g.Handler(), httpx.ServeOptions{
-		Addr:           g.cfg.Addr,
-		RequestTimeout: g.cfg.RequestTimeout,
+		Addr:           g.cfg.Server.Addr,
+		RequestTimeout: g.cfg.Server.RequestTimeout,
 		Log:            g.log,
-		LogAttrs:       []any{"graphiql", g.cfg.GraphiQL, "contracts", paths},
+		LogAttrs:       []any{"graphiql", g.cfg.Server.GraphiQL, "contracts", paths},
 	})
 }
 

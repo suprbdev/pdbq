@@ -19,7 +19,7 @@ import (
 func aggregatesServer(t *testing.T, mutate func(*config.Config)) string {
 	t.Helper()
 	return testServer(t, func(cfg *config.Config) {
-		cfg.Plugins.Settings.Aggregates.Enabled, cfg.Plugins.Settings.Aggregates.SpatialUnionCollect = true, true
+		cfg.Aggregates.Enabled, cfg.Aggregates.SpatialUnionCollect = true, true
 		cfg.Filters.AllowColumns = map[string][]string{"public.users": {"created_at"}}
 		if mutate != nil {
 			mutate(cfg)
@@ -281,7 +281,7 @@ func TestAggregates(t *testing.T) {
 }
 
 func TestAggregatesCostLimit(t *testing.T) {
-	url := aggregatesServer(t, func(cfg *config.Config) { cfg.Server.MaxCost = 20 })
+	url := aggregatesServer(t, func(cfg *config.Config) { cfg.Limits.MaxCost = 20 })
 	res := post(t, url, `{allPosts(first: 1) { aggregates { sum { id } } }}`, nil)
 	requireNoErrors(t, res)
 	res = post(t, url, `{allPosts(first: 1) { groupedAggregates(groupBy: [AUTHOR_ID]) { keys } }}`, nil)

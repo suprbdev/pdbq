@@ -52,7 +52,7 @@ func samples(t *testing.T, body string) map[string]float64 {
 
 func TestMetricsScrape(t *testing.T) {
 	cfg := metricsConfig(t)
-	cfg.Server.MaxCost = 200
+	cfg.Limits.MaxCost = 200
 	if err := cfg.Validate(); err != nil {
 		t.Fatal(err)
 	}

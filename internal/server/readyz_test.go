@@ -14,7 +14,7 @@ import (
 )
 
 func readyzServer(ping func(context.Context) error) http.Handler {
-	s := testServer(config.Server{ReadyzTimeout: 100 * time.Millisecond})
+	s := testServer(config.Config{Server: config.Server{ReadyzTimeout: 100 * time.Millisecond}})
 	s.SetReadiness(ping)
 	return s.Handler()
 }
@@ -48,7 +48,7 @@ func TestReadyzClosedPort(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(pool.Close)
-	s := testServer(config.Server{ReadyzTimeout: time.Second})
+	s := testServer(config.Config{Server: config.Server{ReadyzTimeout: time.Second}})
 	s.SetReadiness(pool.Ping)
 	if rec := get(t, s.Handler(), "/readyz"); rec.Code != 503 {
 		t.Errorf("readyz on a closed port = %d", rec.Code)

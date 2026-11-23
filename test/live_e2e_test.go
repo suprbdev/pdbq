@@ -21,7 +21,7 @@ import (
 
 // liveServer serves through App.Handler with live queries on, so the
 // change triggers are installed by the boot pipeline.
-func liveServer(t *testing.T, mutate func(*config.Server)) (string, *pgx.Conn) {
+func liveServer(t *testing.T, mutate func(*config.Live)) (string, *pgx.Conn) {
 	t.Helper()
 	url := os.Getenv("PDBQ_TEST_DATABASE_URL")
 	if url == "" {
@@ -33,12 +33,12 @@ func liveServer(t *testing.T, mutate func(*config.Server)) (string, *pgx.Conn) {
 	cfg.Roles.Allowed = []string{"anonymous", "app_user"}
 	cfg.Errors.Detail = "dev"
 	cfg.Plugins.Disabled = []string{"simple_names"}
-	cfg.Server.Subscriptions = true
-	cfg.Server.SubscriptionsKeepalive = 0
-	cfg.Server.Live = true
-	cfg.Server.LiveThrottle = 20 * time.Millisecond
+	cfg.Subscriptions.Enabled = true
+	cfg.Subscriptions.Keepalive = 0
+	cfg.Live.Enabled = true
+	cfg.Live.Throttle = 20 * time.Millisecond
 	if mutate != nil {
-		mutate(&cfg.Server)
+		mutate(&cfg.Live)
 	}
 	if err := cfg.Validate(); err != nil {
 		t.Fatal(err)
@@ -248,7 +248,7 @@ func TestLiveRLS(t *testing.T) {
 }
 
 func TestLiveThrottle(t *testing.T) {
-	url, db := liveServer(t, func(s *config.Server) { s.LiveThrottle = time.Second })
+	url, db := liveServer(t, func(l *config.Live) { l.Throttle = time.Second })
 	cleanPosts(t, db, "livethr-")
 	c := liveDial(t, url, nil)
 	c.send(map[string]any{"id": "1", "type": "subscribe", "payload": map[string]any{"query": livePostsDoc("livethr-")}})
@@ -354,9 +354,9 @@ func TestLivePartitioned(t *testing.T) {
 }
 
 func TestLiveCaps(t *testing.T) {
-	url, db := liveServer(t, func(s *config.Server) {
-		s.LiveMaxPerConnection = 1
-		s.LiveMaxOperations = 2
+	url, db := liveServer(t, func(l *config.Live) {
+		l.MaxPerConnection = 1
+		l.MaxOperations = 2
 	})
 	cleanPosts(t, db, "livecap-")
 	doc := map[string]any{"query": livePostsDoc("livecap-")}

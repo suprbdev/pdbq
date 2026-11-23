@@ -46,13 +46,13 @@ func TestTopicPolicy(t *testing.T) {
 }
 
 func TestNewTopicPolicyErrors(t *testing.T) {
-	if _, err := NewTopicPolicy(strings.Repeat("p", MaxChannelBytes), nil); err == nil || !strings.Contains(err.Error(), "subscriptions_topic_prefix") {
+	if _, err := NewTopicPolicy(strings.Repeat("p", MaxChannelBytes), nil); err == nil || !strings.Contains(err.Error(), "topic_prefix") {
 		t.Errorf("long prefix: %v", err)
 	}
 	if _, err := NewTopicPolicy("p\x00", nil); err == nil {
 		t.Error("NUL prefix accepted")
 	}
-	if _, err := NewTopicPolicy("p", []string{"ok", "bad topic"}); err == nil || !strings.Contains(err.Error(), "subscriptions_topics") {
+	if _, err := NewTopicPolicy("p", []string{"ok", "bad topic"}); err == nil || !strings.Contains(err.Error(), "topics:") {
 		t.Errorf("bad allowlist entry: %v", err)
 	}
 	p, err := NewTopicPolicy("", []string{"*"})
