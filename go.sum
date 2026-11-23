@@ -72,8 +72,8 @@ github.com/stretchr/testify v1.3.0/go.mod h1:M5WIy9Dh21IEIfnGCwXGc5bZfKNJtfHm1UV
 github.com/stretchr/testify v1.7.0/go.mod h1:6Fq8oRcR53rry900zMqJjRRixrwX3KX962/h/Wwjteg=
 github.com/stretchr/testify v1.12.1 h1:EuwCh5fleGS7H32xRwO3wRGT7DxrDhLAT6FF8MpWDWE=
 github.com/stretchr/testify v1.12.1/go.mod h1:MDEgiDPPsNp5cuIrHPPCyornHKgEVbtFUmoNlxoYthg=
-github.com/suprbdev/pdbcore v0.17.1-0.20261123213010-1f0851425bab h1:htCD1fQKDZjprUePd/kvmmUbOAGKNUX1Pv9fNN/Ok5A=
-github.com/suprbdev/pdbcore v0.17.1-0.20261123213010-1f0851425bab/go.mod h1:FNV4SnduAkZoFDBZ7PRGXcSjELkHjA9mURORywAVHlc=
+github.com/suprbdev/pdbcore v0.18.0 h1:3sptk5S+ffSLIQmvTVd74rL6NjUHQ2zql91lHnFkH1Q=
+github.com/suprbdev/pdbcore v0.18.0/go.mod h1:FNV4SnduAkZoFDBZ7PRGXcSjELkHjA9mURORywAVHlc=
 github.com/vektah/gqlparser/v2 v2.5.36 h1:CN9mKVHgMkc+XftdOWIhb4HEL8wKSYkFAqhf8booa7s=
 github.com/vektah/gqlparser/v2 v2.5.36/go.mod h1:cAJ9qwVgPaUkWv6Gn8vn0mqOE0Ui5Pn56wNy5396XWo=
 go.uber.org/goleak v1.3.0 h1:2K3zAYmnTNqV73imy9J1T3WC+gmCePx2hEGkimedGto=
