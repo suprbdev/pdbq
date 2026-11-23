@@ -3,19 +3,19 @@ SELECT jsonb_build_object('nodes', coalesce(jsonb_agg(__s_2.ndata ORDER BY __s_2
 FROM (
   SELECT jsonb_build_object('id', __t_1."id") AS ndata, row_number() OVER (ORDER BY __t_1."id" ASC) AS __rn
   FROM "public"."places" AS __t_1
-  WHERE ST_Intersects(__t_1."location", ST_SetSRID(ST_GeomFromEWKT($1), 4326))
+  WHERE ST_Intersects(__t_1."location", CASE WHEN left($1, 1) = '{' THEN ST_Transform(ST_GeomFromGeoJSON($1), 4326) ELSE ST_GeomFromEWKT($1) END)
   ORDER BY __t_1."id" ASC
   LIMIT $2
 ) AS __s_2
 GROUP BY ()
--- args: ["POINT(1 2)",101,100]
+-- args: ["SRID=4326;POINT(1 2)",101,100]
 
 -- field: allPlaces
 SELECT jsonb_build_object('nodes', coalesce(jsonb_agg(__s_2.ndata ORDER BY __s_2.__rn ASC) FILTER (WHERE __s_2.__rn <= $3), '[]'::jsonb)) AS data
 FROM (
   SELECT jsonb_build_object('id', __t_1."id") AS ndata, row_number() OVER (ORDER BY __t_1."id" ASC) AS __rn
   FROM "public"."places" AS __t_1
-  WHERE ST_Intersects(__t_1."location", ST_GeomFromEWKT($1))
+  WHERE ST_Intersects(__t_1."location", CASE WHEN left($1, 1) = '{' THEN ST_Transform(ST_GeomFromGeoJSON($1), 4326) ELSE ST_GeomFromEWKT($1) END)
   ORDER BY __t_1."id" ASC
   LIMIT $2
 ) AS __s_2
@@ -27,7 +27,7 @@ SELECT jsonb_build_object('nodes', coalesce(jsonb_agg(__s_2.ndata ORDER BY __s_2
 FROM (
   SELECT jsonb_build_object('id', __t_1."id") AS ndata, row_number() OVER (ORDER BY __t_1."id" ASC) AS __rn
   FROM "public"."places" AS __t_1
-  WHERE ST_Intersects(__t_1."location", ST_Transform(ST_SetSRID(ST_GeomFromGeoJSON($1), 3857), 4326))
+  WHERE ST_Intersects(__t_1."location", CASE WHEN left($1, 1) = '{' THEN ST_Transform(ST_GeomFromGeoJSON($1), 4326) ELSE ST_GeomFromEWKT($1) END)
   ORDER BY __t_1."id" ASC
   LIMIT $2
 ) AS __s_2
@@ -49,11 +49,11 @@ GROUP BY ()
 -- field: allPlaces
 SELECT jsonb_build_object('nodes', coalesce(jsonb_agg(__s_2.ndata ORDER BY __s_2.__rn ASC) FILTER (WHERE __s_2.__rn <= $3), '[]'::jsonb)) AS data
 FROM (
-  SELECT jsonb_build_object('id', __t_1."id") AS ndata, row_number() OVER (ORDER BY __t_1."location" <-> ST_SetSRID(ST_GeomFromEWKT($1), 4326) ASC, __t_1."id" ASC) AS __rn
+  SELECT jsonb_build_object('id', __t_1."id") AS ndata, row_number() OVER (ORDER BY __t_1."location" <-> CASE WHEN left($1, 1) = '{' THEN ST_Transform(ST_GeomFromGeoJSON($1), 4326) ELSE ST_GeomFromEWKT($1) END ASC, __t_1."id" ASC) AS __rn
   FROM "public"."places" AS __t_1
-  ORDER BY __t_1."location" <-> ST_SetSRID(ST_GeomFromEWKT($1), 4326) ASC, __t_1."id" ASC
+  ORDER BY __t_1."location" <-> CASE WHEN left($1, 1) = '{' THEN ST_Transform(ST_GeomFromGeoJSON($1), 4326) ELSE ST_GeomFromEWKT($1) END ASC, __t_1."id" ASC
   LIMIT $2
 ) AS __s_2
 GROUP BY ()
--- args: ["POINT(0 0)",101,100]
+-- args: ["SRID=4326;POINT(0 0)",101,100]
 

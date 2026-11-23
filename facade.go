@@ -5,6 +5,7 @@ package pdbq
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 
 	flag "github.com/spf13/pflag"
@@ -107,6 +108,12 @@ func (a *App) buildServer(ctx context.Context) (*server.Server, error) {
 	if err := a.Connect(ctx); err != nil {
 		return nil, err
 	}
+	var catHash string
+	if a.Config.Watch.Enabled {
+		if catHash, err = cat.Hash(); err != nil {
+			return nil, fmt.Errorf("watch: catalog hash: %w", err)
+		}
+	}
 	built, err := a.BuildSchema(ctx, cat)
 	if err != nil {
 		return nil, err
@@ -122,6 +129,7 @@ func (a *App) buildServer(ctx context.Context) (*server.Server, error) {
 			Schemas:      a.Config.Schema.Schemas,
 			Channel:      a.Config.Watch.Channel,
 			TriggerName:  "pdbq_watch",
+			InitialHash:  catHash,
 			PollInterval: a.Config.Watch.PollInterval,
 			Log:          a.Log,
 			OnChange: func(cat *introspect.Catalog) {

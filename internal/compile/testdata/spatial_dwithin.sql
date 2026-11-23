@@ -3,7 +3,7 @@ SELECT jsonb_build_object('nodes', coalesce(jsonb_agg(__s_2.ndata ORDER BY __s_2
 FROM (
   SELECT jsonb_build_object('id', __t_1."id", 'name', __t_1."name") AS ndata, row_number() OVER (ORDER BY __t_1."id" ASC) AS __rn
   FROM "public"."places" AS __t_1
-  WHERE ST_DWithin(__t_1."location", ST_SetSRID(ST_GeomFromGeoJSON($1), 4326), $2)
+  WHERE ST_DWithin(__t_1."location", CASE WHEN left($1, 1) = '{' THEN ST_Transform(ST_GeomFromGeoJSON($1), 4326) ELSE ST_GeomFromEWKT($1) END, $2)
   ORDER BY __t_1."id" ASC
   LIMIT $3
 ) AS __s_2
@@ -15,7 +15,7 @@ SELECT jsonb_build_object('nodes', coalesce(jsonb_agg(__s_2.ndata ORDER BY __s_2
 FROM (
   SELECT jsonb_build_object('id', __t_1."id") AS ndata, row_number() OVER (ORDER BY __t_1."id" ASC) AS __rn
   FROM "public"."places" AS __t_1
-  WHERE ST_DWithin(__t_1."location"::geography, (ST_GeomFromEWKT($1))::geography, $2)
+  WHERE ST_DWithin(__t_1."location"::geography, (CASE WHEN left($1, 1) = '{' THEN ST_Transform(ST_GeomFromGeoJSON($1), 4326) ELSE ST_GeomFromEWKT($1) END)::geography, $2)
   ORDER BY __t_1."id" ASC
   LIMIT $3
 ) AS __s_2
@@ -27,7 +27,7 @@ SELECT jsonb_build_object('nodes', coalesce(jsonb_agg(__s_2.ndata ORDER BY __s_2
 FROM (
   SELECT jsonb_build_object('id', __t_1."id") AS ndata, row_number() OVER (ORDER BY __t_1."id" ASC) AS __rn
   FROM "public"."places" AS __t_1
-  WHERE NOT ST_DWithin(__t_1."area", (ST_SetSRID(ST_GeomFromGeoJSON($1), 4326))::geography, $2)
+  WHERE NOT ST_DWithin(__t_1."area", (CASE WHEN left($1, 1) = '{' THEN ST_GeomFromGeoJSON($1) ELSE ST_GeomFromEWKT($1) END)::geography, $2)
   ORDER BY __t_1."id" ASC
   LIMIT $3
 ) AS __s_2

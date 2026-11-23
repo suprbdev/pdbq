@@ -6,6 +6,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"sync"
@@ -14,6 +15,7 @@ import (
 	"github.com/suprbdev/pdbcore/auth"
 	"github.com/suprbdev/pdbcore/confx"
 	"github.com/suprbdev/pdbcore/httpx"
+	"github.com/suprbdev/pdbcore/pgexec"
 	"github.com/suprbdev/pdbq/internal/config"
 	"github.com/suprbdev/pdbq/internal/exec"
 )
@@ -139,6 +141,10 @@ func (s *Server) handleGraphQL(w http.ResponseWriter, r *http.Request) {
 	claims, role, err := s.auth.Authenticate(r)
 	if err != nil {
 		writeError(w, http.StatusUnauthorized, err.Error())
+		return
+	}
+	if role != "" && !pgexec.ValidRole(role) {
+		writeError(w, http.StatusUnauthorized, fmt.Sprintf("role %q is not allowed", role))
 		return
 	}
 
