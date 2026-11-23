@@ -81,6 +81,21 @@ rls:
 	}
 }
 
+func TestExposePartitionsFromEnv(t *testing.T) {
+	if DefaultConfig().Schema.ExposePartitions {
+		t.Fatal("schema.expose_partitions defaults to true, want false")
+	}
+	t.Setenv("PDBQ_SCHEMA_EXPOSE__PARTITIONS", "true")
+	t.Setenv("PDBQ_RLS_ENABLED", "false")
+	cfg, err := Load("", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Schema.ExposePartitions || !cfg.Schema.Functions || len(cfg.Schema.Schemas) != 1 {
+		t.Errorf("schema section = %+v, want expose_partitions set and the defaults kept", cfg.Schema)
+	}
+}
+
 func TestExampleYAMLCoversEverything(t *testing.T) {
 	out := ExampleYAML()
 	for _, key := range []string{

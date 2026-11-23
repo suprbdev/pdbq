@@ -49,6 +49,7 @@ $ pdbq config example   # print the full annotated reference
 | `schema.schemas` | `[public]` | schema allowlist |
 | `schema.cache_path` | — | boot from `pdbq schema dump` output |
 | `schema.functions` | `true` | expose PostgreSQL functions as custom queries/mutations |
+| `schema.expose_partitions` | `false` | expose partitions of partitioned tables as tables of their own (their rows are always reachable through the parent) |
 | `filters.indexed_only` | `true` | see [filtering.md](filtering.md) |
 | `filters.allow_columns` | `{}` | per-table extra filterable columns, overriding `indexed_only` |
 | `rls.enabled` | `true` | see [rls.md](rls.md) for the `rls.*` and `rls.auth.*` keys |

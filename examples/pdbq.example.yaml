@@ -52,6 +52,8 @@ schema:
   cache_path: ""
   # Expose PostgreSQL functions as custom queries/mutations.
   functions: true
+  # Expose the partitions of partitioned tables as tables of their own. Off by default: their rows are reachable through the partitioned parent.
+  expose_partitions: false
 
 filters:
   # Only allow filtering on columns covered by an index (default policy).

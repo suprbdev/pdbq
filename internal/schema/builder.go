@@ -55,6 +55,10 @@ type Options struct {
 	AllowColumns map[string][]string
 	// Functions exposes PostgreSQL functions as custom queries/mutations.
 	Functions bool
+	// ExposePartitions keeps partitions (introspect.Table.IsPartition) in the
+	// schema. By default they are left out: their rows are reachable through
+	// the partitioned parent.
+	ExposePartitions bool
 	// JWTType is the "schema.type" composite that functions return to have a
 	// JWT minted (rls.auth.jwt_type). Root functions returning it keep a
 	// String result instead of the composite's object type.
@@ -83,6 +87,9 @@ type Builder struct {
 	InputForComposite map[string]string
 
 	log *slog.Logger
+	// hidden holds the "schema.table" keys of tables left out of the
+	// catalog (partitions), so functions over their row types are skipped.
+	hidden map[string]bool
 	// recordTypes caches the object type generated per function returning
 	// OUT/TABLE parameter records.
 	recordTypes map[*introspect.Function]string
@@ -136,9 +143,15 @@ type OrderSpec struct {
 }
 
 // New creates a Builder with all default types generated from the catalog.
+// Unless opts.ExposePartitions is set, partitions are dropped from (a shallow
+// copy of) cat first, so the builder and the compiler never see them.
 func New(cat *introspect.Catalog, inflector inflect.Next, opts Options) *Builder {
 	if opts.Logger == nil {
 		opts.Logger = slog.Default()
+	}
+	hidden := map[string]bool{}
+	if !opts.ExposePartitions {
+		cat, hidden = withoutPartitions(cat)
 	}
 	b := &Builder{
 		Catalog:           cat,
@@ -152,6 +165,7 @@ func New(cat *introspect.Catalog, inflector inflect.Next, opts Options) *Builder
 		TypeForComposite:  map[string]string{},
 		InputForComposite: map[string]string{},
 		log:               opts.Logger,
+		hidden:            hidden,
 		recordTypes:       map[*introspect.Function]string{},
 	}
 	// The GeoJSON scalar is only declared when the database actually has a
@@ -171,6 +185,26 @@ func New(cat *introspect.Catalog, inflector inflect.Next, opts Options) *Builder
 	b.addTables()
 	b.addFunctions()
 	return b
+}
+
+// withoutPartitions returns cat without its partitions, plus the keys of the
+// tables it dropped. cat itself is returned when it has none.
+func withoutPartitions(cat *introspect.Catalog) (*introspect.Catalog, map[string]bool) {
+	hidden := map[string]bool{}
+	var kept []*introspect.Table
+	for _, t := range cat.Tables {
+		if t.IsPartition() {
+			hidden[tableKey(t.Schema, t.Name)] = true
+			continue
+		}
+		kept = append(kept, t)
+	}
+	if len(hidden) == 0 {
+		return cat, hidden
+	}
+	cp := *cat
+	cp.Tables = kept
+	return &cp, hidden
 }
 
 // addNode declares the Relay Node interface and the node(nodeId:) global
@@ -981,6 +1015,11 @@ func (b *Builder) addFunctions() {
 		return
 	}
 	for _, f := range b.Catalog.Functions {
+		if b.usesHiddenTable(f) {
+			b.log.Debug("skipping function: uses the row type of a table left out of the schema",
+				"function", f.Schema+"."+f.Name)
+			continue
+		}
 		// A function whose first argument is a table's row type is a computed
 		// column on that table's type, not a root field.
 		if len(f.Args) > 0 {
@@ -1157,6 +1196,23 @@ func (b *Builder) functionRecordType(f *introspect.Function) string {
 	b.Objects[name] = obj
 	b.recordTypes[f] = name
 	return name
+}
+
+// usesHiddenTable reports whether a parameter or the return type of f is the
+// row type of a table left out of the schema (see Options.ExposePartitions).
+func (b *Builder) usesHiddenTable(f *introspect.Function) bool {
+	if len(b.hidden) == 0 {
+		return false
+	}
+	if b.hidden[tableKey(f.ReturnTypeSchema, strings.TrimPrefix(f.ReturnType, "_"))] {
+		return true
+	}
+	for _, a := range append(append([]introspect.FuncArg{}, f.Args...), f.ReturnColumns...) {
+		if b.hidden[tableKey(a.TypeSchema, strings.TrimPrefix(a.PGType, "_"))] {
+			return true
+		}
+	}
+	return false
 }
 
 // argGQLType maps a function argument's pg type to a GraphQL input type the
