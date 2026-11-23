@@ -160,7 +160,11 @@ delivery runs a few more:
   re-runs the path from the root down to the fragment (with the same
   arguments, so it reaches the same rows in the snapshot) and selects only the
   fragment's fields. A fragment under a list runs once for all its items, not
-  once per item.
+  once per item, and its data is matched to the items by position. Table
+  lists always end their order with the primary key, so positions match.
+  A list with no stable order (a table without a primary key, a
+  set-returning function) depends on the snapshot returning its rows in the
+  same order twice.
 - **Streams.** The initial statement selects the first `initialCount` items
   of the list. When the connection selects other fields too (`pageInfo`,
   `totalCount`, aggregates), the streamed list becomes a subquery of its own,
