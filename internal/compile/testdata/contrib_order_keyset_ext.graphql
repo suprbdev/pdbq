@@ -1,0 +1,9 @@
+# variables: {"after": "WyJEb2N1bWVudCIsIDNd"}
+# Keyset predicates over citext, ltree and hstore orderings compare with the
+# types' schema-qualified operators (hstore's btree #<#/#>#) and a NULL-safe
+# equality that does not resolve = through the search_path.
+query ($after: Cursor) {
+  slug: allDocuments(orderBy: [SLUG_ASC], after: $after, first: 2) { nodes { id } }
+  path: allDocuments(orderBy: [PATH_DESC], after: $after, first: 2) { nodes { id } }
+  attrs: allDocuments(orderBy: [ATTRS_ASC], after: $after, first: 2) { nodes { id } }
+}

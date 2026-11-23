@@ -197,6 +197,22 @@ func (c Column) Operator(op string) string {
 	return c.Own.Operator(op)
 }
 
+// hstoreOrder maps the ordering comparisons onto the operators of hstore's
+// btree operator class, which has no < or >.
+var hstoreOrder = map[string]string{"<": "#<#", "<=": "#<=#", ">": "#>#", ">=": "#>=#"}
+
+// Compare renders a comparison operator (=, <>, <, <=, >, >=) consistent
+// with the column type's default btree ordering, schema-qualified like
+// Operator: hstore orders with #<# and friends.
+func (c Column) Compare(op string) string {
+	if c.Kind == Hstore {
+		if o, ok := hstoreOrder[op]; ok {
+			op = o
+		}
+	}
+	return c.Operator(op)
+}
+
 // TypeSQL renders the column's own (element) type name, schema-qualified
 // for extension types: `"ext".ltree`, `inet`.
 func (c Column) TypeSQL() string {

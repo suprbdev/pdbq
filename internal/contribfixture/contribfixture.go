@@ -57,6 +57,8 @@ func Documents() *introspect.Table {
 			col(13, "ip", "inet", "pg_catalog"),
 			col(14, "net", "cidr", "pg_catalog"),
 			col(15, "notes", "text", "pg_catalog"),
+			col(16, "keywords", "tsvector", "pg_catalog"),
+			col(17, "stay", "stay", "public"),
 		},
 		PrimaryKey: &introspect.Constraint{Name: "documents_pkey", Columns: []string{"id"}},
 		Uniques:    []*introspect.Constraint{{Name: "documents_slug_key", Columns: []string{"slug"}}},
@@ -65,6 +67,7 @@ func Documents() *introspect.Table {
 			{Name: "documents_avail_idx", Columns: []string{"avail"}, Method: "gist"},
 			{Name: "documents_during_idx", Columns: []string{"during"}, Method: "gist"},
 			{Name: "documents_ip_idx", Columns: []string{"ip"}, Method: "gist"},
+			{Name: "documents_keywords_idx", Columns: []string{"keywords"}, Method: "gin"},
 			{Name: "documents_label_idx", Columns: []string{"label"}, Method: "gist"},
 			{Name: "documents_net_idx", Columns: []string{"net"}, Method: "btree"},
 			{Name: "documents_notes_idx", Columns: []string{"notes"}, Method: "btree"},
@@ -80,14 +83,22 @@ func Documents() *introspect.Table {
 }
 
 // Catalog returns testutil.FixtureCatalog plus the documents table, its
-// extensions, a computed column (documents_window(documents) returns
-// tstzrange) and two functions taking and returning contrib types
-// (widen(r int4range, by int4) returns int4range, with_flag(h hstore)
-// returns hstore).
+// extensions, the composite type stay (nights int4range, extras hstore), a
+// computed column (documents_window(documents) returns tstzrange) and
+// functions taking and returning contrib types (widen(r int4range, by
+// int4) returns int4range, with_flag(h hstore) returns hstore,
+// total_nights(VARIADIC rs int4range[]) returns int4).
 func Catalog() *introspect.Catalog {
 	cat := testutil.FixtureCatalog()
 	cat.Tables = append(cat.Tables, Documents())
 	cat.Extensions = append(cat.Extensions, Extensions()...)
+	cat.Composites = append(cat.Composites, &introspect.Composite{
+		Schema: "public", Name: "stay",
+		Fields: []*introspect.Column{
+			{Name: "nights", Position: 1, PGType: "int4range", TypeSchema: "pg_catalog"},
+			{Name: "extras", Position: 2, PGType: "hstore", TypeSchema: ExtSchema},
+		},
+	})
 	cat.Functions = append(cat.Functions, &introspect.Function{
 		Schema: "public", Name: "documents_window",
 		Args:       []introspect.FuncArg{{Name: "d", PGType: "documents", TypeSchema: "public", Mode: introspect.ArgModeIn}},
@@ -105,6 +116,11 @@ func Catalog() *introspect.Catalog {
 		Schema: "public", Name: "with_flag",
 		Args:       []introspect.FuncArg{{Name: "h", PGType: "hstore", TypeSchema: ExtSchema, Mode: introspect.ArgModeIn}},
 		ReturnType: "hstore", ReturnTypeSchema: ExtSchema,
+		Volatility: introspect.VolatilityImmutable,
+	}, &introspect.Function{
+		Schema: "public", Name: "total_nights",
+		Args:       []introspect.FuncArg{{Name: "rs", PGType: "_int4range", TypeSchema: "pg_catalog", Mode: introspect.ArgModeVariadic}},
+		ReturnType: "int4", ReturnTypeSchema: "pg_catalog",
 		Volatility: introspect.VolatilityImmutable,
 	})
 	return cat

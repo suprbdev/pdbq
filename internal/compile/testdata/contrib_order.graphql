@@ -19,4 +19,20 @@
   similarMissing: allDocuments(orderBy: [LABEL_SIMILARITY_DESC]) {
     nodes { id }
   }
+  # The rank comes from the conjunctive top level only: matches under not or
+  # or (keywords sorts before "not", search after "or") never rank rows.
+  rankScope: allDocuments(
+    filter: {
+      not: {keywords: {matches: "negated"}}
+      or: [{search: {matches: "either"}}, {id: {equalTo: 1}}]
+      keywords: {matches: "kept"}
+      and: [{search: {matchesPlain: "conjunct"}}]
+    }
+    orderBy: [KEYWORDS_RANK_DESC, SEARCH_RANK_DESC]
+  ) {
+    nodes { id keywordsRank searchRank }
+  }
+  rankOnlyNegated: allDocuments(filter: {not: {search: {matches: "x"}}}) {
+    nodes { searchRank }
+  }
 }

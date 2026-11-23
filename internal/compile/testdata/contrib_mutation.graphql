@@ -25,4 +25,7 @@ mutation {
   updateDocuments(filter: {attrs: {containsKey: "stale"}}, patch: {path: "archive"}) {
     affectedCount
   }
+  emptyRange: createDocument(input: {title: "e", span: {isEmpty: true}, stay: {nights: {start: {value: 1, inclusive: true}, end: {value: 3, inclusive: false}}, extras: {a: "x \"y\"", b: null}}}) {
+    document { span { isEmpty } stay { nights { start { value } } extras } }
+  }
 }

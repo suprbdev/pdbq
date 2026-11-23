@@ -7,4 +7,5 @@
     end { value }
   }
   withFlag(h: {a: "1"})
+  totalNights(rs: ["[1,3)", "[5,9)"])
 }

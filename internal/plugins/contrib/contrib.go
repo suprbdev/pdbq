@@ -47,7 +47,8 @@
 // compiler reads them and stays inert when they are absent, so disabling
 // the plugin (plugins.disabled: [contrib]) removes the surface while plain
 // reads, writes and comparisons keep working. "@omit filter" / "@omit order"
-// on a column skips its filter / ordering surface.
+// on a column skips its filter / ordering surface; "@omit read" on a
+// tsvector column also skips its rank field and rank ordering.
 package contrib
 
 import (
@@ -139,6 +140,14 @@ func omits(comment string) (skipFilter, skipOrder bool) {
 	return everything || om["filter"], everything || om["order"]
 }
 
+// unreadable reports whether a smart comment hides the column's value
+// (@omit read), which a rank field or rank ordering would leak.
+func unreadable(comment string) bool {
+	tags, _ := smarttags.Parse(comment)
+	om, everything := tags.Omits()
+	return everything || om["read"]
+}
+
 // served reports whether the indexed-only policy admits surface backed by
 // the given index hints on column c of t.
 func (st *build) served(t *introspect.Table, c *introspect.Column, hints []pgcontrib.IndexHint) bool {
@@ -177,7 +186,7 @@ func (st *build) addFilters(t *introspect.Table, cols []column) {
 		}
 		if cc.ci.Owned() && f.Type == cc.ci.OpsInput {
 			st.extendOps(cc.ci)
-			if cc.ci.Kind == contribtype.FullText {
+			if cc.ci.Kind == contribtype.FullText && !unreadable(cc.col.Comment) {
 				st.addRankField(t, cc.col)
 			}
 		}
@@ -303,6 +312,9 @@ func (st *build) addOrdering(t *introspect.Table, cols []column) {
 			continue
 		}
 		if cc.ci.Kind == contribtype.FullText {
+			if unreadable(cc.col.Comment) {
+				continue
+			}
 			if f := st.filterField(t, cc.col); f != nil && f.Type == cc.ci.OpsInput && b.Inputs[f.Type].Field("matches") != nil {
 				addValue(en, coreinflect.EnumValue(cc.col.Name)+"_RANK_ASC", schema.EnumValue{
 					Column: cc.col.Name, Rank: true,

@@ -151,6 +151,11 @@ type stmt struct {
 	// rankMarker).
 	ranks    map[string]rankSource
 	rankRefs []rankRef
+	// rankScope is set while compiling the conjunctive top level of a list
+	// field's filter (the root object and nested and lists), the only
+	// place a full-text match can rank rows: matches under or, not or a
+	// relation filter do not hold for every returned row.
+	rankScope bool
 }
 
 // fail records an error from a rendering helper that cannot return one. The
@@ -397,7 +402,9 @@ func (s *stmt) whereClause(t *introspect.Table, f *ast.Field, alias, extraCond s
 	}
 	if fv, ok := s.argValue(f, "filter"); ok {
 		filterType := argTypeName(f, "filter")
+		s.rankScope = true
 		cond, err := s.filterCond(t, filterType, fv, alias)
+		s.rankScope = false
 		if err != nil {
 			return "", err
 		}
@@ -585,9 +592,9 @@ func (s *stmt) relationOrderSQL(term orderTerm, alias string) string {
 	const sub = "__ro"
 	var join string
 	if rel.Forward {
-		join = fkJoinSQL(rel.FK, alias, sub, true)
+		join = s.fkJoinSQL(rel.FK, alias, sub, true)
 	} else {
-		join = fkJoinSQL(rel.FK, sub, alias, false)
+		join = s.fkJoinSQL(rel.FK, sub, alias, false)
 	}
 	expr := sub + "." + quoteIdent(rel.Column)
 	if !rel.Forward || !rel.FK.ReferencesOne() {

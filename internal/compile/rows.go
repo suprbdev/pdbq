@@ -321,17 +321,23 @@ func anyMap(m map[string]string) map[string]any {
 // [introspect.ForeignKey.JoinPairs]) between the referencing row at
 // childAlias and the referenced row at parentAlias. refFirst puts the
 // referenced side on the left of each operator; both operators (= and &&)
-// are commutative, so it only fixes the rendered text.
-func fkJoinSQL(fk *introspect.ForeignKey, childAlias, parentAlias string, refFirst bool) string {
+// are commutative, so it only fixes the rendered text. Equality on extension
+// types (citext, hstore, ltree) uses their schema-qualified operator.
+func (s *stmt) fkJoinSQL(fk *introspect.ForeignKey, childAlias, parentAlias string, refFirst bool) string {
 	pairs := fk.JoinPairs()
+	ref := s.c.Built.Catalog.Table(fk.RefSchema, fk.RefTable)
 	conds := make([]string, len(pairs))
 	for i, p := range pairs {
 		child := childAlias + "." + quoteIdent(p.Column)
 		parent := parentAlias + "." + quoteIdent(p.RefColumn)
+		op := string(p.Op)
+		if p.Op == introspect.JoinEqual && ref != nil {
+			op = s.contrib(ref.Column(p.RefColumn)).Operator(op)
+		}
 		if refFirst {
-			conds[i] = parent + " " + string(p.Op) + " " + child
+			conds[i] = parent + " " + op + " " + child
 		} else {
-			conds[i] = child + " " + string(p.Op) + " " + parent
+			conds[i] = child + " " + op + " " + parent
 		}
 	}
 	return strings.Join(conds, " AND ")
@@ -343,7 +349,7 @@ func fkJoinSQL(fk *introspect.ForeignKey, childAlias, parentAlias string, refFir
 func (s *stmt) forwardRelation(meta *schema.FieldMeta, f *ast.Field, parentAlias string, depth int) (string, string, error) {
 	ref := meta.Table
 	if !meta.FK.ReferencesOne() {
-		return s.relationConnection(ref, f, fkJoinSQL(meta.FK, parentAlias, "%%ALIAS%%", true), depth)
+		return s.relationConnection(ref, f, s.fkJoinSQL(meta.FK, parentAlias, "%%ALIAS%%", true), depth)
 	}
 	alias := s.alias("t")
 	jsonExpr, laterals, err := s.rowJSON(ref, f.SelectionSet, alias, depth)
@@ -353,7 +359,7 @@ func (s *stmt) forwardRelation(meta *schema.FieldMeta, f *ast.Field, parentAlias
 	latAlias := s.alias("l")
 	lat := fmt.Sprintf("LEFT JOIN LATERAL (\n%s\n) AS %s ON true",
 		indent(fmt.Sprintf("SELECT %s AS data\nFROM %s AS %s%s\nWHERE %s\nLIMIT 1",
-			jsonExpr, s.sourceRef(ref), alias, joinLaterals(laterals), fkJoinSQL(meta.FK, parentAlias, alias, true))),
+			jsonExpr, s.sourceRef(ref), alias, joinLaterals(laterals), s.fkJoinSQL(meta.FK, parentAlias, alias, true))),
 		latAlias)
 	return latAlias + ".data", lat, nil
 }
@@ -361,7 +367,7 @@ func (s *stmt) forwardRelation(meta *schema.FieldMeta, f *ast.Field, parentAlias
 // backwardRelation compiles a one-to-many field as a nested connection: a
 // lateral join whose subquery aggregates the child connection JSON.
 func (s *stmt) backwardRelation(meta *schema.FieldMeta, f *ast.Field, parentAlias string, depth int) (string, string, error) {
-	return s.relationConnection(meta.Table, f, fkJoinSQL(meta.FK, "%%ALIAS%%", parentAlias, false), depth)
+	return s.relationConnection(meta.Table, f, s.fkJoinSQL(meta.FK, "%%ALIAS%%", parentAlias, false), depth)
 }
 
 // relationConnection compiles a to-many relation over t as a lateral join

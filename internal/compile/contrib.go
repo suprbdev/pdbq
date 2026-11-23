@@ -56,9 +56,9 @@ func (s *stmt) params(vals []any) []string {
 }
 
 // rangeOperand converts a PostGraphile-shaped range input
-// ({start: {value, inclusive}, end: {value, inclusive}}, a missing bound
-// being unbounded) into the {start, startInclusive, end, endInclusive}
-// object contrib's range coercion takes. Other values pass through.
+// ({start: {value, inclusive}, end: {value, inclusive}, isEmpty}, a missing
+// bound being unbounded) into the {start, startInclusive, end, endInclusive,
+// isEmpty} object contrib's range coercion takes. Other values pass through.
 func rangeOperand(v any) any {
 	m, ok := v.(map[string]any)
 	if !ok {
@@ -72,6 +72,9 @@ func rangeOperand(v any) any {
 		}
 		out[side] = b["value"]
 		out[side+"Inclusive"] = b["inclusive"]
+	}
+	if e, ok := m["isEmpty"]; ok && e != nil {
+		out["isEmpty"] = e
 	}
 	return out
 }
@@ -179,7 +182,7 @@ func (s *stmt) vocabOp(ci contribtype.Column, ref, op string, val any) (string, 
 	if sql == "" {
 		return "", fmt.Errorf("compile: operator %s rejected %d parameters", op, len(params))
 	}
-	if o.Arg == pgcontrib.ArgFullText {
+	if o.Arg == pgcontrib.ArgFullText && s.rankScope {
 		if _, seen := s.ranks[ref]; !seen {
 			if s.ranks == nil {
 				s.ranks = map[string]rankSource{}
@@ -235,7 +238,8 @@ func fullTextOperand(ci contribtype.Column, op string, val, config any) any {
 }
 
 // rankSource is the first full-text match compiled against a column
-// reference: its operator and placeholders, reused by rank expressions.
+// reference in the conjunctive top level of a filter (see stmt.rankScope):
+// its operator and placeholders, reused by rank expressions.
 type rankSource struct {
 	op  pgcontrib.Op
 	phs []string
@@ -309,6 +313,9 @@ func (s *stmt) rangeObject(ci contribtype.Column, ref string, sel ast.SelectionS
 			pairs = append(pairs, key, quoteLiteral(ci.Scalar)+"::text")
 		case "start", "end":
 			pairs = append(pairs, key, s.rangeBound(ci, ref, f))
+		case "isEmpty":
+			a, _ := ci.Own.Accessor("isEmpty")
+			pairs = append(pairs, key, a.SQL(ref))
 		}
 	}
 	return buildJSONObject(pairs)
@@ -372,4 +379,74 @@ func (s *stmt) similarityTerm(t *introspect.Table, f *ast.Field, value string, s
 		return orderTerm{}, errUser("similarTo: %s", err.Error())
 	}
 	return orderTerm{col: spec.Column, trgm: &expr, trgmArgs: s.params(params), desc: spec.Desc}, nil
+}
+
+// contribLiteral renders an input value of a contrib-owned type as the text
+// literal its type input function parses: what jsonb_populate_record needs
+// for a composite attribute, which it reads from a JSON string. hstore
+// objects become "k"=>"v" pairs and ranges [lower,upper) literals (with
+// multiranges as {...} lists of them); the other types already arrive in
+// their text form.
+func contribLiteral(ci contribtype.Column, v any) (any, error) {
+	switch ci.Kind {
+	case contribtype.Hstore:
+		pairs, err := pgcontrib.HstoreParam(v)
+		if err != nil {
+			return nil, errUser("%s", err.Error())
+		}
+		parts := make([]string, 0, len(pairs)/2)
+		for i := 0; i+1 < len(pairs); i += 2 {
+			val := "NULL"
+			if pairs[i+1] != nil {
+				val = quoteLiteralValue(*pairs[i+1])
+			}
+			parts = append(parts, quoteLiteralValue(*pairs[i])+"=>"+val)
+		}
+		return strings.Join(parts, ", "), nil
+	case contribtype.Range:
+		r, err := pgcontrib.ParseRange(rangeOperand(v), integralElem(ci.Elem))
+		if err != nil {
+			return nil, errUser("%s", err.Error())
+		}
+		return rangeLiteral(r), nil
+	case contribtype.Multirange:
+		list, ok := v.([]any)
+		if !ok {
+			return nil, errUser("multirange value must be a list of ranges")
+		}
+		parts := make([]string, len(list))
+		for i, item := range list {
+			r, err := pgcontrib.ParseRange(rangeOperand(item), integralElem(ci.Elem))
+			if err != nil {
+				return nil, errUser("%s", err.Error())
+			}
+			parts[i] = rangeLiteral(r)
+		}
+		return "{" + strings.Join(parts, ",") + "}", nil
+	}
+	return v, nil
+}
+
+func integralElem(elem string) bool { return elem == "int4" || elem == "int8" }
+
+// rangeLiteral renders a range in Postgres's range text format, quoting
+// bounds so any element text survives.
+func rangeLiteral(r pgcontrib.RangeValue) string {
+	if r.Empty {
+		return "empty"
+	}
+	bound := func(b *string) string {
+		if b == nil {
+			return ""
+		}
+		return quoteLiteralValue(*b)
+	}
+	b := r.Bounds()
+	return b[:1] + bound(r.Start) + "," + bound(r.End) + b[1:]
+}
+
+// quoteLiteralValue double-quotes a value for the hstore and range text
+// formats, backslash-escaping quotes and backslashes.
+func quoteLiteralValue(s string) string {
+	return `"` + strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(s) + `"`
 }

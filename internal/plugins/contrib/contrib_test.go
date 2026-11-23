@@ -92,6 +92,15 @@ func TestTypeMapping(t *testing.T) {
 			t.Errorf("DocumentCreateInput.%s = %q, want %q", input, got, want)
 		}
 	}
+	if f := b.Objects["IntRange"].Field("isEmpty"); f == nil || f.Type != "Boolean!" {
+		t.Errorf("IntRange.isEmpty: %+v", f)
+	}
+	if got := fieldType(t, b, "IntRangeInput", "isEmpty"); got != "Boolean" {
+		t.Errorf("IntRangeInput.isEmpty = %q", got)
+	}
+	if got := fieldType(t, b, "StayInput", "nights"); got != "IntRangeInput" {
+		t.Errorf("StayInput.nights = %q", got)
+	}
 	bound := b.Objects["IntRangeBound"]
 	if bound == nil || bound.Field("value").Type != "Int!" || bound.Field("inclusive").Type != "Boolean!" {
 		t.Errorf("IntRangeBound shape: %+v", bound)
@@ -276,7 +285,11 @@ func TestSmartCommentOmitsSurface(t *testing.T) {
 	docs := cat.Table("public", "documents")
 	docs.Column("search").Comment = "@omit filter"
 	docs.Column("label").Comment = "@omit order"
+	docs.Column("keywords").Comment = "@omit read"
 	b := buildWith(t, cat, nil, true, true)
+	if b.Objects["Document"].Field("keywordsRank") != nil || hasEnumValue(b, "DocumentsOrderBy", "KEYWORDS_RANK_DESC") {
+		t.Error("@omit read kept the rank field or rank ordering")
+	}
 	if b.Objects["Document"].Field("searchRank") != nil {
 		t.Error("@omit filter kept the rank field")
 	}
@@ -296,11 +309,27 @@ func TestTypeNameClashFallsBackToString(t *testing.T) {
 		Columns:    []*introspect.Column{{Name: "id", Position: 1, PGType: "int4", TypeSchema: "pg_catalog"}},
 	}
 	cat.Tables = append([]*introspect.Table{clash}, cat.Tables...)
+	docs := cat.Table("public", "documents")
+	docs.Columns = docs.Columns[:len(docs.Columns)-1]
+	cat.Composites = cat.Composites[:len(cat.Composites)-1]
 	b := buildWith(t, cat, nil, true, true)
 	if got := b.Objects["Document"].Field("attrs").Type; got != "String" {
 		t.Errorf("attrs with KeyValueHash taken = %s, want String", got)
 	}
 	if got := fieldType(t, b, "DocumentFilter", "attrs"); got != "StringFilterOps" {
 		t.Errorf("attrs filter = %s, want StringFilterOps", got)
+	}
+	// Declared first (by a composite attribute), the scalar wins and the
+	// table type takes the suffix.
+	b = buildWith(t, func() *introspect.Catalog {
+		cat := contribfixture.Catalog()
+		cat.Tables = append([]*introspect.Table{clash}, cat.Tables...)
+		return cat
+	}(), nil, true, true)
+	if got := b.Objects["Document"].Field("attrs").Type; got != "KeyValueHash" {
+		t.Errorf("attrs = %s, want KeyValueHash", got)
+	}
+	if b.Objects["KeyValueHash_"] == nil {
+		t.Error("clashing table type not suffixed")
 	}
 }

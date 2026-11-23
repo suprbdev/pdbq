@@ -8,6 +8,7 @@ import (
 	"github.com/vektah/gqlparser/v2/ast"
 
 	"github.com/suprbdev/pdbcore/introspect"
+	"github.com/suprbdev/pdbq/internal/contribtype"
 )
 
 // pagePlan is the Go-side pagination decision for one connection field.
@@ -144,7 +145,7 @@ func (s *stmt) anchorVals(t *introspect.Table, terms []orderTerm, keys []any) ([
 	for i, term := range terms {
 		if term.plain() {
 			if j := slices.Index(pk, term.col); j >= 0 {
-				vals[i] = s.param(s.keyParam(t.Column(term.col), keys[j]))
+				vals[i] = s.keyValue(t.Column(term.col), keys[j])
 				continue
 			}
 		}
@@ -176,9 +177,13 @@ func (s *stmt) keysetPredicate(alias string, vals []string, terms []orderTerm, t
 		col := s.orderExprSQL(t, term, alias)
 		k := vals[i]
 		notNull := !orderTermNullable(t, term)
-		op := ">"
+		var ci contribtype.Column
+		if term.plain() {
+			ci = s.contrib(t.Column(term.col))
+		}
+		op := ci.Compare(">")
 		if desc {
-			op = "<"
+			op = ci.Compare("<")
 		}
 		var strict string
 		switch {
@@ -194,8 +199,12 @@ func (s *stmt) keysetPredicate(alias string, vals []string, terms []orderTerm, t
 			continue
 		}
 		eq := fmt.Sprintf("%s IS NOT DISTINCT FROM %s", col, k)
-		if notNull {
-			eq = fmt.Sprintf("%s = %s", col, k)
+		switch {
+		case notNull:
+			eq = fmt.Sprintf("%s %s %s", col, ci.Compare("="), k)
+		case ci.Extension():
+			// IS NOT DISTINCT FROM resolves = through the search_path.
+			eq = fmt.Sprintf("coalesce(%s %s %s, %s IS NULL AND %s IS NULL)", col, ci.Compare("="), k, col, k)
 		}
 		pred = fmt.Sprintf("(%s OR (%s AND %s))", strict, eq, pred)
 	}

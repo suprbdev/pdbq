@@ -66,6 +66,15 @@ func (p *ParamSet) Value(built *schema.Built, col *introspect.Column, v any) (st
 	return p.Add(coerceInput(built, col, v)), nil
 }
 
+// EqualOperator returns the equality operator to compare col with a value
+// rendered by ParamSet.Value: "=", or the schema-qualified operator of an
+// extension type (OPERATOR("ext".=) for citext, hstore, ltree), without
+// which citext compares case-sensitively and hstore/ltree fail to resolve
+// when the extension's schema is off the search_path.
+func EqualOperator(built *schema.Built, col *introspect.Column) string {
+	return contribFor(built, col).Operator("=")
+}
+
 // MutationWithCTEs compiles the payload selection of a mutation root field
 // against a caller-supplied CTE chain. The chain's final CTE must be named
 // __mut and yield the mutated row(s); params created via ps are preserved

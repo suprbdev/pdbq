@@ -398,6 +398,7 @@ func (b *Builder) ensureContrib(ci contribtype.Column) bool {
 	b.Objects[ci.Scalar] = &Object{Name: ci.Scalar, Description: desc, Fields: []*Field{
 		{Name: "start", Type: bound, Description: "The starting bound of our range; null when unbounded.", Meta: synthetic()},
 		{Name: "end", Type: bound, Description: "The ending bound of our range; null when unbounded.", Meta: synthetic()},
+		{Name: "isEmpty", Type: "Boolean!", Description: "Whether the range is empty (both bounds read as null). Not part of PostGraphile's range type.", Meta: synthetic()},
 	}}
 	b.Objects[bound] = &Object{Name: bound, Description: boundDesc, Fields: []*Field{
 		{Name: "value", Type: ci.ElemScalar + "!", Description: "The value at one end of our range.", Meta: synthetic()},
@@ -406,6 +407,7 @@ func (b *Builder) ensureContrib(ci contribtype.Column) bool {
 	b.Inputs[ci.Input] = &Input{Name: ci.Input, Description: desc, Fields: []*InputField{
 		{Name: "start", Type: boundIn, Description: "The starting bound of our range; omit for unbounded."},
 		{Name: "end", Type: boundIn, Description: "The ending bound of our range; omit for unbounded."},
+		{Name: "isEmpty", Type: "Boolean", Description: "True for the empty range; the bounds are then ignored. Not part of PostGraphile's range input."},
 	}}
 	b.Inputs[boundIn] = &Input{Name: boundIn, Description: boundDesc, Fields: []*InputField{
 		{Name: "value", Type: ci.ElemScalar + "!", Description: "The value at one end of our range."},
@@ -499,7 +501,7 @@ func (b *Builder) addTables() {
 }
 
 func (b *Builder) uniqueTypeName(name string) string {
-	for b.Objects[name] != nil || b.Enums[name] != nil || b.Inputs[name] != nil {
+	for b.Objects[name] != nil || b.Enums[name] != nil || b.Inputs[name] != nil || slices.Contains(b.Scalars, name) {
 		b.log.Warn("type name collision, appending suffix", "name", name)
 		name += "_"
 	}
@@ -1390,11 +1392,16 @@ func (b *Builder) usesHiddenTable(f *introspect.Function) bool {
 // same way a column's input type is chosen: enums take the generated enum
 // type (callers pass value names), composites their generated input type,
 // PostGIS types GeoJSON. Array types ("_uuid", and every VARIADIC
-// parameter) become lists.
+// parameter) become lists; arrays of contrib types other than ltree[] are
+// lists of their text form, like array columns of those types.
 func (b *Builder) argGQLType(a introspect.FuncArg) string {
 	elem := &introspect.Column{Name: a.Name, PGType: strings.TrimPrefix(a.PGType, "_"), TypeSchema: a.TypeSchema}
 	base := b.gqlInputTypeForColumn(elem)
 	if strings.HasPrefix(a.PGType, "_") {
+		arr := &introspect.Column{Name: a.Name, PGType: a.PGType, TypeSchema: a.TypeSchema, IsArray: true}
+		if b.ContribColumn(elem).Owned() && !b.ContribColumn(arr).Owned() {
+			base = "String"
+		}
 		return "[" + base + "]"
 	}
 	return base

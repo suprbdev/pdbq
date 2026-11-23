@@ -6,3 +6,7 @@ SELECT (SELECT jsonb_build_object('start', CASE WHEN lower(__rg_1.r) IS NULL THE
 SELECT "ext".hstore_to_jsonb(__fn.v) AS data FROM (SELECT "public"."with_flag"("h" => "ext".hstore($1::text[])::"ext"."hstore") AS v) AS __fn
 -- args: [["a","1"]]
 
+-- field: totalNights
+SELECT to_jsonb(__fn.v) AS data FROM (SELECT "public"."total_nights"(VARIADIC $1::text[]::"pg_catalog"."_int4range"::"pg_catalog"."_int4range") AS v) AS __fn
+-- args: [["[1,3)","[5,9)"]]
+

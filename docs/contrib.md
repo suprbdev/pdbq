@@ -27,20 +27,25 @@ connection-filter operator names) wherever PostGraphile has one.
 Ranges have PostGraphile's shape:
 
 ```graphql
-type IntRange { start: IntRangeBound, end: IntRangeBound }
+type IntRange { start: IntRangeBound, end: IntRangeBound, isEmpty: Boolean! }
 type IntRangeBound { value: Int!, inclusive: Boolean! }
-input IntRangeInput { start: IntRangeBoundInput, end: IntRangeBoundInput }
+input IntRangeInput { start: IntRangeBoundInput, end: IntRangeBoundInput, isEmpty: Boolean }
 input IntRangeBoundInput { value: Int!, inclusive: Boolean! }
 ```
 
-A bound is `null` when the range is unbounded on that side; an empty range
-reads as `{start: null, end: null}`. On input, leave a bound out for
-unbounded. Postgres normalizes discrete ranges, so `{start: {value: 3,
+A bound is `null` when the range is unbounded on that side or the range is
+empty; `isEmpty` tells the two apart, and `isEmpty: true` on input writes
+the empty range. `isEmpty` is an addition beyond PostGraphile's range
+types, which cannot express the empty range. On input, leave a bound out
+for unbounded. Postgres normalizes discrete ranges, so `{start: {value: 3,
 inclusive: false}, end: {value: 8, inclusive: true}}` reads back as `[4,9)`.
 `BigInt` and `BigFloat` bounds are strings, like the scalars elsewhere.
 
 The mapping applies to table columns, composite attributes, computed columns
-and function arguments and results. `citext`, `hstore` and `ltree` map only
+and function arguments and results. Arrays of these types (other than
+`ltree[]`) map to lists of their text form (`[String!]`, `["[1,3)", "[5,9)"]`
+for `int4range[]`), as columns and as function arguments, VARIADIC ones
+included. `citext`, `hstore` and `ltree` map only
 when the catalog records the extension; a database that uses none of these
 types gets exactly the schema it got before. Custom range types keep the
 `String` fallback (the catalog does not record a range's subtype), as do
@@ -59,7 +64,10 @@ depends on the search_path. This matters most for `citext`: an unqualified
 citext's schema is off the path, so pdbq compiles `citext` comparisons as
 `email OPERATOR("ext".=) $1::"ext".citext` and `like`/`likeInsensitive`/
 `startsWith`/`endsWith` as `OPERATOR("ext".~~)`/`~~*`. Conditions, unique
-lookups (`accountByEmail`) and `updateAccountByEmail` keys do the same.
+lookups (`accountByEmail`), `updateAccountByEmail` keys, `node(nodeId:)`
+lookups, keyset cursors, foreign key joins and nested `connect` do the same;
+keyset cursors over an `hstore` ordering compare with hstore's btree
+operators (`#<#`, `#>#`).
 
 ## Filter operators
 
@@ -141,7 +149,11 @@ Every filterable `tsvector` column gets a `<field>Rank: Float` sibling and
 `<COLUMN>_RANK_ASC` / `_RANK_DESC` orderBy values (as in
 `postgraphile-plugin-fulltext-filter`). Both compute `ts_rank(column, query)`
 against the first `matches*` operator on that column in the filter of the
-same list field, reusing its parameters:
+same list field, reusing its parameters. Only matches at the conjunctive
+top level of the filter count (the root object and nested `and` lists):
+matches under `or`, `not` or a relation filter do not hold for every
+returned row and never rank. A column with `@omit read` gets neither the
+field nor the ordering.
 
 ```graphql
 {
@@ -183,7 +195,9 @@ Inputs go through each type's constructor or cast: `hstore($1::text[])` from
 the JSON object (`null` values allowed), `int4range($1::int4, $2::int4,
 $3::text)` from the bound objects, `int4multirange(...)` from a list of them,
 `$1::"ext".citext`, `$1::"ext".ltree`, `$1::inet`, `$1::tsvector`. Nested
-mutations use the same path.
+mutations use the same path. Composite attributes of these types are sent
+in their text form inside the composite's jsonb parameter (`"k"=>"v"` for
+hstore, `["1","3")` for ranges).
 
 ## Settings
 

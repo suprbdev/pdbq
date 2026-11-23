@@ -35,3 +35,16 @@ WITH __mut AS (
 SELECT jsonb_build_object('affectedCount', (SELECT count(*) FROM __mut)) AS data
 -- args: ["archive","stale"]
 
+-- field: createDocument
+WITH __mut AS (
+  INSERT INTO "public"."documents" ("span", "stay", "title")
+  VALUES (int4range($1::int4, $2::int4, $3::text), jsonb_populate_record(NULL::"public"."stay", $4::jsonb), $5)
+  RETURNING "span", "stay"
+)
+SELECT jsonb_build_object('document', __row.data) AS data
+FROM (
+  SELECT jsonb_build_object('span', (SELECT jsonb_build_object('isEmpty', isempty(__rg_2.r)) FROM (SELECT __t_1."span" AS r) AS __rg_2 WHERE __rg_2.r IS NOT NULL), 'stay', CASE WHEN (__t_1."stay")::text IS NULL THEN NULL ELSE jsonb_build_object('nights', (SELECT jsonb_build_object('start', CASE WHEN lower(__rg_3.r) IS NULL THEN NULL ELSE jsonb_build_object('value', lower(__rg_3.r)) END) FROM (SELECT (__t_1."stay")."nights" AS r) AS __rg_3 WHERE __rg_3.r IS NOT NULL), 'extras', "ext".hstore_to_jsonb((__t_1."stay")."extras")) END) AS data
+  FROM __mut AS __t_1
+) AS __row
+-- args: ["0","0","[)","{\"extras\":\"\\\"a\\\"=\\u003e\\\"x \\\\\\\"y\\\\\\\"\\\", \\\"b\\\"=\\u003eNULL\",\"nights\":\"[\\\"1\\\",\\\"3\\\")\"}","e"]
+

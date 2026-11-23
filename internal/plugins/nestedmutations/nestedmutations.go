@@ -426,7 +426,7 @@ func (g *cteGen) resolveParent(spec *nestedSpec, nested map[string]any, depth in
 			if err != nil {
 				return "", err
 			}
-			conds = append(conds, compile.QuoteIdent(col)+" = "+p)
+			conds = append(conds, compile.QuoteIdent(col)+" "+compile.EqualOperator(g.req.Built, spec.Target.Column(col))+" "+p)
 		}
 		if len(conds) == 0 {
 			return "", fmt.Errorf("nested-mutations: empty connect for %s", spec.FK.RefTable)
