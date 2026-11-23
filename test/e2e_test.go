@@ -57,7 +57,7 @@ func testServer(t *testing.T, mutate func(*config.Config)) *httptest.Server {
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv, err := server.New(cfg.Server, server.NewAuthenticator(cfg.RLS), app.Executor(built), built.SDL, nil)
+	srv, err := server.New(cfg.Server, server.NewAuthenticator(cfg.RLS, nil), app.Executor(built), built.SDL, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

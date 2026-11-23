@@ -26,13 +26,28 @@ connections cannot leak one request's identity into another.
   Set `rls.auth.jwks_url` for asymmetric verification instead (RS256/384/512,
   ES256/384/512): keys are fetched from the JWKS endpoint, matched by `kid`,
   and cached for `rls.auth.jwks_cache_ttl` (default 1h; an unknown `kid`
-  refreshes early, so key rotation just works). In JWKS mode the HMAC
+  refreshes early, at most once a minute, so key rotation just works). After
+  the TTL keys refresh in the background and the previous set stays in use
+  for up to one more TTL while the endpoint fails; failed fetches back off
+  from 1s to 1m and are logged with the endpoint URL. In JWKS mode the HMAC
   algorithms are off the allowlist entirely — no downgrade to
   HMAC-with-public-key.
 - **`headers`**: for deployments behind a trusted gateway that has already
   authenticated the caller. Headers matching `rls.auth.header_prefix`
   (default `X-Pdbq-Claim-`) become claims: `X-Pdbq-Claim-User-Id: 42` →
   `pdbq.claims.user_id = '42'`.
+
+  Each claim has exactly one header spelling: the part after the prefix is
+  lower-cased and its hyphens become underscores, so `User-Id` is the only
+  way to send `user_id`. A request is rejected with a 401 when a claim header
+  contains an underscore or other punctuation (`X-Pdbq-Claim-User_Id`), is
+  repeated, or folds onto the same claim as another claim header
+  (`X-Pdbq-Claim-User-Id` plus `X-Pdbq-Claim-user-id` sent as separate
+  headers).
+
+  Set `rls.auth.header_claims` to an allowlist of claim names (e.g.
+  `["user_id", "tenant_id"]`; `rls.role_claim` is always accepted). A request
+  carrying any other claim header is a 401. Empty accepts any claim.
 
   Set `rls.auth.trusted_proxies` to the gateway's CIDR blocks (or single
   IPs), e.g. `["10.0.0.0/8", "192.168.1.5"]`: claim headers arriving from

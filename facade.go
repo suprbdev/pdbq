@@ -129,7 +129,7 @@ func (a *App) buildServer(ctx context.Context) (*server.Server, error) {
 		return nil, err
 	}
 	ex := a.Executor(built)
-	srv, err := server.New(a.Config.Server, server.NewAuthenticator(a.Config.RLS), ex, built.SDL, a.Log)
+	srv, err := server.New(a.Config.Server, server.NewAuthenticator(a.Config.RLS, a.Log), ex, built.SDL, a.Log)
 	if err != nil {
 		return nil, err
 	}

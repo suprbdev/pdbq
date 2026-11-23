@@ -40,7 +40,9 @@ truncating the query string in intermediary log formats.
 - `rls.enabled: true` with a **non-superuser** connection role that has been
   granted the request roles (`GRANT anonymous, app_user TO pdbq_conn`).
 - `rls.auth.mode: jwt` with a strong `jwt_secret` (or `headers` strictly
-  behind a gateway that strips inbound `X-Pdbq-Claim-*`).
+  behind a gateway that strips every client-supplied header starting with the
+  `rls.auth.header_prefix` (`X-Pdbq-Claim-` by default) in any letter case,
+  and sets `rls.auth.header_claims` to the claims it injects).
 - `errors.detail: prod` (default) — constraint violations pass through,
   internals do not. Use `strict` if constraint/column names in error
   messages are themselves sensitive (hides all database error messages).

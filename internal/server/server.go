@@ -28,9 +28,12 @@ import (
 // Authenticator turns an HTTP request into (claims, role); see pdbcore/auth.
 type Authenticator = auth.Authenticator
 
-// NewAuthenticator builds the request authenticator from the rls section.
-func NewAuthenticator(cfg config.RLS) *Authenticator {
-	return auth.New(confx.AuthConfig(cfg))
+// NewAuthenticator builds the request authenticator from the rls section;
+// log (may be nil) receives JWKS fetch failures.
+func NewAuthenticator(cfg config.RLS, log *slog.Logger) *Authenticator {
+	ac := confx.AuthConfig(cfg)
+	ac.Logger = log
+	return auth.New(ac)
 }
 
 // Server is the HTTP front end. Executor is stored atomically so watch mode
