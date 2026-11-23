@@ -72,7 +72,7 @@ func rasterTable() *introspect.Table {
 		Schema: "public", Name: "tiles", Kind: introspect.RelTable,
 		Privileges: introspect.Privileges{Select: true, Insert: true, Update: true, Delete: true},
 		Columns: []*introspect.Column{
-			{Name: "id", Position: 1, PGType: "int4", TypeSchema: "pg_catalog", NotNull: true, Generated: true, GeneratedKind: introspect.GeneratedIdentity},
+			{Name: "id", Position: 1, PGType: "int4", TypeSchema: "pg_catalog", NotNull: true, GeneratedKind: introspect.GeneratedIdentityAlways},
 			{Name: "rast", Position: 2, PGType: "raster", TypeSchema: "public"},
 			{Name: "mask", Position: 3, PGType: "raster", TypeSchema: "public"},
 		},

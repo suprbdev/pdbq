@@ -34,7 +34,7 @@ func buildCustomRanges(t *testing.T) *schema.Built {
 		return &introspect.Column{Name: name, Position: pos, PGType: typ, TypeSchema: schema, BaseTypeSchema: schema}
 	}
 	id := col(1, "id", "int4", "pg_catalog")
-	id.NotNull, id.Generated, id.GeneratedKind = true, true, introspect.GeneratedIdentity
+	id.NotNull, id.GeneratedKind = true, introspect.GeneratedIdentityAlways
 	cat.Tables = append(cat.Tables, &introspect.Table{
 		Schema: "public", Name: "readings", Kind: introspect.RelTable,
 		Privileges: introspect.Privileges{Select: true, Insert: true, Update: true, Delete: true},

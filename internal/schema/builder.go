@@ -1357,10 +1357,10 @@ func (b *Builder) addMutations(t *introspect.Table, filterName string) {
 		inputName := b.Inflect(inflect.KindCreateInput, inflect.Input{Schema: t.Schema, Table: t.Name})
 		in := &Input{Name: inputName}
 		for _, c := range t.Columns {
-			if c.Generated {
+			if c.GeneratedAlways() {
 				continue
 			}
-			required := c.NotNull && !c.HasDefault
+			required := !c.OmittableOnInsert()
 			in.AddField(&InputField{
 				Name:   b.Inflect(inflect.KindFieldName, inflect.Input{Table: t.Name, Column: c.Name}),
 				Type:   nonNull(b.gqlInputTypeForColumn(c), required),
@@ -1420,11 +1420,11 @@ func (b *Builder) addMutations(t *introspect.Table, filterName string) {
 			seen := map[string]bool{}
 			for _, con := range t.RowKeys() {
 				// A conflict target must be settable through the create input;
-				// generated (identity) key columns rule the target out.
+				// identity ALWAYS and generated key columns rule the target out.
 				usable := true
 				for _, cn := range con.Columns {
 					c := t.Column(cn)
-					if c == nil || c.Generated {
+					if c == nil || c.GeneratedAlways() {
 						usable = false
 						break
 					}
@@ -1459,7 +1459,7 @@ func (b *Builder) addMutations(t *introspect.Table, filterName string) {
 		patchName := b.Inflect(inflect.KindUpdateInput, inflect.Input{Schema: t.Schema, Table: t.Name})
 		patch := &Input{Name: patchName}
 		for _, c := range t.Columns {
-			if c.Generated {
+			if c.GeneratedAlways() {
 				continue
 			}
 			patch.AddField(&InputField{

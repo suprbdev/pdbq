@@ -34,7 +34,7 @@ func vaultCatalog() *introspect.Catalog {
 		return &introspect.Column{Name: name, Position: pos, PGType: typ, TypeSchema: schema, BaseTypeSchema: schema}
 	}
 	identity := func(c *introspect.Column) *introspect.Column {
-		c.NotNull, c.Generated, c.GeneratedKind = true, true, introspect.GeneratedIdentity
+		c.NotNull, c.GeneratedKind = true, introspect.GeneratedIdentityAlways
 		return c
 	}
 	all := introspect.Privileges{Select: true, Insert: true, Update: true, Delete: true}
