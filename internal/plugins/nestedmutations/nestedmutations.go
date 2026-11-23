@@ -39,6 +39,7 @@ type nestedSpec struct {
 	FK      *introspect.ForeignKey
 	Owner   *introspect.Table // table owning the FK (child)
 	Target  *introspect.Table // referenced table (parent) for forward; child table for reverse
+	Connect string            // connect input type for a forward spec
 }
 
 // New builds the plugin from its `plugins.settings.nested-mutations` map.
@@ -81,7 +82,8 @@ func (p *Plugin) TransformSchema(_ context.Context, b *schema.Builder) error {
 				continue
 			}
 			relName := b.ForwardRelationName(t, fk)
-			nestedType := p.ensureNestedInput(b, t, parent, fk, relName)
+			connectType := p.connectInputName(b, parent, fk)
+			nestedType := p.ensureNestedInput(b, t, parent, fk, relName, connectType)
 			if nestedType == "" || in.Field(relName) != nil {
 				continue
 			}
@@ -91,7 +93,7 @@ func (p *Plugin) TransformSchema(_ context.Context, b *schema.Builder) error {
 				Description: "Nested create/connect of the referenced " + fk.RefTable + " row.",
 				Nested:      map[string]any{"plugin": p.Name()},
 			})
-			p.addSpec(inputName, relName, &nestedSpec{Forward: true, FK: fk, Owner: t, Target: parent})
+			p.addSpec(inputName, relName, &nestedSpec{Forward: true, FK: fk, Owner: t, Target: parent, Connect: connectType})
 			// The FK columns can now come from the nested input, so they are
 			// no longer required in the GraphQL input (DB still enforces).
 			for _, pair := range equalityPairs(fk) {
@@ -152,7 +154,7 @@ func (p *Plugin) addSpec(inputName, field string, s *nestedSpec) {
 }
 
 // ensureNestedInput creates `<Type><Rel>NestedInput { create, connect }`.
-func (p *Plugin) ensureNestedInput(b *schema.Builder, owner, parent *introspect.Table, fk *introspect.ForeignKey, relName string) string {
+func (p *Plugin) ensureNestedInput(b *schema.Builder, owner, parent *introspect.Table, fk *introspect.ForeignKey, relName, connectType string) string {
 	ownerType := b.TypeForTable[owner.Schema+"."+owner.Name]
 	name := ownerType + coreinflect.UpperCamel(relName) + "NestedInput"
 	if _, ok := b.Inputs[name]; ok {
@@ -162,7 +164,7 @@ func (p *Plugin) ensureNestedInput(b *schema.Builder, owner, parent *introspect.
 	if parentInput := b.Inflect(inflect.KindCreateInput, inflect.Input{Schema: parent.Schema, Table: parent.Name}); b.Inputs[parentInput] != nil && parent.Insertable() {
 		in.AddField(&schema.InputField{Name: "create", Type: parentInput})
 	}
-	if connect := p.ensureConnectInput(b, parent, fk); connect != "" {
+	if connect := p.ensureConnectInput(b, parent, fk, connectType); connect != "" {
 		in.AddField(&schema.InputField{Name: "connect", Type: connect})
 	}
 	if len(in.Fields) == 0 {
@@ -172,12 +174,54 @@ func (p *Plugin) ensureNestedInput(b *schema.Builder, owner, parent *introspect.
 	return name
 }
 
-// ensureConnectInput creates `<Parent>ConnectInput` keyed by the columns the
-// FK references by equality: all of them, or all but the period of a PERIOD
-// FK, which connects to every version of the referenced entity.
-func (p *Plugin) ensureConnectInput(b *schema.Builder, parent *introspect.Table, fk *introspect.ForeignKey) string {
+// connectInputName names the connect input for the key the FK references.
+// The parent's primary key (or, when no FK references it, the
+// lexicographically first referenced key) keeps `<Parent>ConnectInput`; any
+// other referenced key gets `<Parent>ConnectBy<Columns>Input`.
+func (p *Plugin) connectInputName(b *schema.Builder, parent *introspect.Table, fk *introspect.ForeignKey) string {
 	parentType := b.TypeForTable[parent.Schema+"."+parent.Name]
-	name := parentType + "ConnectInput"
+	cols := refKey(fk)
+	if strings.Join(cols, ",") == strings.Join(canonicalKey(b, parent), ",") {
+		return parentType + "ConnectInput"
+	}
+	var sb strings.Builder
+	for _, c := range cols {
+		sb.WriteString(coreinflect.UpperCamel(c))
+	}
+	return parentType + "ConnectBy" + sb.String() + "Input"
+}
+
+func refKey(fk *introspect.ForeignKey) []string {
+	var cols []string
+	for _, pair := range equalityPairs(fk) {
+		cols = append(cols, pair.RefColumn)
+	}
+	return cols
+}
+
+func canonicalKey(b *schema.Builder, parent *introspect.Table) []string {
+	var best []string
+	for _, t := range b.Catalog.Tables {
+		for _, fk := range t.ForeignKeys {
+			if fk.RefSchema != parent.Schema || fk.RefTable != parent.Name {
+				continue
+			}
+			cols := refKey(fk)
+			if parent.PrimaryKey != nil && strings.Join(cols, ",") == strings.Join(parent.PrimaryKey.Columns, ",") {
+				return cols
+			}
+			if best == nil || strings.Join(cols, ",") < strings.Join(best, ",") {
+				best = cols
+			}
+		}
+	}
+	return best
+}
+
+// ensureConnectInput creates the connect input keyed by the columns the FK
+// references by equality: all of them, or all but the period of a PERIOD
+// FK, which connects to every version of the referenced entity.
+func (p *Plugin) ensureConnectInput(b *schema.Builder, parent *introspect.Table, fk *introspect.ForeignKey, name string) string {
 	if _, ok := b.Inputs[name]; ok {
 		return name
 	}
@@ -414,8 +458,7 @@ func (g *cteGen) resolveParent(spec *nestedSpec, nested map[string]any, depth in
 	}
 	if hasConnect {
 		name := g.name("p")
-		connectType := g.req.Built.TypeForTable[spec.Target.Schema+"."+spec.Target.Name] + "ConnectInput"
-		binding := g.req.Built.InputColumns[connectType]
+		binding := g.req.Built.InputColumns[spec.Connect]
 		var conds []string
 		for _, fname := range sortedKeys(connect) {
 			col, ok := binding[fname]

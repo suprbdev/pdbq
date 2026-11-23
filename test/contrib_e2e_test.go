@@ -111,6 +111,10 @@ CREATE TABLE ` + contribSchema + `.doc_notes (
 	meta hstore,
 	period daterange
 );
+CREATE TABLE ` + contribSchema + `.doc_refs (
+	id int PRIMARY KEY,
+	doc_id citext NOT NULL REFERENCES ` + contribSchema + `.documents(slug)
+);
 CREATE INDEX ON ` + contribSchema + `.documents USING gin (title ` + ops + `gin_trgm_ops);
 CREATE INDEX ON ` + contribSchema + `.documents USING gist (label ` + ops + `gist_trgm_ops);
 CREATE INDEX ON ` + contribSchema + `.documents USING gin (search);
@@ -593,6 +597,26 @@ func TestContrib(t *testing.T) {
 		requireNoErrors(t, res)
 		if got, want := normalize(t, res.Data["createSlugRef"]), normalizeStr(t, `{"slugRef":{"handleId":"Grace","handle":{"name":"Grace"}}}`); got != want {
 			t.Errorf("nested connect by citext key: %s", got)
+		}
+	})
+
+	t.Run("nested connect per referenced key", func(t *testing.T) {
+		res := post(t, url, `mutation { createDocNote(input: {document: {connect: {id: 1}}}) {
+			docNote { documentId } } }`, nil)
+		requireNoErrors(t, res)
+		if got, want := normalize(t, res.Data["createDocNote"]), normalizeStr(t, `{"docNote":{"documentId":1}}`); got != want {
+			t.Errorf("connect by primary key: %s", got)
+		}
+		res = post(t, url, `mutation { createDocRef(input: {id: 1, doc: {connect: {slug: "hELLO"}}}) {
+			docRef { docId doc { id } } } }`, nil)
+		requireNoErrors(t, res)
+		if got, want := normalize(t, res.Data["createDocRef"]), normalizeStr(t, `{"docRef":{"docId":"Hello","doc":{"id":1}}}`); got != want {
+			t.Errorf("connect by citext unique key: %s", got)
+		}
+		res = post(t, url, `{__type(name: "DocumentConnectBySlugInput") { inputFields { name } }}`, nil)
+		requireNoErrors(t, res)
+		if got := normalize(t, res.Data["__type"]); got != `{"inputFields":[{"name":"slug"}]}` {
+			t.Errorf("slug connect input: %s", got)
 		}
 	})
 
