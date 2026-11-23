@@ -86,7 +86,14 @@ const (
 	// KindPayloadEdge is the <row>Edge field of a payload carrying one row of
 	// Table: an edge whose cursor is the row's nodeId.
 	KindPayloadEdge FieldKind = "payload_edge"
+	// KindPlaceholder is the always-null field ([PlaceholderField]) standing
+	// in for an object type whose every field is hidden by smart comments,
+	// since GraphQL object types need at least one field.
+	KindPlaceholder FieldKind = "placeholder"
 )
+
+// PlaceholderField names the [KindPlaceholder] field.
+const PlaceholderField = "_empty"
 
 // FieldMeta binds a GraphQL field to the catalog for SQL compilation.
 type FieldMeta struct {
@@ -113,6 +120,10 @@ type FieldMeta struct {
 	PeriodColumn string
 	// Aggregate binds a KindAggregateValue field to its aggregate expression.
 	Aggregate *Aggregate
+	// Patch names the table's update input on a KindUpsert field: only the
+	// columns it binds are overwritten on conflict, so a column the patch
+	// leaves out (`@omit update`) keeps its value.
+	Patch string
 	// ScanCost is a flat surcharge the executor's cost estimate adds for a
 	// field that reads a whole filtered row set rather than a page (the
 	// aggregates plugin's aggregates and groupedAggregates fields). A

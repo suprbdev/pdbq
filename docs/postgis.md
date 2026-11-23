@@ -419,6 +419,12 @@ Per-column control uses the usual [smart comments](smart-comments.md):
 COMMENT ON COLUMN places.secret_location IS '@omit filter,order';
 ```
 
+`@omit filter` removes the column's spatial filter and `@omit order` its
+distance ordering. `@omit read` hides the column field and every derived
+accessor (`<field>Wkt`, `<field>X`, …), and also its distance ordering,
+which reads the value back by sorting against a point of the client's
+choosing. A bare `@omit` hides all of it.
+
 ## Notes and limits
 
 - **Injection safety.** Geometries, bounding-box corners and distances are all

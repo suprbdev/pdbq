@@ -209,7 +209,8 @@ works with keyset cursors, and descending values sort `NULL` (no related rows)
 last. The related table's aggregated columns are its orderable columns,
 those behind its own `orderBy` values, so `filters.indexed_only` and column
 `@omit order` apply as in advanced-filters. On the foreign key, `@omit order`
-and `@omit many` skip the relation. In advanced-filters' `relations_opt_in`
+and `@omit many` skip the relation, as does `@omit many` on the referencing
+table. In advanced-filters' `relations_opt_in`
 mode, only keys tagged `@filterable`/`@sortable` get values.
 
 Keyset cursors over a floating-point aggregate (`sum`, `average`,

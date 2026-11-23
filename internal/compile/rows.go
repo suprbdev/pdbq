@@ -86,6 +86,8 @@ func (s *stmt) rowJSONAs(typeName string, sel ast.SelectionSet, alias string, de
 			pairs = append(pairs, key, expr)
 		case schema.KindNodeID:
 			pairs = append(pairs, key, nodeIDSQL(typeName, meta.Table, alias))
+		case schema.KindPlaceholder:
+			pairs = append(pairs, key, "NULL::json")
 		case schema.KindComputed:
 			expr, err := s.computedJSON(meta, f, alias, depth+1)
 			if err != nil {
@@ -285,6 +287,10 @@ func (s *stmt) compositeJSON(ref string, comp *introspect.Composite, isArray boo
 			continue
 		}
 		meta := s.fieldMeta(typeName, f.Name)
+		if meta != nil && meta.Kind == schema.KindPlaceholder {
+			pairs = append(pairs, key, "NULL::json")
+			continue
+		}
 		if meta == nil || meta.Kind != schema.KindCompositeField {
 			return "", fmt.Errorf("compile: no metadata for %s.%s", typeName, f.Name)
 		}

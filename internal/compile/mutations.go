@@ -583,9 +583,11 @@ func (s *stmt) inputColumns(t *introspect.Table, inputType string, vals map[stri
 }
 
 // upsertCTE compiles INSERT ... ON CONFLICT (KeyColumns) DO UPDATE. Every
-// provided input column except the conflict target is updated from EXCLUDED;
-// when only target columns are provided, the target updates to itself so the
-// statement still returns the existing row instead of DO NOTHING's zero rows.
+// provided input column the table's update patch (meta.Patch) binds, except
+// the conflict target, is updated from EXCLUDED, so a column left out of the
+// patch (`@omit update`) is only ever set on insert; when no such column is
+// provided, the target updates to itself so the statement still returns the
+// existing row instead of DO NOTHING's zero rows.
 func (s *stmt) upsertCTE(t *introspect.Table, meta *schema.FieldMeta, f *ast.Field) (dml, error) {
 	input, ok := s.argValue(f, "input")
 	if !ok {
@@ -616,9 +618,13 @@ func (s *stmt) upsertCTE(t *introspect.Table, meta *schema.FieldMeta, f *ast.Fie
 		}
 		keyConds[i] = fmt.Sprintf("%s.%s %s %s", tableRef(t), quoteIdent(kc), s.contrib(t.Column(kc)).Operator("="), p)
 	}
+	updatable := map[string]bool{}
+	for _, col := range s.c.Built.InputColumns[meta.Patch] {
+		updatable[col] = true
+	}
 	var sets []string
 	for _, c := range cols {
-		if !target[c] {
+		if !target[c] && updatable[c] {
 			sets = append(sets, quoteIdent(c)+" = EXCLUDED."+quoteIdent(c))
 		}
 	}

@@ -1304,7 +1304,10 @@ func (b *Builder) addMutations(t *introspect.Table, filterName string) {
 					Type:        payload("upsert") + "!",
 					Description: "Inserts a " + typeName + ", updating the existing row on a (" + strings.Join(con.Columns, ", ") + ") conflict.",
 					Args:        []Arg{{Name: "input", Type: inputName + "!"}},
-					Meta:        &FieldMeta{Kind: KindUpsert, Table: t, KeyColumns: con.Columns},
+					Meta: &FieldMeta{
+						Kind: KindUpsert, Table: t, KeyColumns: con.Columns,
+						Patch: b.Inflect(inflect.KindUpdateInput, inflect.Input{Schema: t.Schema, Table: t.Name}),
+					},
 				})
 			}
 		}
@@ -1409,9 +1412,13 @@ func (b *Builder) addFunctions() {
 		return
 	}
 	for _, f := range b.Catalog.Functions {
-		if b.usesHiddenTable(f) {
+		if ref, partition := b.unexposedType(f); partition {
 			b.log.Debug("skipping function: uses the row type of a table left out of the schema",
-				"function", f.Schema+"."+f.Name)
+				"function", f.Schema+"."+f.Name, "table", ref)
+			continue
+		} else if ref != "" {
+			b.log.Warn("skipping function: uses a type from a schema outside schema.schemas (the row type of an unexposed table?)",
+				"function", f.Schema+"."+f.Name, "type", ref)
 			continue
 		}
 		// A function whose first argument is a table's row type is a computed
@@ -1635,21 +1642,52 @@ func (b *Builder) functionRecordType(f *introspect.Function) string {
 	return name
 }
 
-// usesHiddenTable reports whether a parameter or the return type of f is the
-// row type of a table left out of the schema (see Options.ExposePartitions).
-func (b *Builder) usesHiddenTable(f *introspect.Function) bool {
-	if len(b.hidden) == 0 {
-		return false
-	}
-	if b.hidden[tableKey(f.ReturnTypeSchema, strings.TrimPrefix(f.ReturnType, "_"))] {
-		return true
-	}
-	for _, a := range append(append([]introspect.FuncArg{}, f.Args...), f.ReturnColumns...) {
-		if b.hidden[tableKey(a.TypeSchema, strings.TrimPrefix(a.PGType, "_"))] {
-			return true
+// unexposedType returns the "schema.type" of the first type f returns or
+// takes that the schema must not expose, or "": the row type of a table left
+// out of the catalog (a partition, see Options.ExposePartitions; partition
+// is then true), or a type from a schema outside the introspected ones that
+// is no known enum, composite, domain, range or extension type. The latter
+// is typically the row type of a table in an unexposed schema, which would
+// otherwise be typed String and return whole rows as JSON.
+func (b *Builder) unexposedType(f *introspect.Function) (ref string, partition bool) {
+	refs := []introspect.FuncArg{{PGType: f.ReturnType, TypeSchema: f.ReturnTypeSchema, Domain: f.ReturnDomain}}
+	refs = append(append(refs, f.Args...), f.ReturnColumns...)
+	for _, a := range refs {
+		key := tableKey(a.TypeSchema, strings.TrimPrefix(a.PGType, "_"))
+		if b.hidden[key] {
+			return key, true
+		}
+		if b.foreignType(a) {
+			return key, false
 		}
 	}
-	return false
+	return "", false
+}
+
+// foreignType reports whether a's type lives in a schema neither built in
+// nor introspected and resolves to nothing the catalog describes.
+func (b *Builder) foreignType(a introspect.FuncArg) bool {
+	elem := strings.TrimPrefix(a.PGType, "_")
+	switch {
+	case a.TypeSchema == "" || a.TypeSchema == "pg_catalog" || a.Domain != "",
+		slices.Contains(b.Catalog.Schemas, a.TypeSchema),
+		b.Catalog.Table(a.TypeSchema, elem) != nil,
+		b.Catalog.Composite(a.TypeSchema, elem) != nil,
+		b.Catalog.Enum(a.TypeSchema, elem) != nil,
+		postgis.IsSpatial(elem):
+		return false
+	}
+	for _, r := range b.Catalog.Ranges {
+		if r.Schema == a.TypeSchema && (r.Name == elem || r.Multirange == elem) {
+			return false
+		}
+	}
+	for _, e := range b.Catalog.Extensions {
+		if e.Schema == a.TypeSchema {
+			return false
+		}
+	}
+	return !b.ContribColumn(FuncArgColumn(b.Catalog, a)).Owned()
 }
 
 // argGQLType maps a function argument's pg type to a GraphQL input type the

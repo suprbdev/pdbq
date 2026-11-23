@@ -13,6 +13,12 @@ Per table (gated by the role's privileges): `create<Type>(input:)`,
 `upsert<Type>By<Key>(input:)`, and the bulk `create<Types>`,
 `update<Types>(filter:, patch:)`, `delete<Types>(filter:)`.
 
+An upsert takes the create input and, on a key conflict, overwrites only
+the provided columns that the update patch (`<Type>UpdateInput`) also has:
+a column tagged `@omit update` is set when the row is inserted and kept
+when it already exists. Upserts are generated only for keys every column of
+which the create input can set.
+
 The single-row payloads (`CreatePostPayload`, `UpdatePostPayload`,
 `DeletePostPayload`, `UpsertPostPayload`) carry:
 

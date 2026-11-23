@@ -34,8 +34,9 @@
 // Relational ordering and filtering follow advanced-filters: they aggregate
 // only the related table's orderable (respectively filterable) columns, so
 // filters.indexed_only and column @omit order / @omit filter apply, and the
-// foreign key's @omit order, @omit many and the relations_opt_in mode gate
-// the ordering values.
+// foreign key's @omit order, @omit many (on the key or the referencing
+// table) and the relations_opt_in mode gate the ordering values. Columns
+// tagged @omit read are never aggregated.
 package aggregates
 
 import (
@@ -50,6 +51,7 @@ import (
 	"github.com/suprbdev/pdbcore/postgis"
 	"github.com/suprbdev/pdbcore/smarttags"
 	"github.com/suprbdev/pdbq/internal/inflect"
+	"github.com/suprbdev/pdbq/internal/omit"
 	"github.com/suprbdev/pdbq/internal/schema"
 )
 
@@ -175,12 +177,12 @@ func (p *Plugin) tableBehavior(t *introspect.Table) behavior {
 }
 
 // columnTags reports whether a column is excluded from aggregates (@omit
-// aggregates, @aggregates off, @behavior -aggregate) and from grouping
-// (additionally @behavior -groupBy).
+// aggregates or read, @aggregates off, @behavior -aggregate) and from
+// grouping (additionally @behavior -groupBy).
 func columnTags(c *introspect.Column) (omitted, noGroup bool) {
 	tags, _ := smarttags.Parse(c.Comment)
-	omits, _ := tags.Omits()
-	omitted = omits["aggregates"] || strings.EqualFold(tags.First("aggregates"), "off")
+	omitted = omit.Column(c, omit.Aggregates) || omit.Column(c, omit.Read) ||
+		strings.EqualFold(tags.First("aggregates"), "off")
 	for _, v := range tags.All("behavior") {
 		for _, tok := range smarttags.SplitList(v) {
 			switch tok {
@@ -546,8 +548,8 @@ func (r *build) havingFilter(t *introspect.Table, pgType string) string {
 // addRelationOrder adds <REL>_COUNT_* and <REL>_<SPEC>_<COLUMN>_* values to
 // t's orderBy enum for every reverse relation from an opted-in table, unless
 // the foreign key opts out the way advanced-filters' relational ordering
-// does (@omit order, @omit many, relations_opt_in without @filterable /
-// @sortable).
+// does (@omit order, @omit many on the key or the child table,
+// relations_opt_in without @filterable / @sortable).
 func (r *build) addRelationOrder(t *introspect.Table, surfaces map[*introspect.Table]*surface) {
 	b := r.b
 	en := b.Enums[b.Inflect(inflect.KindOrderByTypeName, inflect.Input{Schema: t.Schema, Table: t.Name})]
@@ -566,7 +568,7 @@ func (r *build) addRelationOrder(t *introspect.Table, surfaces map[*introspect.T
 			}
 		}
 		for _, fk := range child.ForeignKeys {
-			if fk.RefSchema != t.Schema || fk.RefTable != t.Name || r.omitsOrder(fk.Comment) {
+			if fk.RefSchema != t.Schema || fk.RefTable != t.Name || r.omitsOrder(fk.Comment) || omit.ManyHidden(child, fk) {
 				continue
 			}
 			relName := b.Inflect(inflect.KindRelationBackward, inflect.Input{
@@ -592,12 +594,12 @@ func (r *build) addRelationOrder(t *introspect.Table, surfaces map[*introspect.T
 }
 
 // omitsOrder applies advanced-filters' relational-ordering rules to a
-// foreign key comment, plus @omit many (no one-to-many relation exposed).
+// foreign key comment (@omit order, relations_opt_in without @filterable or
+// @sortable).
 func (r *build) omitsOrder(comment string) bool {
 	tags, _ := smarttags.Parse(comment)
-	omits, everything := tags.Omits()
 	optedOut := r.relationsOptIn && !tags.Has("filterable") && !tags.Has("sortable")
-	return everything || optedOut || omits["order"] || omits["many"]
+	return optedOut || omit.Hides(comment, omit.Order)
 }
 
 // addOrderPair appends base_ASC/base_DESC unless either name is taken.

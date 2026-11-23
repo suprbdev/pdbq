@@ -23,6 +23,7 @@ import (
 	"github.com/suprbdev/pdbq/internal/compile"
 	"github.com/suprbdev/pdbq/internal/exec"
 	"github.com/suprbdev/pdbq/internal/inflect"
+	"github.com/suprbdev/pdbq/internal/omit"
 	"github.com/suprbdev/pdbq/internal/schema"
 )
 
@@ -174,7 +175,7 @@ func (p *Plugin) TransformSchema(_ context.Context, b *schema.Builder) error {
 				continue
 			}
 			for _, fk := range child.ForeignKeys {
-				if fk.RefSchema != t.Schema || fk.RefTable != t.Name {
+				if fk.RefSchema != t.Schema || fk.RefTable != t.Name || omit.ManyHidden(child, fk) {
 					continue
 				}
 				relName := b.Inflect(inflect.KindRelationBackward, inflect.Input{
@@ -228,9 +229,12 @@ func relax(b *schema.Builder, in *schema.Input, t *introspect.Table, fk *introsp
 
 // writesFK reports whether in has a field for every column fk copies, so a
 // nested operation may set them (a column left out, e.g. by `@omit create`
-// or `@omit update`, must not be written through a nested field either).
-func writesFK(in *schema.Input, fk *introspect.ForeignKey) bool {
-	if in == nil {
+// or `@omit update`, must not be written through a nested field either),
+// and whether the referenced columns of parent are readable: copying a
+// hidden referenced key into the readable foreign key column would reveal
+// it.
+func writesFK(in *schema.Input, parent *introspect.Table, fk *introspect.ForeignKey) bool {
+	if in == nil || omit.ReferencesHidden(parent, fk) {
 		return false
 	}
 	for _, pair := range equalityPairs(fk) {
@@ -275,7 +279,7 @@ func (p *Plugin) forwardInput(b *schema.Builder, owner, parent *introspect.Table
 	keys := targetKeys(parent)
 	node := isNode(b, parent)
 	pkey := parent.Schema + "." + parent.Name
-	setsFK := writesFK(rowIn, fk)
+	setsFK := writesFK(rowIn, parent, fk)
 	if setsFK {
 		for _, k := range keys {
 			add("connectBy"+coreinflect.ByColumns(k), p.keyInput(b, parent, "Connect", k), &opSpec{kind: opConnect, key: k})
@@ -340,7 +344,7 @@ func (p *Plugin) backwardInput(b *schema.Builder, parent, child *introspect.Tabl
 	ckey := child.Schema + "." + child.Name
 	childPatch := b.Inputs[p.patchForTable[ckey]]
 	childCreate := b.Inputs[p.inputForTable[ckey]]
-	if writesFK(childPatch, fk) {
+	if writesFK(childPatch, parent, fk) {
 		for _, k := range keys {
 			add("connectBy"+coreinflect.ByColumns(k), p.keyInput(b, child, "Connect", k), &opSpec{kind: opConnect, key: k})
 		}
@@ -348,7 +352,7 @@ func (p *Plugin) backwardInput(b *schema.Builder, parent, child *introspect.Tabl
 			add("connectByNodeId", p.nodeIDInput(b, child, "Connect"), &opSpec{kind: opConnect, nodeID: true})
 		}
 	}
-	creates := writesFK(childCreate, fk)
+	creates := writesFK(childCreate, parent, fk)
 	if creates {
 		add("create", childCreate.Name, &opSpec{kind: opCreate})
 	}
@@ -369,7 +373,7 @@ func (p *Plugin) backwardInput(b *schema.Builder, parent, child *introspect.Tabl
 				add("deleteByNodeId", p.nodeIDInput(b, child, "Delete"), &opSpec{kind: opDelete, nodeID: true})
 			}
 		}
-		if writesFK(childPatch, fk) && nullableFK(child, fk) {
+		if writesFK(childPatch, parent, fk) && nullableFK(child, fk) {
 			for _, k := range keys {
 				add("disconnectBy"+coreinflect.ByColumns(k), p.keyInput(b, child, "Disconnect", k), &opSpec{kind: opDisconnect, key: k})
 			}

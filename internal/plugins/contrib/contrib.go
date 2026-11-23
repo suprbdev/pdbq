@@ -47,8 +47,9 @@
 // compiler reads them and stays inert when they are absent, so disabling
 // the plugin (plugins.disabled: [contrib]) removes the surface while plain
 // reads, writes and comparisons keep working. "@omit filter" / "@omit order"
-// on a column skips its filter / ordering surface; "@omit read" on a
-// tsvector column also skips its rank field and rank ordering.
+// on a column skips its filter / ordering surface; "@omit read" also skips
+// its rank field and its rank and similarity orderings, which read the
+// value back against a client-chosen reference (package omit).
 package contrib
 
 import (
@@ -59,9 +60,9 @@ import (
 	pgcontrib "github.com/suprbdev/pdbcore/contrib"
 	coreinflect "github.com/suprbdev/pdbcore/inflect"
 	"github.com/suprbdev/pdbcore/introspect"
-	"github.com/suprbdev/pdbcore/smarttags"
 	"github.com/suprbdev/pdbq/internal/contribtype"
 	"github.com/suprbdev/pdbq/internal/inflect"
+	"github.com/suprbdev/pdbq/internal/omit"
 	"github.com/suprbdev/pdbq/internal/schema"
 )
 
@@ -134,21 +135,6 @@ func (p *Plugin) TransformSchema(_ context.Context, b *schema.Builder) error {
 	return nil
 }
 
-// omits reports which halves of the surface a smart comment removes.
-func omits(comment string) (skipFilter, skipOrder bool) {
-	tags, _ := smarttags.Parse(comment)
-	om, everything := tags.Omits()
-	return everything || om["filter"], everything || om["order"]
-}
-
-// unreadable reports whether a smart comment hides the column's value
-// (@omit read), which a rank field or rank ordering would leak.
-func unreadable(comment string) bool {
-	tags, _ := smarttags.Parse(comment)
-	om, everything := tags.Omits()
-	return everything || om["read"]
-}
-
 // served reports whether the indexed-only policy admits surface backed by
 // the given index hints on column c of t.
 func (st *build) served(t *introspect.Table, c *introspect.Column, hints []pgcontrib.IndexHint) bool {
@@ -178,7 +164,7 @@ func (st *build) filterField(t *introspect.Table, c *introspect.Column) *schema.
 
 func (st *build) addFilters(t *introspect.Table, cols []column) {
 	for _, cc := range cols {
-		if skip, _ := omits(cc.col.Comment); skip {
+		if omit.Column(cc.col, omit.Filter) {
 			continue
 		}
 		f := st.filterField(t, cc.col)
@@ -187,7 +173,7 @@ func (st *build) addFilters(t *introspect.Table, cols []column) {
 		}
 		if cc.ci.Owned() && f.Type == cc.ci.OpsInput {
 			st.extendOps(cc.ci)
-			if cc.ci.Kind == contribtype.FullText && !unreadable(cc.col.Comment) {
+			if cc.ci.Kind == contribtype.FullText && !omit.Column(cc.col, omit.Read) {
 				st.addRankField(t, cc.col)
 			}
 		}
@@ -309,13 +295,10 @@ func (st *build) addOrdering(t *introspect.Table, cols []column) {
 	}
 	var similar []*introspect.Column
 	for _, cc := range cols {
-		if _, skip := omits(cc.col.Comment); skip || !orderable(en, cc.col.Name) {
+		if omit.Column(cc.col, omit.Order) || omit.Column(cc.col, omit.Read) || !orderable(en, cc.col.Name) {
 			continue
 		}
 		if cc.ci.Kind == contribtype.FullText {
-			if unreadable(cc.col.Comment) {
-				continue
-			}
 			if f := st.filterField(t, cc.col); f != nil && f.Type == cc.ci.OpsInput && b.Inputs[f.Type].Field("matches") != nil {
 				addValue(en, coreinflect.EnumValue(cc.col.Name)+"_RANK_ASC", schema.EnumValue{
 					Column: cc.col.Name, Rank: true,
