@@ -124,6 +124,7 @@ func (a *App) buildServer(ctx context.Context) (*server.Server, error) {
 		return nil, err
 	}
 	if a.Config.Watch.Enabled {
+		wctx, cancel := context.WithCancel(ctx)
 		w := &watch.Watcher{
 			Pool:         a.pool,
 			Schemas:      a.Config.Schema.Schemas,
@@ -134,7 +135,7 @@ func (a *App) buildServer(ctx context.Context) (*server.Server, error) {
 			Log:          a.Log,
 			OnChange: func(cat *introspect.Catalog) {
 				// Atomic swap: in-flight requests keep the old executor.
-				nb, err := a.BuildSchema(ctx, cat)
+				nb, err := a.BuildSchema(wctx, cat)
 				if err != nil {
 					a.Log.Error("watch: schema rebuild failed", "err", err)
 					return
@@ -142,11 +143,19 @@ func (a *App) buildServer(ctx context.Context) (*server.Server, error) {
 				srv.Swap(a.Executor(nb), nb.SDL)
 			},
 		}
+		done := make(chan struct{})
 		go func() {
-			if err := w.Run(ctx); err != nil {
+			defer close(done)
+			if err := w.Run(wctx); err != nil {
 				a.Log.Error("watch: stopped", "err", err)
 			}
 		}()
+		a.watchMu.Lock()
+		a.stops = append(a.stops, func() {
+			cancel()
+			<-done
+		})
+		a.watchMu.Unlock()
 	}
 	return srv, nil
 }
