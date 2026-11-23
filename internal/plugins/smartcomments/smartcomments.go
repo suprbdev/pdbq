@@ -115,7 +115,7 @@ func (p *Plugin) Inflect(kind inflect.Kind, in inflect.Input, next inflect.Next)
 	case inflect.KindTypeName, inflect.KindAllRowsField, inflect.KindFilterTypeName,
 		inflect.KindConditionTypeName,
 		inflect.KindOrderByTypeName, inflect.KindDistinctOnTypeName, inflect.KindCreateMutation, inflect.KindCreateInput,
-		inflect.KindUpdateInput, inflect.KindPayloadTypeName,
+		inflect.KindUpdateInput, inflect.KindPayloadTypeName, inflect.KindPayloadDeletedNodeID,
 		inflect.KindCreateManyMutation, inflect.KindUpdateManyMutation, inflect.KindDeleteManyMutation:
 		in.Table = p.Index().RenamedTable(in.Schema, in.Table)
 	case inflect.KindRowByPKField, inflect.KindRowByUniqueField,

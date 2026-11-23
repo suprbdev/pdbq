@@ -1203,6 +1203,14 @@ func (b *Builder) addMutations(t *introspect.Table, filterName string) {
 				{Name: "clientMutationId", Type: "String", Meta: &FieldMeta{Kind: KindClientMutationID}},
 			}}
 			b.addPayloadFields(obj, t)
+			if verb == "delete" && t.PrimaryKey != nil {
+				b.addRootField(obj, &Field{
+					Name:        b.Inflect(inflect.KindPayloadDeletedNodeID, inflect.Input{Schema: t.Schema, Table: t.Name}),
+					Type:        "ID",
+					Description: "The nodeId of the deleted " + typeName + ".",
+					Meta:        &FieldMeta{Kind: KindPayloadDeletedNodeID, Table: t},
+				})
+			}
 			b.Objects[name] = obj
 		}
 		return name
@@ -1456,7 +1464,7 @@ func (b *Builder) addFunctions() {
 		// token string, so that composite stays a String here.
 		retBase, ok := b.functionReturnBase(f, true)
 		if !ok {
-			b.log.Debug("skipping function: return type has no GraphQL representation (RETURNS record without OUT parameters?)",
+			b.log.Info("skipping function: RETURNS record without OUT parameters has no fixed shape (declare OUT parameters or RETURNS TABLE to expose it)",
 				"function", f.Schema+"."+f.Name, "type", f.ReturnType)
 			continue
 		}

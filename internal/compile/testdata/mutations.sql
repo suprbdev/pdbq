@@ -25,7 +25,7 @@ WITH __mut AS (
   WHERE "public"."users"."id" = $1
   RETURNING "id"
 )
-SELECT json_build_object('user', json_build_object('id', __t_1."id"), 'clientMutationId', $2::text) AS data
+SELECT json_build_object('user', json_build_object('id', __t_1."id"), 'deletedUserNodeId', replace(encode(convert_to(jsonb_build_array('User'::text, __t_1."id")::text, 'UTF8'), 'base64'), E'\n', ''), 'clientMutationId', $2::text) AS data
 FROM __mut AS __t_1
 -- args: [2,"cm-3"]
 

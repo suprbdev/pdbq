@@ -4,6 +4,7 @@ mutation {
   }
   deleteUserByEmail(email: "b@c.d") {
     user { id }
+    deletedUserNodeId
     clientMutationId
   }
 }

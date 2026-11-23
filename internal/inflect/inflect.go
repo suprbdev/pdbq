@@ -49,6 +49,7 @@ const (
 	KindCreateInput            Kind = "create_input"              // UserCreateInput
 	KindUpdateInput            Kind = "update_input"              // UserUpdateInput
 	KindPayloadTypeName        Kind = "payload_type_name"         // CreateUserPayload
+	KindPayloadDeletedNodeID   Kind = "payload_deleted_node_id"   // DeleteUserPayload -> deletedUserNodeId
 	KindRelationForward        Kind = "relation_forward"          // FK column -> parent object field (author)
 	KindRelationBackward       Kind = "relation_backward"         // reverse FK -> child list field (postsByAuthorId)
 	KindRelationForwardMany    Kind = "relation_forward_many"     // PERIOD FK -> parent connection field (roomBookingsByRoomIdAndValidAt)
@@ -113,6 +114,8 @@ func Default(kind Kind, in Input) string {
 		return inflect.UpperCamel(inflect.Singularize(in.Table)) + "UpdateInput"
 	case KindPayloadTypeName:
 		return inflect.UpperCamel(in.Column) + inflect.UpperCamel(inflect.Singularize(in.Table)) + "Payload" // Column carries the verb here
+	case KindPayloadDeletedNodeID:
+		return "deleted" + inflect.UpperCamel(inflect.Singularize(in.Table)) + "NodeId"
 	case KindRelationForward:
 		return inflect.LowerCamel(strings.TrimSuffix(strings.TrimSuffix(in.Column, "_id"), "Id"))
 	case KindRelationBackward, KindRelationForwardMany:
