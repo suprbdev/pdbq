@@ -25,7 +25,8 @@ func (p *ParamSet) Args() []any { return p.args }
 
 // SpatialValue renders a GeoJSON/WKT input value for a PostGIS column as a
 // parameterized constructor expression (e.g. ST_GeomFromGeoJSON($3)),
-// appending the single value parameter to the set.
+// appending the single value parameter to the set. The column's typmod SRID
+// applies as in postgis.ParseFor.
 //
 // CompileHook plugins writing geometry/geography columns must use this rather
 // than Add: a spatial column needs the constructor wrapper, and passing the
@@ -35,7 +36,7 @@ func (p *ParamSet) SpatialValue(col *introspect.Column, v any) (string, error) {
 	if !f.Spatial() {
 		return "", fmt.Errorf("compile: column %q is not a PostGIS type", col.Name)
 	}
-	val, err := postgis.Parse(v, f)
+	val, err := postgis.ParseFor(v, f, columnSRID(col))
 	if err != nil {
 		return "", errUser("%s", err.Error())
 	}

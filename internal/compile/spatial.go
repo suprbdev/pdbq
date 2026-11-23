@@ -21,7 +21,11 @@ import (
 // PostGIS defines only some predicates for geography; for the others a
 // geography column and its operand are both cast to geometry (planar
 // semantics).
-func (s *stmt) spatialOp(f postgis.Flavour, ref, op string, val any) (string, error) {
+//
+// srid is the column's typmod SRID (0 when unconstrained): bare WKT operands
+// are tagged with it, GeoJSON is reprojected to it, and a bounding box without
+// an explicit srid uses it.
+func (s *stmt) spatialOp(f postgis.Flavour, srid int, ref, op string, val any) (string, error) {
 	spec, ok := postgis.OpByName(op)
 	if !ok {
 		return "", errUser("unknown spatial filter operator %q", op)
@@ -40,7 +44,7 @@ func (s *stmt) spatialOp(f postgis.Flavour, ref, op string, val any) (string, er
 		return ref + " IS NOT NULL", nil
 
 	case postgis.ArgBBox:
-		box, err := s.bboxExpr(render, val)
+		box, err := s.bboxExpr(render, srid, val)
 		if err != nil {
 			return "", err
 		}
@@ -55,7 +59,7 @@ func (s *stmt) spatialOp(f postgis.Flavour, ref, op string, val any) (string, er
 		if !ok || geomVal == nil {
 			return "", errUser("%s filter requires a geometry", op)
 		}
-		geom, err := s.spatialOperand(f, geomVal)
+		geom, err := s.spatialOperand(f, srid, geomVal)
 		if err != nil {
 			return "", err
 		}
@@ -80,7 +84,7 @@ func (s *stmt) spatialOp(f postgis.Flavour, ref, op string, val any) (string, er
 		return spec.Render(ref, geom, s.param(dist)), nil
 
 	default:
-		geom, err := s.spatialOperandAs(f, render, val)
+		geom, err := s.spatialOperandAs(f, render, srid, val)
 		if err != nil {
 			return "", err
 		}
@@ -92,8 +96,8 @@ func (s *stmt) spatialOp(f postgis.Flavour, ref, op string, val any) (string, er
 // the SRID defaults (geography input is tagged 4326), but casts the expression
 // to render so a geography column compared through a geometry-only predicate
 // gets a geometry operand with the same SRID.
-func (s *stmt) spatialOperandAs(f, render postgis.Flavour, v any) (string, error) {
-	val, err := postgis.Parse(v, f)
+func (s *stmt) spatialOperandAs(f, render postgis.Flavour, srid int, v any) (string, error) {
+	val, err := postgis.ParseFor(v, f, srid)
 	if err != nil {
 		return "", errUser("%s", err.Error())
 	}
@@ -102,9 +106,10 @@ func (s *stmt) spatialOperandAs(f, render postgis.Flavour, v any) (string, error
 }
 
 // spatialOperand renders a GeoJSON/WKT operand as a parameterized PostGIS
-// value expression.
-func (s *stmt) spatialOperand(f postgis.Flavour, v any) (string, error) {
-	val, err := postgis.Parse(v, f)
+// value expression for a column of flavour f and typmod SRID srid (see
+// postgis.ParseFor).
+func (s *stmt) spatialOperand(f postgis.Flavour, srid int, v any) (string, error) {
+	val, err := postgis.ParseFor(v, f, srid)
 	if err != nil {
 		return "", errUser("%s", err.Error())
 	}
@@ -114,8 +119,8 @@ func (s *stmt) spatialOperand(f postgis.Flavour, v any) (string, error) {
 // bboxExpr renders a BBoxInput as ST_MakeEnvelope over four bind parameters.
 // The SRID is structural (an integer literal in the compiled text) exactly
 // like a page size or an enum label, so the four coordinates remain the only
-// value-carrying parts.
-func (s *stmt) bboxExpr(f postgis.Flavour, v any) (string, error) {
+// value-carrying parts. srid applies when the box names none.
+func (s *stmt) bboxExpr(f postgis.Flavour, srid int, v any) (string, error) {
 	m, ok := v.(map[string]any)
 	if !ok {
 		return "", errUser("bounding box filter must be an object")
@@ -147,7 +152,6 @@ func (s *stmt) bboxExpr(f postgis.Flavour, v any) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	srid := 0
 	if raw, ok := m["srid"]; ok && raw != nil {
 		n, err := toFloat(raw)
 		if err != nil {
@@ -206,7 +210,16 @@ func (s *stmt) nearExpr(t *introspect.Table, col string, f *ast.Field) (string, 
 	if c == nil {
 		return "", fmt.Errorf("compile: spatial order column %q not found", col)
 	}
-	return s.spatialOperand(postgis.FlavourOf(c.PGType), geom)
+	return s.spatialOperand(postgis.FlavourOf(c.PGType), columnSRID(c), geom)
+}
+
+// columnSRID returns the SRID a spatial column's type modifier enforces, or 0
+// when it is unconstrained or not spatial.
+func columnSRID(c *introspect.Column) int {
+	if c == nil || c.Spatial == nil {
+		return 0
+	}
+	return c.Spatial.SRID
 }
 
 // spatialFieldSQL renders a selected spatial column, applying the optional

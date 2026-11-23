@@ -14,7 +14,7 @@ FROM (
 -- field: updatePlaceById
 WITH __mut AS (
   UPDATE "public"."places"
-  SET "location" = ST_GeomFromEWKT($1)
+  SET "location" = ST_SetSRID(ST_GeomFromEWKT($1), 4326)
   WHERE "public"."places"."id" = $2
   RETURNING "id", "location"
 )
