@@ -196,7 +196,7 @@ func arrayJSON(ref string, c *introspect.Column) string {
 func (s *stmt) spatialArrayJSON(ref string) string {
 	elem := s.alias("g")
 	return fmt.Sprintf("CASE WHEN %s IS NULL THEN NULL ELSE (SELECT coalesce(json_agg(%s ORDER BY %s.o), '[]'::json) FROM (SELECT generate_subscripts(%s, 1) AS o) AS %s) END",
-		ref, postgis.OutputSQL("("+ref+")["+elem+".o]"), elem, ref, elem)
+		ref, postgis.OutputJSONSQL("("+ref+")["+elem+".o]"), elem, ref, elem)
 }
 
 // exprJSON renders a scalar value expression for inclusion in the JSON
@@ -211,7 +211,7 @@ func (s *stmt) exprJSON(ref string, c *introspect.Column) string {
 	if postgis.FlavourOf(c.PGType).Spatial() {
 		// PostGIS values render as WKB hex by default; the GeoJSON scalar
 		// contract is a real JSON object.
-		return postgis.OutputSQL(ref)
+		return postgis.OutputJSONSQL(ref)
 	}
 	switch c.PGType {
 	case "int8", "numeric", "money":

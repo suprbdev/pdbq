@@ -165,3 +165,54 @@ INSERT INTO `+customRangeSchema+`.readings (temp, temps, slot, moods) VALUES
 		}
 	})
 }
+
+func TestCustomRangeConstructorsHidden(t *testing.T) {
+	url := os.Getenv("PDBQ_TEST_DATABASE_URL")
+	if url == "" {
+		t.Skip("PDBQ_TEST_DATABASE_URL not set; run `make test-e2e`")
+	}
+	const schema = "rangector_e2e"
+	ctx := context.Background()
+	conn, err := pgx.Connect(ctx, url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = conn.Exec(ctx, `DROP SCHEMA IF EXISTS `+schema+` CASCADE`)
+		_ = conn.Close(ctx)
+	})
+	if _, err := conn.Exec(ctx, `
+CREATE SCHEMA `+schema+`;
+CREATE TYPE `+schema+`.floatrange AS RANGE (subtype = float8, subtype_diff = float8mi, multirange_type_name = `+schema+`.floatmultirange);
+CREATE TABLE `+schema+`.readings (id int PRIMARY KEY, temp `+schema+`.floatrange);
+CREATE FUNCTION `+schema+`.visible_fn() RETURNS int LANGUAGE sql STABLE AS 'SELECT 1';
+`); err != nil {
+		t.Fatal(err)
+	}
+	hs := testServer(t, func(cfg *config.Config) { cfg.Schema.Schemas = []string{schema} })
+	res := post(t, hs.URL, `{ __schema {
+		queryType { fields { name } }
+		mutationType { fields { name } }
+	} }`, nil)
+	requireNoErrors(t, res)
+	var sch struct {
+		QueryType, MutationType struct {
+			Fields []struct{ Name string }
+		}
+	}
+	mustUnmarshal(t, res.Data["__schema"], &sch)
+	var names []string
+	for _, root := range [][]struct{ Name string }{sch.QueryType.Fields, sch.MutationType.Fields} {
+		for _, f := range root {
+			names = append(names, f.Name)
+		}
+	}
+	if !slices.Contains(names, "visibleFn") {
+		t.Fatalf("visibleFn missing from root fields %v", names)
+	}
+	for _, n := range names {
+		if n == "floatrange" || n == "floatmultirange" {
+			t.Errorf("range constructor %q exposed as a root field", n)
+		}
+	}
+}

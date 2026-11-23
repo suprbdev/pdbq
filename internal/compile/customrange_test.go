@@ -134,7 +134,7 @@ func TestCustomRangeTypes(t *testing.T) {
 					t.Errorf("SQL lacks %q:\n%s", w, stmt.SQL)
 				}
 			}
-			if n := strings.Count(stmt.SQL, "hstore_to_jsonb("); n != tc.hstores {
+			if n := strings.Count(stmt.SQL, "hstore_to_json("); n != tc.hstores {
 				t.Errorf("SQL has %d hstore_to_jsonb calls, want %d (only the extension-typed column):\n%s", n, tc.hstores, stmt.SQL)
 			}
 		})

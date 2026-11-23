@@ -3,7 +3,7 @@ SELECT (SELECT json_build_object('start', CASE WHEN lower(__rg_1.r) IS NULL THEN
 -- args: ["1","5","[)",2]
 
 -- field: withFlag
-SELECT "ext".hstore_to_jsonb(__fn.v) AS data FROM (SELECT "public"."with_flag"("h" => "ext".hstore($1::text[])::"ext"."hstore") AS v) AS __fn
+SELECT "ext".hstore_to_json(__fn.v) AS data FROM (SELECT "public"."with_flag"("h" => "ext".hstore($1::text[])::"ext"."hstore") AS v) AS __fn
 -- args: [["a","1"]]
 
 -- field: totalNights

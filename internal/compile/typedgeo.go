@@ -62,12 +62,12 @@ func (s *stmt) typedGeometry(typeName, fieldName string) (geotype.Type, bool) {
 // subquery:
 //
 //	(SELECT <object> FROM (
-//	   SELECT ST_AsGeoJSON(__geo_v.g)::jsonb AS j, ST_SRID(__geo_v.g) AS srid [, dims]
+//	   SELECT ST_AsGeoJSON(__geo_v.g)::json AS j, ST_SRID(__geo_v.g) AS srid [, dims]
 //	   FROM (SELECT <expr> AS g) AS __geo_v
 //	 ) AS __geo WHERE __geo.j IS NOT NULL)
 //
 // The value is encoded to GeoJSON once; every nested field (x, points,
-// exterior, geometries, ...) is read back out of that jsonb, so the selection
+// exterior, geometries, ...) is read back out of that json, so the selection
 // set alone decides the SQL text. Interface-typed values dispatch on
 // __typename, built from the GeoJSON "type" member plus the dimension suffix
 // (ST_Zmflag, unless the static type fixes the dimensions).
@@ -77,7 +77,7 @@ func (s *stmt) typedGeometry(typeName, fieldName string) (geotype.Type, bool) {
 // same fields render identically and can share one CASE arm.
 func (s *stmt) typedGeometrySQL(expr string, t geotype.Type, sel ast.SelectionSet, depth int) (string, error) {
 	ctx := geoCtx{dims: quoteLiteral(t.Dims.Suffix())}
-	cols := fmt.Sprintf("ST_AsGeoJSON(%s.g)::jsonb AS j, ST_SRID(%s.g) AS srid", geoValue, geoValue)
+	cols := fmt.Sprintf("ST_AsGeoJSON(%s.g)::json AS j, ST_SRID(%s.g) AS srid", geoValue, geoValue)
 	if t.AnyDims {
 		ctx.dims = geoTop + ".dims"
 		cols += fmt.Sprintf(", CASE ST_Zmflag(%s.g::geometry) WHEN 1 THEN 'M' WHEN 2 THEN 'Z' WHEN 3 THEN 'ZM' ELSE '' END AS dims", geoValue)
@@ -197,7 +197,7 @@ func (s *stmt) geoConcrete(ctx geoCtx, n geoNode, t geotype.Type, typename strin
 	}
 	obj := buildJSONObject(pairs)
 	if t.Kind == geotype.Point {
-		obj = "CASE WHEN jsonb_array_length(" + coords + ") = 0 THEN NULL ELSE " + obj + " END"
+		obj = "CASE WHEN json_array_length(" + coords + ") = 0 THEN NULL ELSE " + obj + " END"
 	}
 	return obj, nil
 }
@@ -221,6 +221,6 @@ func (s *stmt) geoList(ctx geoCtx, parent geoNode, field string, elem geotype.Ty
 	if err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("(SELECT coalesce(json_agg(%s ORDER BY %s.i), '[]'::json) FROM jsonb_array_elements(%s) WITH ORDINALITY AS %s(v, i)%s)",
+	return fmt.Sprintf("(SELECT coalesce(json_agg(%s ORDER BY %s.i), '[]'::json) FROM json_array_elements(%s) WITH ORDINALITY AS %s(v, i)%s)",
 		obj, a, src, a, where), nil
 }

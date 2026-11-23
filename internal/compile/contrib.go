@@ -289,7 +289,7 @@ func (s *stmt) contribJSON(ref string, c *introspect.Column, sel ast.SelectionSe
 	ci := s.contrib(c)
 	switch ci.Kind {
 	case contribtype.Hstore:
-		return ci.Own.Codec.OutputSQL(ref), true
+		return ci.Own.Codec.OutputJSONSQL(ref), true
 	case contribtype.Range:
 		v := s.alias("rg")
 		return fmt.Sprintf("(SELECT %s FROM (SELECT %s AS r) AS %s WHERE %s.r IS NOT NULL)",

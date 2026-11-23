@@ -8,6 +8,7 @@ import (
 	"github.com/vektah/gqlparser/v2/ast"
 
 	"github.com/suprbdev/pdbcore/introspect"
+	"github.com/suprbdev/pdbcore/postgis"
 	"github.com/suprbdev/pdbq/internal/schema"
 )
 
@@ -108,6 +109,9 @@ func (s *stmt) groupKeyText(expr string, c *introspect.Column) string {
 	}
 	if base := strings.TrimPrefix(c.PGType, "_"); base == "json" || base == "jsonb" {
 		return "to_jsonb(" + expr + ")::text"
+	}
+	if postgis.FlavourOf(c.PGType).Spatial() {
+		return "to_jsonb(" + postgis.OutputSQL(expr) + ") #>> '{}'"
 	}
 	return "to_jsonb(" + s.exprJSON(expr, c) + ") #>> '{}'"
 }
