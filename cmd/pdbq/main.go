@@ -147,7 +147,15 @@ func queryCmd() *cobra.Command {
 					if err != nil {
 						return fmt.Errorf("marshal args for %s: %w", s.Field, err)
 					}
-					fmt.Printf("-- field: %s\n%s\n-- args: %s\n\n", s.Field, s.SQL, argsJSON)
+					fmt.Printf("-- field: %s\n%s\n-- args: %s\n", s.Field, s.SQL, argsJSON)
+					if s.Then != nil {
+						thenJSON, err := json.Marshal(s.Then.Args)
+						if err != nil {
+							return fmt.Errorf("marshal args for %s: %w", s.Field, err)
+						}
+						fmt.Printf("-- then:\n%s\n-- args: %s\n", s.Then.SQL, thenJSON)
+					}
+					fmt.Println()
 				}
 				return nil
 			}

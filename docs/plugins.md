@@ -58,6 +58,12 @@ context before hooks and compilation run, so a `CompileHook` (whose
 and operation metadata: `exec.OperationFromContext(ctx)` /
 `exec.ClaimsFromContext(ctx)`.
 
+A `compile.Statement` may carry a `Then` statement, run after it in the same
+transaction with its result as `$1` (a custom mutation whose payload reads
+tables; see [Mutations](mutations.md#what-the-payload-sees)). A
+`CompileHook` that rewrites a statement returned by `next` keeps `Then`;
+the field's value is what the last statement returns.
+
 Hooks compose middleware-style: call `next(...)` to continue the chain (the
 innermost link is pdbq's default behaviour). Ordering is deterministic —
 priority, then registration order. Users can disable any plugin by name

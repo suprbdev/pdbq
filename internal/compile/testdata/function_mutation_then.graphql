@@ -1,0 +1,64 @@
+# Custom mutation payloads that read tables compile to the call followed by a
+# Then statement reading the payload; the others stay one statement.
+mutation {
+  publishPost(input: {postId: 7, clientMutationId: "cm"}) {
+    clientMutationId
+    post {
+      id
+      title
+      nodeId
+    }
+    postEdge {
+      cursor
+      node {
+        id
+      }
+    }
+  }
+  unpublishPost(input: {postId: 1}) {
+    postEdge {
+      node {
+        author {
+          email
+        }
+      }
+    }
+  }
+  addNumbers(input: {a: 1, b: 2, clientMutationId: "cm"}) {
+    integer
+    again: integer
+    clientMutationId
+    query {
+      allPosts(first: 1) {
+        totalCount
+      }
+    }
+  }
+  publishPosts(input: {postIds: [1, 2]}) {
+    first: posts {
+      id
+    }
+    second: posts {
+      title
+    }
+    query {
+      postById(id: 1) {
+        title
+      }
+    }
+  }
+  bumpMood(input: {m: HAPPY}) {
+    mood
+    query {
+      __typename
+    }
+  }
+  touchPost(input: {postId: 1}) {
+    query {
+      __typename
+      userById(id: 1) {
+        email
+      }
+    }
+  }
+}

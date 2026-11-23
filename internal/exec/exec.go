@@ -364,6 +364,9 @@ type CompiledField struct {
 	SQL      string
 	Args     []any
 	Mutation bool
+	// Then is the statement run after this one (see
+	// compile.Statement.Then), with an empty Field.
+	Then *CompiledField
 }
 
 // CompileRequest runs the request pipeline up to (but not including)
@@ -394,7 +397,11 @@ func (e *Executor) CompileRequest(ctx context.Context, req Request) ([]CompiledF
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, CompiledField{Field: f.Alias, SQL: stmt.SQL, Args: stmt.Args, Mutation: stmt.Mutation})
+		cf := CompiledField{Field: f.Alias, SQL: stmt.SQL, Args: stmt.Args, Mutation: stmt.Mutation}
+		if t := stmt.Then; t != nil {
+			cf.Then = &CompiledField{SQL: t.SQL, Args: t.Args, Mutation: t.Mutation}
+		}
+		out = append(out, cf)
 	}
 	return out, nil
 }
@@ -455,17 +462,23 @@ type txField struct {
 // statements, or one that must roll back because a field failed to compile,
 // runs statement by statement through pgexec.RunTx (see interactiveTx): once
 // a mutation field fails, the fields after it must not run at all, and a
-// batch would already have sent them.
+// batch would already have sent them. So does an operation with a field
+// compiled to a statement pair (compile.Statement.Then), whose second
+// statement takes the first one's result.
 func (e *Executor) executeTx(ctx context.Context, op *Operation, rootFields []*ast.Field, res *Result) {
 	mutation := op.Type == ast.Mutation
 	fields := make([]txField, 0, len(rootFields))
-	stmts := 0
+	stmts, then := 0, false
 	for _, f := range rootFields {
 		tf := txField{field: f}
 		if isIntrospectionField(f.Name) {
 			tf.raw, tf.err = e.resolveIntrospection(op, f)
 		} else if tf.stmt, tf.err = e.compileField(ctx, op, f); tf.stmt != nil {
 			stmts++
+			if tf.stmt.Then != nil {
+				stmts++
+				then = true
+			}
 		}
 		fields = append(fields, tf)
 		if mutation && tf.err != nil {
@@ -473,7 +486,7 @@ func (e *Executor) executeTx(ctx context.Context, op *Operation, rootFields []*a
 			return
 		}
 	}
-	if mutation && stmts > 1 {
+	if (mutation && stmts > 1) || then {
 		e.interactiveTx(ctx, op, fields, res)
 		return
 	}
@@ -594,9 +607,9 @@ func (e *Executor) batchTx(ctx context.Context, op *Operation, fields []txField,
 }
 
 // interactiveTx runs a mutation's fields one statement at a time in a
-// pgexec.RunTx transaction. The first failing field stops the loop and
-// rolls the transaction back; the fields after it are left out of the
-// response.
+// pgexec.RunTx transaction, a field's Then statement right after its own.
+// The first failing field stops the loop and rolls the transaction back;
+// the fields after it are left out of the response.
 func (e *Executor) interactiveTx(ctx context.Context, op *Operation, fields []txField, res *Result) {
 	opts, id := e.txOptions(op)
 	// RunTx re-invokes fn on serialization failures/deadlocks (the failed
@@ -610,9 +623,7 @@ func (e *Executor) interactiveTx(ctx context.Context, op *Operation, fields []tx
 		for _, tf := range fields {
 			raw, err := tf.raw, tf.err
 			if tf.stmt != nil {
-				var b []byte
-				err = q.QueryRow(ctx, tf.stmt.SQL, tf.stmt.Args...).Scan(&b)
-				raw, err = e.fieldResult(op, tf.field, tf.stmt, b, err)
+				raw, err = e.queryStatement(ctx, q, op, tf.field, tf.stmt)
 			}
 			if err != nil {
 				res.Errors = append(res.Errors, e.gqlError(err, tf.field))
@@ -666,10 +677,36 @@ func (e *Executor) executeField(ctx context.Context, q pgexec.Querier, op *Opera
 	if err != nil {
 		return nil, err
 	}
+	if stmt.Then != nil {
+		var raw json.RawMessage
+		opts, id := e.txOptions(op)
+		err := pgexec.RunTx(ctx, e.Pool, opts, id, func(tx pgexec.Querier) error {
+			var err error
+			raw, err = e.queryStatement(ctx, tx, op, f, stmt)
+			return err
+		})
+		return raw, err
+	}
 	var raw []byte
 	start := time.Now()
 	err = q.QueryRow(ctx, stmt.SQL, stmt.Args...).Scan(&raw)
 	pgexec.Observe(ctx, e.Opts.Metrics.observer(), "query", start, err)
+	return e.fieldResult(op, f, stmt, raw, err)
+}
+
+// queryStatement runs stmt on q, then its Then statement with the data stmt
+// returned as $1, and returns the field value of the last one.
+func (e *Executor) queryStatement(ctx context.Context, q pgexec.Querier, op *Operation, f *ast.Field, stmt *compile.Statement) (json.RawMessage, error) {
+	var raw []byte
+	err := q.QueryRow(ctx, stmt.SQL, stmt.Args...).Scan(&raw)
+	for err == nil && stmt.Then != nil {
+		var data any
+		if raw != nil {
+			data = string(raw)
+		}
+		stmt, raw = stmt.Then, nil
+		err = q.QueryRow(ctx, stmt.SQL, append([]any{data}, stmt.Args...)...).Scan(&raw)
+	}
 	return e.fieldResult(op, f, stmt, raw, err)
 }
 

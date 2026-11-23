@@ -1,8 +1,10 @@
 # Mutations and payloads
 
 Every mutation returns a payload object in PostGraphile's shape. Like any
-other root field, a mutation and everything its payload selects compile into
-**one** SQL statement.
+other root field, a table mutation and everything its payload selects
+compile into **one** SQL statement. A custom mutation whose payload reads
+tables compiles into two, run in one transaction (see
+[What the payload sees](#what-the-payload-sees)).
 
 ## Table mutations
 
@@ -79,8 +81,9 @@ The `@resultFieldName <name>` [smart comment](smart-comments.md) on the
 function sets the name explicitly; an `InflectionHook` plugin can override
 the default through `inflect.KindFunctionResultField`.
 
-The function is called once, in the statement's `FROM` clause, whatever the
-payload selects (the call runs when only `clientMutationId` is selected).
+The function is called once, in the `FROM` clause of the mutation's first
+statement, whatever the payload selects (the call runs when only
+`clientMutationId` is selected).
 
 ## Edges
 
@@ -105,14 +108,42 @@ before the modification.
   table its CTEs write. Rows changed by triggers or referential actions
   (`ON DELETE CASCADE`, …) are not reflected.
 - **Custom mutations** are opaque: pdbq does not know what the function
-  writes. A `VOLATILE` function's own queries see its writes (each takes a
-  fresh snapshot), but the calling statement keeps the snapshot it started
-  with, so the payload's relations and `query` read the database **as it was
-  before the function ran**. The result field (and the edge's `node`) is the
-  value the function returned, so it reflects the function's work; a
-  relation to a row the function inserted is `null`, and `query` does not
-  see the function's changes. Return what the client needs from the
-  function, or read it in a following request.
+  writes, so the payload is read by a second statement, after the call, in
+  the same transaction. The first statement calls the function and returns
+  its result; the second builds the payload from it, and its own snapshot
+  includes the function's writes:
+
+  ```graphql
+  mutation {
+    writePost(input: {authorName: "grace", title: "Hello"}) {
+      post { id author { name } }      # the author the function inserted
+      query { allPosts { totalCount } } # counts the new post
+    }
+  }
+  ```
+
+  - The result field is the value the function returned. A returned table
+    row reaches the second statement as the row's text form, which
+    round-trips every column exactly, and is not read back from the table,
+    so the role's RLS policies do not hide a row the function returned.
+    The row's relations, computed columns and edge node, and every `query`
+    field, read the database as the function left it, under the role's
+    policies. A `SETOF` result keeps the order the function returned it
+    in.
+  - The second statement only runs when the payload reads tables: a
+    `query` field other than `__typename`, a forward relation of the
+    returned row, or a result or edge node selecting more than the
+    returned row's own columns (`id`, `nodeId`, …). Otherwise the payload
+    compiles into the call's statement: `publishPost { post { id title }
+    clientMutationId }` is one statement.
+  - The pair always runs in a transaction, also with
+    `transactions.mutations: false` (then that root field alone runs in
+    one). An error in the second statement, and a serialization failure
+    retried under `transactions.max_retries`, roll back the function's
+    writes; a retry re-runs both statements.
+  - `pdbq query --print-sql` prints the second statement after the first,
+    under a `-- then:` line. It reads the first statement's result as
+    `$1`, so its own parameters start at `$2`.
 
 ## Differences from PostGraphile
 
@@ -123,5 +154,3 @@ before the modification.
 - `query` fields compile in the core compiler: `CompileHook` plugins do not
   see them, and JWT minting applies to a custom mutation's result field, not
   to a token-returning function selected under `query`.
-- The payload of a custom mutation reads the pre-statement snapshot (see
-  above); PostGraphile resolves `query` and relations in later statements.
