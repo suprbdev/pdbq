@@ -13,7 +13,10 @@ import (
 	"github.com/suprbdev/pdbq/internal/config"
 )
 
-const watchSchema = "watch_e2e"
+const (
+	watchSchema   = "watch_e2e"
+	watchDeadline = 45 * time.Second
+)
 
 // TestWatchHotSwap boots the server through App.Handler with watch mode on
 // (the watcher starting from the boot catalog's hash) and checks that DDL in
@@ -66,7 +69,7 @@ func TestWatchHotSwap(t *testing.T) {
 
 	waitFor := func(query string) {
 		t.Helper()
-		deadline := time.Now().Add(10 * time.Second)
+		deadline := time.Now().Add(watchDeadline)
 		for {
 			res := post(t, hs.URL, query, nil)
 			if len(res.Errors) == 0 {
@@ -79,6 +82,24 @@ func TestWatchHotSwap(t *testing.T) {
 		}
 	}
 	waitFor(`{ allFirsts { totalCount } }`)
+
+	// The watcher installs its event trigger asynchronously after Handler
+	// returns; DDL committed while it installs can be missed by both the
+	// notification and the initial re-introspection.
+	triggerDeadline := time.Now().Add(watchDeadline)
+	for {
+		var n int
+		if err := conn.QueryRow(context.Background(), `SELECT count(*) FROM pg_event_trigger WHERE evtname = 'pdbq_watch'`).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		if n > 0 {
+			break
+		}
+		if time.Now().After(triggerDeadline) {
+			t.Fatal("watcher never installed its event trigger")
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
 
 	exec(`CREATE TABLE ` + watchSchema + `.second (id int PRIMARY KEY)`)
 	waitFor(`{ allSeconds { totalCount } }`)
