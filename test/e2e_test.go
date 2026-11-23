@@ -1237,8 +1237,8 @@ func TestMutationsAndRollback(t *testing.T) {
 }
 
 // sweepUsers deletes, once the test finishes (even after a Fatal), every user
-// whose email matches the LIKE pattern together with the posts and places
-// referencing them, so the read tests keep seeing the pristine fixture on a
+// whose email matches the LIKE pattern together with the posts, comments and
+// places referencing them, so the read tests keep seeing the pristine fixture on a
 // rerun against the same database.
 func sweepUsers(t *testing.T, pattern string) {
 	t.Helper()
@@ -1256,6 +1256,7 @@ func sweepUsers(t *testing.T, pattern string) {
 		defer func() { _ = conn.Close(ctx) }()
 		for _, q := range []string{
 			`DELETE FROM places WHERE owner_id IN (SELECT id FROM users WHERE email LIKE $1)`,
+			`DELETE FROM comments WHERE post_id IN (SELECT p.id FROM posts p JOIN users u ON u.id = p.author_id WHERE u.email LIKE $1)`,
 			`DELETE FROM posts WHERE author_id IN (SELECT id FROM users WHERE email LIKE $1)`,
 			`DELETE FROM users WHERE email LIKE $1`,
 		} {
@@ -2215,11 +2216,9 @@ func TestRelationNameFallback(t *testing.T) {
 		t.Errorf("nested connect: got %s want %s", got, want)
 	}
 
-	res = post(t, hs.URL, `mutation { createRnMemo(input: {id: 2, body: "y", rnUserByUserEmail: {create: {email: "n@b.c", name: "Nat"}}}) { rnMemo { userEmail } } }`, nil)
+	res = post(t, hs.URL, `mutation { createRnMemo(input: {id: 2, body: "y", rnUserByUserEmail: {create: {email: "n@b.c", name: "Nat"}}}) { rnMemo { userEmail rnUserByUserEmail { name } } } }`, nil)
 	requireNoErrors(t, res)
-	res = post(t, hs.URL, `{ rnMemoById(id: 2) { userEmail rnUserByUserEmail { name } } }`, nil)
-	requireNoErrors(t, res)
-	if got, want := normalize(t, res.Data["rnMemoById"]), normalizeStr(t, `{"userEmail": "n@b.c", "rnUserByUserEmail": {"name": "Nat"}}`); got != want {
+	if got, want := normalize(t, res.Data["createRnMemo"]), normalizeStr(t, `{"rnMemo": {"userEmail": "n@b.c", "rnUserByUserEmail": {"name": "Nat"}}}`); got != want {
 		t.Errorf("nested create: got %s want %s", got, want)
 	}
 

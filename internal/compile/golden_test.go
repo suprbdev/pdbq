@@ -155,8 +155,8 @@ func functionFixtures() []*introspect.Function {
 // regenerate. Documents named spatial_typed_* compile against the schema
 // built with plugins.settings.postgis.typed_geometry on, temporal_* ones
 // against the catalog extended with temporalTables, through the
-// advanced-filters and nested-mutations plugins, contrib_* against the
-// contrib fixture catalog with the contrib plugin.
+// advanced-filters and nested-mutations plugins (nested_* ones too), contrib_*
+// against the contrib fixture catalog with the contrib plugin.
 func TestGolden(t *testing.T) {
 	plain := build(t)
 	typed := buildWith(t, map[string]any{"typed_geometry": true})
@@ -177,7 +177,7 @@ func TestGolden(t *testing.T) {
 			built = contribBuilt
 		}
 		compileFn := compile.New(built).Compile
-		if strings.HasPrefix(name, "temporal") {
+		if strings.HasPrefix(name, "temporal") || strings.HasPrefix(name, "nested_") {
 			built = temporal
 			compileFn = temporalReg.CompileChain(nil, compile.New(built).Compile)
 		}
