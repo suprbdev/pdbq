@@ -93,7 +93,7 @@ func TestNestedMutationVisibility(t *testing.T) {
 			t.Skip("backward create failed")
 		}
 		res := post(t, hs.URL, fmt.Sprintf(`mutation {
-			createPost(input: {title: "Kid C", author: {connect: {id: %d}}, commentsByPostId: {create: [{body: "gc"}]}}) {
+			createPost(input: {title: "Kid C", author: {connectById: {id: %d}}, commentsByPostId: {create: [{body: "gc"}]}}) {
 				post {
 					title
 					author { postsByAuthorId(orderBy: TITLE_ASC) { totalCount nodes { title } } }
@@ -169,7 +169,7 @@ func TestNestedMutationVisibilityRLS(t *testing.T) {
 
 	t.Run("connected parent lists readable rows only", func(t *testing.T) {
 		res := asGrace(t, fmt.Sprintf(`mutation {
-			createNvItem(input: {body: "grace-new", ownerId: 2, list: {connect: {id: %d}}}) {
+			createNvItem(input: {body: "grace-new", ownerId: 2, list: {connectById: {id: %d}}}) {
 				nvItem { list { name nvItemsByListId { totalCount nodes { body } } } }
 			}
 		}`, listID))

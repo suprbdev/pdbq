@@ -2,6 +2,7 @@ package compile
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/vektah/gqlparser/v2/ast"
 
@@ -66,6 +67,17 @@ func (p *ParamSet) Value(built *schema.Built, col *introspect.Column, v any) (st
 	return p.Add(coerceInput(built, col, v)), nil
 }
 
+// KeyValue renders a decoded nodeId key value (see DecodeNodeID) for col as
+// a parameterized SQL expression: json.Number values are passed as text,
+// enum and jsonb values are coerced, and contrib-owned types take their
+// codec expression, as for the core node(nodeId:) lookup.
+func (p *ParamSet) KeyValue(built *schema.Built, col *introspect.Column, v any) string {
+	s := &stmt{c: &Compiler{Built: built}, args: p.args}
+	sql := s.keyValue(col, v)
+	p.args = s.args
+	return sql
+}
+
 // EqualOperator returns the equality operator to compare col with a value
 // rendered by ParamSet.Value: "=", or the schema-qualified operator of an
 // extension type (OPERATOR("ext".=) for citext, hstore, ltree), without
@@ -75,6 +87,23 @@ func EqualOperator(built *schema.Built, col *introspect.Column) string {
 	return contribFor(built, col).Operator("=")
 }
 
+// DecodeNodeID parses a global identifier into its GraphQL type name and
+// primary key values, in primary-key column order. A malformed nodeId is a
+// UserError.
+func DecodeNodeID(nodeID string) (string, []any, error) {
+	return decodeNodeID(nodeID)
+}
+
+// UserErrorf builds a compile error whose message is safe to return to API
+// clients (see UserError). The message must not name tables, columns or SQL
+// types; GraphQL field and argument names typed by the client are fine.
+func UserErrorf(format string, args ...any) error {
+	return &UserError{msg: fmt.Sprintf(format, args...)}
+}
+
+// QuoteLiteral renders s as a SQL string literal.
+func QuoteLiteral(s string) string { return quoteLiteral(s) }
+
 // MutationWithCTEs compiles the payload selection of a mutation root field
 // against a caller-supplied CTE chain. The chain's final CTE must be named
 // __mut and yield the mutated row(s); params created via ps are preserved
@@ -83,7 +112,33 @@ func EqualOperator(built *schema.Built, col *introspect.Column) string {
 // while reusing payload/relation compilation.
 // overrides remaps "schema.table" row sources to CTE names so the payload
 // can see rows inserted by the supplied CTEs (same-snapshot rule).
-func (c *Compiler) MutationWithCTEs(req *Request, f *ast.Field, meta *schema.FieldMeta, ctes string, ps *ParamSet, overrides map[string]string) (*Statement, error) {
+// guards are as for MutationStatement.
+func (c *Compiler) MutationWithCTEs(req *Request, f *ast.Field, meta *schema.FieldMeta, ctes string, ps *ParamSet, overrides map[string]string, guards ...string) (*Statement, error) {
+	payload, err := c.MutationPayload(req, f, meta, ps, overrides)
+	if err != nil {
+		return nil, err
+	}
+	return MutationStatement(ctes, payload.SQL, ps, guards), nil
+}
+
+// MutationPayload is the payload SELECT of a mutation root field compiled
+// for a caller-built CTE chain (see Compiler.MutationPayload).
+type MutationPayload struct {
+	SQL string
+	// Aliases lists, per row source the payload reads ("__mut" and the
+	// override CTEs it references), the aliases it reads that source
+	// through; ReferencedColumns turns them into the columns it needs.
+	Aliases map[string][]string
+}
+
+// MutationPayload compiles the payload selection of a mutation root field
+// against the __mut CTE and the overrides ("schema.table" -> CTE name),
+// appending its params to ps. A CompileHook plugin can then narrow its CTEs'
+// RETURNING and projection lists to the columns the payload reads before
+// assembling the statement with MutationStatement: RETURNING and SELECT
+// need the SELECT privilege per projected column, so * fails for roles
+// holding column-level grants.
+func (c *Compiler) MutationPayload(req *Request, f *ast.Field, meta *schema.FieldMeta, ps *ParamSet, overrides map[string]string) (*MutationPayload, error) {
 	s := &stmt{c: c, req: req, maxDepth: req.MaxDepth, maxPageSize: req.MaxPageSize, args: ps.args, overrides: overrides}
 	if s.maxDepth <= 0 {
 		s.maxDepth = 50
@@ -105,11 +160,36 @@ func (c *Compiler) MutationWithCTEs(req *Request, f *ast.Field, meta *schema.Fie
 	if payload, err = s.resolveRanks(payload); err != nil {
 		return nil, err
 	}
-	return &Statement{
-		SQL:      fmt.Sprintf("WITH %s\n%s", ctes, payload),
-		Args:     s.args,
-		Mutation: true,
-	}, nil
+	ps.args = s.args
+	aliases := make(map[string][]string, len(s.overrideAliases)+1)
+	for src, as := range s.overrideAliases {
+		aliases[src] = as
+	}
+	aliases["__mut"] = s.mutAliases
+	return &MutationPayload{SQL: payload, Aliases: aliases}, nil
+}
+
+// MutationStatement assembles a mutation statement from a CTE chain and its
+// payload SELECT, with the args collected in ps.
+//
+// guards are boolean SQL expressions over the CTEs that must all hold; a
+// guard either yields true or raises an error, so a failed guard aborts the
+// whole statement. They are evaluated in a materialized CTE scanned as the
+// outer side of a lateral join with the payload, so they run even when the
+// payload yields no row.
+func MutationStatement(ctes, payload string, ps *ParamSet, guards []string) *Statement {
+	sql := fmt.Sprintf("WITH %s\n%s", ctes, payload)
+	if len(guards) > 0 {
+		sql = fmt.Sprintf("WITH %s,\n__guard AS MATERIALIZED (\n  SELECT %s AS ok\n)\nSELECT __guarded.data\nFROM __guard\nLEFT JOIN LATERAL (\n%s\n) AS __guarded ON true\nWHERE __guard.ok",
+			ctes, strings.Join(guards, "\n    AND "), indent(payload))
+	}
+	return &Statement{SQL: sql, Args: ps.args, Mutation: true}
+}
+
+// ReferencedColumns returns, in table order, the columns of t that sql
+// references through one of aliases (see MutationPayload.Aliases).
+func ReferencedColumns(t *introspect.Table, sql string, aliases []string) []string {
+	return referencedColumns(t, sql, aliases)
 }
 
 // FieldMeta exposes metadata lookup to plugins.

@@ -804,6 +804,14 @@ func (b *Builder) GraphQLTypeFor(c *introspect.Column) string {
 	return b.gqlTypeForColumn(c)
 }
 
+// GraphQLInputTypeFor returns the GraphQL input type a column takes in
+// mutation inputs and key arguments (without the non-null marker), e.g. a
+// composite's input type or a range's bound input — exported for SchemaHook
+// plugins adding column-valued input fields (e.g. nested-mutations keys).
+func (b *Builder) GraphQLInputTypeFor(c *introspect.Column) string {
+	return b.gqlInputTypeForColumn(c)
+}
+
 // FilterOpsInputFor returns (creating if needed) the operator input type for
 // a column-shaped value — exported for SchemaHook plugins adding filterable
 // fields (e.g. advanced-filters computed columns).

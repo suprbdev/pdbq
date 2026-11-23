@@ -1,0 +1,15 @@
+# variables: {"c": "WyJDb21tZW50IiwyXQ=="}
+mutation($c: ID!) {
+  updatePostById(id: 1, patch: {title: "T", author: {connectByEmail: {email: "ada@example.com"}}, commentsByPostId: {updateByNodeId: [{nodeId: $c, commentPatch: {body: "edited"}}], deleteById: [{id: 3}]}}) {
+    post { title author { email } commentsByPostId { totalCount nodes { body } } }
+  }
+  updateCommentById(id: 5, patch: {parent: {disconnectById: {id: 4}}, commentsByParentId: {connectById: [{id: 6}], disconnectById: [{id: 7}]}}) {
+    comment { parentId commentsByParentId { nodes { id } } }
+  }
+  updateUserById(id: 1, patch: {placesByOwnerId: {create: [{name: "Home"}]}}) {
+    user { placesByOwnerId { totalCount } }
+  }
+  updatePlaceById(id: 1, patch: {owner: {updateById: {id: 2, userPatch: {fullName: "G"}}, deleteByEmail: {email: "x@example.com"}}}) {
+    place { owner { fullName } }
+  }
+}

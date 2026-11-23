@@ -103,12 +103,11 @@ Checklist of PostgreSQL and GraphQL features pdbq supports. Checked = implemente
 - [x] Generated/identity columns excluded from inputs; defaulted columns optional
 - [x] Privilege-gated generation (no INSERT grant → no create mutation)
 - [x] Not-found update/delete → GraphQL error, transaction rolled back
-- [x] Nested mutations via built-in plugin: `create`/`connect` of FK parents, nested `create` of children, multi-CTE single statement, bounded depth, forced transaction
+- [x] Nested mutations via built-in plugin (postgraphile-plugin-nested-mutations shapes): `connectBy<Key>`/`connectByNodeId`, `create`, `updateBy<Key>`/`updateByNodeId`, `deleteBy<Key>`/`deleteByNodeId`, `disconnectBy<Key>`/`disconnectByNodeId` on forward and backward relations, on create and update mutations; multi-CTE single statement, bounded depth, forced transaction
 - [x] Update/delete by unique constraints (`updateUserByEmail`, `deleteUserByEmail`, mirroring the lookup surface)
 - [x] Upsert (`ON CONFLICT`) — `upsert<Type>By<Unique>(input:)` per non-generated key target; provided non-key columns update from `EXCLUDED`
 - [x] Bulk mutations (`createUsers(input: [...])`, `updateUsers(filter:, patch:)`, `deleteUsers(filter:)`; payload = mutated rows + `affectedCount`)
 - [x] `clientMutationId` passthrough (Relay classic)
-- [ ] Nested `connect` on reverse relations and nested update/delete/disconnect
 
 ## Functions as fields
 

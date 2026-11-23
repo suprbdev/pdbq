@@ -192,7 +192,7 @@ func TestTemporal(t *testing.T) {
 	t.Run("nested mutations follow the PERIOD foreign key", func(t *testing.T) {
 		query(t, `mutation { createBookingNote(input: {
 			validAt: {start: {value: "2026-03-04", inclusive: true}, end: {value: "2026-03-06", inclusive: false}}, note: "Connected", authorId: 1,
-			roomBookingsByRoomIdAndValidAt: {connect: {roomId: 1}}
+			roomBookingsByRoomIdAndValidAt: {connectByRoomId: {roomId: 1}}
 		}) { bookingNote { note roomId roomBookingsByRoomIdAndValidAt { nodes { guest } } } } }`,
 			`{"createBookingNote":{"bookingNote":{"note":"Connected","roomBookingsByRoomIdAndValidAt":{"nodes":[{"guest":"Ada"},{"guest":"Grace"}]},"roomId":1}}}`)
 		query(t, `mutation { createRoomBooking(input: {
@@ -200,6 +200,18 @@ func TestTemporal(t *testing.T) {
 			bookingNotesByRoomIdAndValidAt: {create: [{validAt: {start: {value: "2026-05-02", inclusive: true}, end: {value: "2026-05-03", inclusive: false}}, note: "Nested", authorId: 2}]}
 		}) { roomBooking { guest bookingNotesByRoomIdAndValidAt { nodes { note roomId } } } } }`,
 			`{"createRoomBooking":{"roomBooking":{"bookingNotesByRoomIdAndValidAt":{"nodes":[{"note":"Nested","roomId":3}]},"guest":"Barbara"}}}`)
+	})
+
+	t.Run("nested operations by the full temporal key", func(t *testing.T) {
+		query(t, `mutation { updateRoomBookingByRoomIdAndValidAt(roomId: 1, validAt: {start: {value: "2026-03-05", inclusive: true}, end: {value: "2026-03-10", inclusive: false}},
+			patch: {bookingNotesByRoomIdAndValidAt: {updateById: [{id: 1, bookingNotePatch: {note: "Spans both!"}}]}}) {
+			roomBooking { bookingNotesByRoomIdAndValidAt(orderBy: ID_ASC) { nodes { note } } } } }`,
+			`{"updateRoomBookingByRoomIdAndValidAt":{"roomBooking":{"bookingNotesByRoomIdAndValidAt":{"nodes":[{"note":"Spans both!"},{"note":"Connected"}]}}}}`)
+		query(t, `mutation { createBookingNote(input: {
+			validAt: {start: {value: "2026-03-06", inclusive: true}, end: {value: "2026-03-07", inclusive: false}}, note: "Keyed", authorId: 1,
+			roomBookingsByRoomIdAndValidAt: {connectByRoomIdAndValidAt: {roomId: 1, validAt: {start: {value: "2026-03-05", inclusive: true}, end: {value: "2026-03-10", inclusive: false}}}}
+		}) { bookingNote { roomId roomBookingsByRoomIdAndValidAt { nodes { guest } } } } }`,
+			`{"createBookingNote":{"bookingNote":{"roomBookingsByRoomIdAndValidAt":{"nodes":[{"guest":"Grace"}]},"roomId":1}}}`)
 	})
 
 	t.Run("update by the full temporal key", func(t *testing.T) {

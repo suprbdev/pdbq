@@ -18,7 +18,7 @@ mutation {
       }
     }
   }
-  createPost(input: {title: "Connected", author: {connect: {id: 1}}, commentsByPostId: {create: [{body: "c"}]}}) {
+  createPost(input: {title: "Connected", author: {connectById: {id: 1}}, commentsByPostId: {create: [{body: "c"}]}}) {
     post { title author { email postsByAuthorId { totalCount } } commentsByPostId { nodes { body } } }
   }
 }

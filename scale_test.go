@@ -119,10 +119,10 @@ func TestScaleSDLStable(t *testing.T) {
 		hub, indexedOnly, aggregates bool
 		want                         string
 	}{
-		{"random-indexed", false, true, false, "22e534c01f1aaf8e21a72523cedb2d843cfcf64f570d82de134170ba53db75bd"},
-		{"random-all", false, false, false, "c7b59285d8f8055ec26b9c6be602a6d9459a30f0e2e425ba128daefe1c408c0b"},
-		{"hub-all", true, false, false, "86f7d48743f166022f8fc9ae4b06241809b6c38d846048ce8f15b49aa9962d23"},
-		{"hub-aggregates", true, true, true, "d3e7789284501171629caef7b45d7fb5c9e3bbce3e05dabd44b267856f865ec6"},
+		{"random-indexed", false, true, false, "d798ab0f277480222e1ead2150c069af8b721c338d2729fa84ba24cd9a841428"},
+		{"random-all", false, false, false, "2f9ebf3b3c20de5e705075ccf1de2db9509074576d391b20216643dd624b44ab"},
+		{"hub-all", true, false, false, "9e87c48ce194b61f3e65955671fe36c42fba8907785172f87c733db633b446f3"},
+		{"hub-aggregates", true, true, true, "d3a16f09a228d2dd4bc7deccd3ad58cf6b8a6cd0cf67ade7eaa0d53bc7ca9d69"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

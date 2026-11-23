@@ -87,6 +87,17 @@ Two consequences for generated mutations:
   column to a claim setting directly), or split the creates into separate
   mutations.
 
+- **Nested operations run under the same policies.** A nested
+  `connectBy…`/`updateBy…`/`deleteBy…` whose row the role's `UPDATE` or
+  `DELETE` policy (or, for a forward `connect`, `SELECT` policy) filters out
+  matches nothing, which fails and rolls back the whole mutation
+  (`nested-mutations: … matched 0 rows`); a filtered `disconnectBy…` leaves
+  the row as it was. An update mutation whose patch only carries nested
+  fields still locks its row with `SELECT … FOR UPDATE`, so it needs the
+  `UPDATE` privilege and passes the `UPDATE` policies like any update. The
+  statement selects and returns only the columns the payload and the
+  nested operations read, so roles with column-level `SELECT` grants work.
+
 ## Restricting assumable roles
 
 By default any role named in the role claim may be assumed (the database
