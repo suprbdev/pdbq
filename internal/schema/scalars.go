@@ -5,6 +5,27 @@ import "github.com/suprbdev/pdbcore/postgis"
 // Custom scalar names emitted into every schema.
 var customScalars = []string{"BigInt", "BigFloat", "Datetime", "Date", "Time", "UUID", "JSON", "Cursor"}
 
+// RangeElementType returns the element type of a built-in range or
+// multirange type (daterange -> date, tstzmultirange -> timestamptz), or ""
+// for any other type, including user-defined ranges.
+func RangeElementType(pgType string) string {
+	switch pgType {
+	case "int4range", "int4multirange":
+		return "int4"
+	case "int8range", "int8multirange":
+		return "int8"
+	case "numrange", "nummultirange":
+		return "numeric"
+	case "tsrange", "tsmultirange":
+		return "timestamp"
+	case "tstzrange", "tstzmultirange":
+		return "timestamptz"
+	case "daterange", "datemultirange":
+		return "date"
+	}
+	return ""
+}
+
 // scalarFor maps a canonical pg_type name to a GraphQL scalar. Enums and
 // composites are resolved by the builder (gqlTypeForColumn) before this is
 // consulted.

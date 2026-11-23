@@ -91,6 +91,11 @@ func (p *Plugin) Inflect(kind inflect.Kind, in inflect.Input, next inflect.Next)
 		if name := p.Index().Constraint(in.Schema, in.Constraint).First("fieldName"); name != "" {
 			return name
 		}
+	case inflect.KindRelationForwardMany:
+		if name := p.Index().Constraint(in.Schema, in.Constraint).First("fieldName"); name != "" {
+			return name
+		}
+		in.Table = p.Index().RenamedTable(in.Schema, in.Table)
 	case inflect.KindRelationBackward:
 		if name := p.Index().Constraint(in.Schema, in.Constraint).First("foreignFieldName"); name != "" {
 			return name

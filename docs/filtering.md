@@ -125,7 +125,9 @@ from the column:
 - **Reverse** (FK pointing back at the ordered table): rows sort by an
   aggregate over the referencing rows — `MIN(column)` for `_ASC` values,
   `MAX(column)` for `_DESC`. Rows with no related row yield `NULL`
-  (PostgreSQL default: last under `ASC`, first under `DESC`).
+  (PostgreSQL default: last under `ASC`, first under `DESC`). A forward
+  temporal (`PERIOD`) foreign key aggregates the same way, since a child can
+  reference several parent rows (see [Temporal keys](temporal.md)).
 
 The related table's columns pass through the same
 [indexed-only policy](#the-indexed-only-policy) as its own `orderBy` enum,

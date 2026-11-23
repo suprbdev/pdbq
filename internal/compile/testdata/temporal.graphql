@@ -1,0 +1,20 @@
+{
+  allBookingNotes(
+    filter: {roomBookingsByRoomIdAndValidAt: {some: {roomId: {equalTo: 1}}, none: {roomId: {equalTo: 9}}}, authorExists: true}
+    orderBy: [ROOM_BOOKINGS_BY_ROOM_ID_AND_VALID_AT__ROOM_ID_DESC]
+  ) {
+    nodes {
+      note
+      validAt
+      author { email }
+      roomBookingsByRoomIdAndValidAt(first: 5) { totalCount nodes { guest validAt } }
+    }
+  }
+  allRoomBookings {
+    nodes { nodeId guest bookingNotesByRoomIdAndValidAt { nodes { note } } }
+  }
+  roomBookingByRoomId(roomId: 1, at: "2026-03-02") { guest validAt }
+  noteless: allRoomBookings(filter: {bookingNotesByRoomIdAndValidAtExist: false}) { totalCount }
+  periodless: allBookingNotes(filter: {roomBookingsByRoomIdAndValidAtExist: false}) { totalCount }
+  cover: allRoomBookings(orderBy: [BOOKING_NOTES_BY_ROOM_ID_AND_VALID_AT__ID_ASC]) { nodes { guest } }
+}

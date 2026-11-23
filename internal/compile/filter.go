@@ -199,7 +199,7 @@ func (s *stmt) relationCond(rel *schema.FilterRelation, v any, alias string) (st
 		}
 		return s.relationExists(rel, map[string]any{}, alias, quant)
 	}
-	if rel.Forward {
+	if rel.Forward && rel.FK.ReferencesOne() {
 		return s.relationExists(rel, v, alias, "some")
 	}
 	m, ok := v.(map[string]any)
@@ -233,21 +233,16 @@ func (s *stmt) relationCond(rel *schema.FilterRelation, v any, alias string) (st
 // every = NOT EXISTS(NOT match).
 func (s *stmt) relationExists(rel *schema.FilterRelation, v any, alias, quant string) (string, error) {
 	sub := s.alias("r")
-	var joins []string
-	for i, col := range rel.FK.Columns {
-		if rel.Forward {
-			joins = append(joins, fmt.Sprintf("%s.%s = %s.%s",
-				sub, quoteIdent(rel.FK.RefColumns[i]), alias, quoteIdent(col)))
-		} else {
-			joins = append(joins, fmt.Sprintf("%s.%s = %s.%s",
-				sub, quoteIdent(col), alias, quoteIdent(rel.FK.RefColumns[i])))
-		}
+	var where string
+	if rel.Forward {
+		where = fkJoinSQL(rel.FK, alias, sub, true)
+	} else {
+		where = fkJoinSQL(rel.FK, sub, alias, false)
 	}
 	cond, err := s.filterCond(rel.Table, rel.FilterType, v, sub)
 	if err != nil {
 		return "", err
 	}
-	where := strings.Join(joins, " AND ")
 	if quant == "every" {
 		if cond == "" {
 			return "", nil // every row trivially matches an empty filter

@@ -99,6 +99,11 @@ pattern: the plugin implements only `SchemaHook`, yet changes compiled SQL.
   computed columns become function calls over the current row — and stays
   inert when they are empty, so disabling the plugin removes the feature
   end to end. No `CompileHook` needed.
+- Forward relation names come from `Builder.ForwardRelationName`, which
+  inflects `KindRelationForward`, or `KindRelationForwardMany` for a
+  temporal (`PERIOD`) foreign key; such a key may reference several rows
+  (`ForeignKey.ReferencesOne()` is false), so it gets the reverse-relation
+  shapes (see [Temporal keys](temporal.md)).
 
 The halves toggle independently:
 `plugins.settings.advanced-filters.relations` and `...computed` (both default

@@ -11,6 +11,7 @@ Checklist of PostgreSQL and GraphQL features pdbq supports. Checked = implemente
 - [x] Primary keys
 - [x] Unique constraints
 - [x] Foreign keys (including multi-column)
+- [x] PostgreSQL 18 temporal keys (`WITHOUT OVERLAPS`), temporal foreign keys (`PERIOD`) and `NOT ENFORCED` foreign keys — see [Temporal keys](temporal.md)
 - [x] Indexes (name, columns, uniqueness, method) — drives the filter policy
 - [x] Enums
 - [x] Functions (args, return type, set-returning, volatility)
@@ -56,8 +57,10 @@ Checklist of PostgreSQL and GraphQL features pdbq supports. Checked = implemente
 - [x] Node interface / global object identification (`nodeId: ID!`, Relay `node(nodeId:)`)
 - [x] Single-row lookup by primary key (`userById`)
 - [x] Single-row lookup per unique constraint (`userByEmail`)
+- [x] Point-in-time lookup per temporal key (`roomBookingByRoomId(roomId:, at:)` → `valid_at @> $n`; no exact-tuple lookup or upsert for `WITHOUT OVERLAPS` keys)
 - [x] Forward relations (FK → parent object field)
 - [x] Backward relations (FK → child connection field with full connection args)
+- [x] Temporal (`PERIOD`) foreign keys joined by overlap (`&&`) in every relation surface; the forward side is a connection (a child may reference several parent rows)
 - [x] Arbitrarily nested relation selections, compiled to one SQL statement (lateral joins, no N+1)
 - [x] Field aliases and `__typename`
 - [x] Named + inline fragments

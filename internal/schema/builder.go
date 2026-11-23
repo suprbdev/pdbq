@@ -3,6 +3,7 @@ package schema
 import (
 	"fmt"
 	"log/slog"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -451,10 +452,19 @@ func (b *Builder) addRelations(t *introspect.Table) {
 		if ref == nil || !ok {
 			continue
 		}
-		name := b.Inflect(inflect.KindRelationForward, inflect.Input{
-			Schema: t.Schema, Table: fk.RefTable, Column: fk.Columns[0], Columns: fk.Columns,
-			Constraint: fk.Name,
-		})
+		if !fk.ReferencesOne() {
+			b.addRootField(obj, &Field{
+				Name: b.ForwardRelationName(t, fk),
+				Type: b.ensureConnection(ref) + "!",
+				Args: b.connectionArgs(ref, "", "", ""),
+				Meta: &FieldMeta{
+					Kind: KindRelationForward, Table: ref, FK: fk,
+					CostMultiplier: costMultiplier(fk.Comment),
+				},
+			})
+			continue
+		}
+		name := b.ForwardRelationName(t, fk)
 		if obj.Field(name) != nil {
 			name += "Row"
 		}
@@ -488,6 +498,22 @@ func (b *Builder) addRelations(t *introspect.Table) {
 			})
 		}
 	}
+}
+
+// ForwardRelationName returns the name of the relation field following fk
+// from t to the referenced table: [inflect.KindRelationForward] for a key
+// referencing one row, [inflect.KindRelationForwardMany] for a PERIOD key.
+// SchemaHook plugins adding surface keyed by the relation (filters, nested
+// inputs) use it so their names line up with the selection field.
+func (b *Builder) ForwardRelationName(t *introspect.Table, fk *introspect.ForeignKey) string {
+	kind := inflect.KindRelationForward
+	if !fk.ReferencesOne() {
+		kind = inflect.KindRelationForwardMany
+	}
+	return b.Inflect(kind, inflect.Input{
+		Schema: t.Schema, Table: fk.RefTable, Column: fk.Columns[0], Columns: fk.Columns,
+		Constraint: fk.Name,
+	})
 }
 
 // filterableColumns applies the indexed-only policy plus config overrides.
@@ -746,26 +772,23 @@ func (b *Builder) addQueries(t *introspect.Table, filterName, orderName, conditi
 		Meta:        &FieldMeta{Kind: KindConnectionQuery, Table: t},
 	})
 
-	// Single-row lookups by PK and by each unique constraint.
-	lookups := []*introspect.Constraint{}
-	if t.PrimaryKey != nil {
-		lookups = append(lookups, t.PrimaryKey)
-	}
-	lookups = append(lookups, t.Uniques...)
+	// Single-row lookups by PK and by each unique constraint; temporal
+	// (WITHOUT OVERLAPS) keys get a point-in-time lookup instead.
 	seen := map[string]bool{}
-	for i, con := range lookups {
+	for _, con := range b.lookupKeys(t) {
 		kind := inflect.KindRowByUniqueField
-		if i == 0 && t.PrimaryKey != nil {
+		if con == t.PrimaryKey {
 			kind = inflect.KindRowByPKField
 		}
-		name := b.Inflect(kind, inflect.Input{Schema: t.Schema, Table: t.Name, Columns: con.Columns})
+		keyCols := con.EqualityColumns()
+		name := b.Inflect(kind, inflect.Input{Schema: t.Schema, Table: t.Name, Columns: keyCols})
 		if seen[name] {
 			continue
 		}
 		seen[name] = true
 		var args []Arg
 		ok := true
-		for _, cn := range con.Columns {
+		for _, cn := range keyCols {
 			c := t.Column(cn)
 			if c == nil {
 				ok = false
@@ -779,13 +802,45 @@ func (b *Builder) addQueries(t *introspect.Table, filterName, orderName, conditi
 		if !ok {
 			continue
 		}
+		meta := &FieldMeta{Kind: KindRowByKey, Table: t, KeyColumns: keyCols}
+		desc := ""
+		if period := con.PeriodColumn(); period != "" {
+			if slices.ContainsFunc(args, func(a Arg) bool { return a.Name == "at" }) {
+				continue
+			}
+			args = append(args, Arg{
+				Name:        "at",
+				Type:        scalarFor(RangeElementType(t.Column(period).PGType)) + "!",
+				Description: "Value the row's " + b.Inflect(inflect.KindFieldName, inflect.Input{Table: t.Name, Column: period}) + " range must contain.",
+			})
+			meta.PeriodColumn = period
+			desc = "Reads the " + typeName + " whose period contains the given point."
+		}
 		b.addRootField(b.Query, &Field{
-			Name: name,
-			Type: typeName,
-			Args: args,
-			Meta: &FieldMeta{Kind: KindRowByKey, Table: t, KeyColumns: con.Columns},
+			Name:        name,
+			Type:        typeName,
+			Description: desc,
+			Args:        args,
+			Meta:        meta,
 		})
 	}
+}
+
+// lookupKeys returns the keys single-row lookups are generated for: the row
+// keys (see [introspect.Table.RowKeys]) followed by the temporal keys whose
+// period column is a built-in range or multirange, which are looked up by
+// their equality columns plus a contained point.
+func (b *Builder) lookupKeys(t *introspect.Table) []*introspect.Constraint {
+	keys := t.RowKeys()
+	for _, con := range append([]*introspect.Constraint{t.PrimaryKey}, t.Uniques...) {
+		if con == nil || !con.WithoutOverlaps {
+			continue
+		}
+		if c := t.Column(con.PeriodColumn()); c != nil && !c.IsArray && RangeElementType(c.PGType) != "" {
+			keys = append(keys, con)
+		}
+	}
+	return keys
 }
 
 func (b *Builder) addMutations(t *introspect.Table, filterName string) {
@@ -882,7 +937,7 @@ func (b *Builder) addMutations(t *introspect.Table, filterName string) {
 		inputName := b.Inflect(inflect.KindCreateInput, inflect.Input{Schema: t.Schema, Table: t.Name})
 		if _, ok := b.Inputs[inputName]; ok {
 			seen := map[string]bool{}
-			for i, con := range targets {
+			for _, con := range t.RowKeys() {
 				// A conflict target must be settable through the create input;
 				// generated (identity) key columns rule the target out.
 				usable := true
@@ -897,7 +952,7 @@ func (b *Builder) addMutations(t *introspect.Table, filterName string) {
 					continue
 				}
 				kind := inflect.KindUpsertByUniqueMutation
-				if i == 0 && t.PrimaryKey != nil {
+				if con == t.PrimaryKey {
 					kind = inflect.KindUpsertMutation
 				}
 				name := b.Inflect(kind, inflect.Input{Schema: t.Schema, Table: t.Name, Columns: con.Columns})
