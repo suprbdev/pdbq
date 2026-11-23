@@ -69,11 +69,9 @@ func (s *stmt) rowJSONAs(typeName string, sel ast.SelectionSet, alias string, de
 				pairs = append(pairs, key, expr)
 				continue
 			}
-			if !meta.Column.IsArray {
-				if expr, ok := s.contribJSON(alias+"."+quoteIdent(meta.Column.Name), meta.Column, f.SelectionSet); ok {
-					pairs = append(pairs, key, expr)
-					continue
-				}
+			if expr, ok := s.contribJSON(alias+"."+quoteIdent(meta.Column.Name), meta.Column, f.SelectionSet); ok {
+				pairs = append(pairs, key, expr)
+				continue
 			}
 			pairs = append(pairs, key, s.columnJSON(alias, meta.Column))
 		case schema.KindFullTextRank:
@@ -298,14 +296,14 @@ func (s *stmt) compositeJSON(ref string, comp *introspect.Composite, isArray boo
 			if err != nil {
 				return "", err
 			}
+		} else if cexpr, ok := s.contribJSON(attr, meta.Column, f.SelectionSet); ok {
+			expr = cexpr
 		} else if meta.Column.IsArray {
 			if mapped, ok := s.enumArrayJSON(attr, meta.Column); ok {
 				expr = mapped
 			} else {
 				expr = arrayJSON(attr, meta.Column)
 			}
-		} else if cexpr, ok := s.contribJSON(attr, meta.Column, f.SelectionSet); ok {
-			expr = cexpr
 		} else {
 			expr = s.exprJSON(attr, meta.Column)
 		}

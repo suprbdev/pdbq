@@ -134,6 +134,15 @@ func contribFilterOps(ci contribtype.Column) []filterOp {
 		out = append([]filterOp{{"equalTo", list}, {"notEqualTo", list}}, isNull...)
 	case contribtype.Range:
 		out = append(append(eq, isNull...), cmp...)
+	case contribtype.Interval:
+		if ci.Array {
+			return []filterOp{
+				{"equalTo", list}, {"notEqualTo", list},
+				{"contains", list}, {"containedBy", list},
+				{"overlaps", list}, {"isNull", "Boolean"},
+			}
+		}
+		out = append(append(append(eq, in...), isNull...), cmp...)
 	}
 	return out
 }

@@ -1,0 +1,4 @@
+{
+  doubleSpan(span: {hours: 1, seconds: 2.5}) { hours seconds }
+  spanList(spans: [{days: 1}, {minutes: 5}]) { days minutes }
+}

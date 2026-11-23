@@ -1,0 +1,11 @@
+{
+  allDurations(first: 2) {
+    nodes {
+      id
+      span { years months days hours minutes seconds __typename }
+      spans { hours seconds }
+      timing { label span { days } spans { minutes } }
+      twice { hours }
+    }
+  }
+}

@@ -385,6 +385,9 @@ func (s *stmt) computedJSON(meta *schema.FieldMeta, f *ast.Field, alias string, 
 		return fmt.Sprintf("(SELECT coalesce(json_agg(%s), '[]'::json) FROM %s AS %s(v))",
 			value, call, elem), nil
 	}
+	if expr, ok := s.contribJSON(call, ret, f.SelectionSet); ok {
+		return expr, nil
+	}
 	if ret.IsArray {
 		// A function call is not a stable reference: enumArrayJSON would
 		// subscript it repeatedly, re-evaluating the call per element.
@@ -394,9 +397,6 @@ func (s *stmt) computedJSON(meta *schema.FieldMeta, f *ast.Field, alias string, 
 			return fmt.Sprintf("(SELECT %s FROM (SELECT %s AS v) AS %s)", mapped, call, sub), nil
 		}
 		return arrayJSON(call, ret), nil
-	}
-	if expr, ok := s.contribJSON(call, ret, f.SelectionSet); ok {
-		return expr, nil
 	}
 	return s.exprJSON(call, ret), nil
 }

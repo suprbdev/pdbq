@@ -67,7 +67,7 @@ suitable column, named like the column's own field:
 
 | Field | SQL | Applies to | Result type |
 |---|---|---|---|
-| `sum` | `coalesce(sum(x), 0)` | numbers, `interval` | `int2`/`int4` → `BigInt!`, `int8`/`numeric`/`money` → `BigFloat!`, `float4`/`float8` → `Float!`, `interval` → `String!` |
+| `sum` | `coalesce(sum(x), 0)` | numbers, `interval` | `int2`/`int4` → `BigInt!`, `int8`/`numeric`/`money` → `BigFloat!`, `float4`/`float8` → `Float!`, `interval` → `Interval!` |
 | `distinctCount` | `count(DISTINCT x)` | types with a default btree operator class: built-in scalars and ranges, enums, `citext`/`ltree`/`hstore`, PostGIS types, arrays of these, domains over them (not `json`, `xml`, geometric types, composites or unknown extension types) | `BigInt` |
 | `min`, `max` | `min(x)`, `max(x)` | numbers, `interval`, `date`, `timestamp`, `timestamptz` | the column's type |
 | `average` | `avg(x)` | numbers except `money`, `interval` | integers/`numeric` → `BigFloat`, floats → `Float` |
@@ -252,7 +252,7 @@ The aggregated columns are the related table's filterable columns, those of
 its `<Type>Filter`, so `filters.indexed_only` and column `@omit filter` apply.
 The field is reachable only through relation filters advanced-filters
 generated, so `@omit filter` on the foreign key and `relations_opt_in` govern
-it too. `interval` and spatial results have no filter.
+it too. Spatial results have no filter.
 
 ## Smart comments
 

@@ -647,7 +647,7 @@ func (r *build) addRelationFilter(t *introspect.Table, s *surface) {
 				continue
 			}
 			a := r.bind(sp, c)
-			if a == nil || a.ResultType == "interval" || postgis.IsSpatial(a.ResultType) {
+			if a == nil || postgis.IsSpatial(a.ResultType) {
 				continue
 			}
 			group.Fields = append(group.Fields, &schema.InputField{
