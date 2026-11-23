@@ -48,6 +48,12 @@ $ pdbq config example   # print the full annotated reference
 | `server.persisted_only` | `false` | reject requests that don't reference a persisted query (requires `apq` or `persisted_queries_path`) |
 | `server.read_only` | `false` | reject every mutation (maintenance, demos, defense in depth) |
 | `server.disable_introspection` | `false` | reject `__schema`/`__type` queries (`__typename` keeps working) |
+| `server.subscriptions` | `false` | serve `Subscription.listen` over WebSocket on `/graphql` (`graphql-transport-ws`, legacy `graphql-ws`); off leaves the schema without a `Subscription` type — see [Subscriptions](subscriptions.md) |
+| `server.subscriptions_max_per_connection` | 100 | operations running at once per WebSocket; one more gets an `error` message |
+| `server.subscriptions_topic_prefix` | `postgraphile:` | channel = prefix + topic, as in `pg_notify('postgraphile:' \|\| topic, payload)`; the channel must fit in 63 bytes |
+| `server.subscriptions_topics` | `[]` | topic allowlist (without the prefix); `foo:*` allows every topic starting with `foo:`; empty allows any topic of `[A-Za-z0-9_.:/-]` |
+| `server.subscriptions_keepalive` | `15s` | WebSocket ping interval (plus `ka` messages on legacy `graphql-ws`); a peer silent for an interval is disconnected; `0` disables |
+| `server.subscriptions_buffer` | 32 | notifications queued per subscription; a subscriber further behind gets an `error` and its subscription ends |
 | `schema.schemas` | `[public]` | schema allowlist |
 | `schema.cache_path` | — | boot from `pdbq schema dump` output |
 | `schema.functions` | `true` | expose PostgreSQL functions as custom queries/mutations |

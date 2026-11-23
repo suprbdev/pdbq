@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/suprbdev/pdbcore/auth"
 	"github.com/suprbdev/pdbcore/confx"
@@ -19,6 +20,7 @@ import (
 	"github.com/suprbdev/pdbcore/pgexec"
 	"github.com/suprbdev/pdbq/internal/config"
 	"github.com/suprbdev/pdbq/internal/exec"
+	"github.com/suprbdev/pdbq/internal/subscribe"
 )
 
 // Authenticator turns an HTTP request into (claims, role); see pdbcore/auth.
@@ -43,13 +45,29 @@ type Server struct {
 	metrics     *metrics.Metrics
 	metricsPath string
 	ping        func(context.Context) error
+
+	// hub and topics serve Subscription.listen (server.subscriptions).
+	hub    *subscribe.Hub
+	topics *subscribe.TopicPolicy
+
+	wsInitTimeout time.Duration
+	wsMu          sync.Mutex
+	wsSessions    map[*wsSession]struct{}
+	wsClosed      bool
 }
 
 func New(cfg config.Server, authn *Authenticator, ex *exec.Executor, sdl string, log *slog.Logger) (*Server, error) {
 	if log == nil {
 		log = slog.Default()
 	}
-	s := &Server{cfg: cfg, auth: authn, log: log}
+	s := &Server{cfg: cfg, auth: authn, log: log, wsInitTimeout: wsInitTimeout, wsSessions: map[*wsSession]struct{}{}}
+	if cfg.Subscriptions {
+		topics, err := subscribe.NewTopicPolicy(cfg.SubscriptionsTopicPrefix, cfg.SubscriptionsTopics)
+		if err != nil {
+			return nil, fmt.Errorf("server: %w", err)
+		}
+		s.topics = topics
+	}
 	s.executor.Store(ex)
 	s.sdl.Store(&sdl)
 	if cfg.APQ || cfg.PersistedQueriesPath != "" {
@@ -69,6 +87,12 @@ func New(cfg config.Server, authn *Authenticator, ex *exec.Executor, sdl string,
 func (s *Server) SetMetrics(m *metrics.Metrics, path string) {
 	s.metrics, s.metricsPath = m, path
 }
+
+// SetSubscriptions makes the server answer Subscription.listen operations
+// with notifications from hub. It has an effect only with
+// server.subscriptions on; call it before Handler. The caller owns hub and
+// closes it after the server.
+func (s *Server) SetSubscriptions(hub *subscribe.Hub) { s.hub = hub }
 
 // SetReadiness makes GET /readyz call ping with a server.readyz_timeout
 // deadline and answer 503 when it fails; nil (the default) leaves /readyz a
@@ -114,7 +138,10 @@ func (s *Server) Swap(ex *exec.Executor, sdl string) {
 	s.sdl.Store(&sdl)
 }
 
-// Handler returns the HTTP mux.
+// Handler returns the HTTP handler. With server.subscriptions on,
+// WebSocket upgrades of /graphql are served before the HTTP middlewares
+// (request timeout, CORS headers, gzip, metrics); their Origin must be the
+// server's own host or match server.cors_origins.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /graphql", s.handleGraphQL)
@@ -143,11 +170,25 @@ func (s *Server) Handler() http.Handler {
 	if s.cfg.Compression {
 		h = httpx.Gzip(h)
 	}
-	return s.metrics.Middleware(h, s.RouteClass)
+	h = s.metrics.Middleware(h, s.RouteClass)
+	if !s.cfg.Subscriptions {
+		return h
+	}
+	next := h
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/graphql" && isWebSocketUpgrade(r) {
+			s.handleWebSocket(w, r)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
-// ListenAndServe runs the server until ctx is cancelled.
+// ListenAndServe runs the server until ctx is cancelled, then closes its
+// WebSocket connections.
 func (s *Server) ListenAndServe(ctx context.Context) error {
+	stop := context.AfterFunc(ctx, s.CloseWebSockets)
+	defer stop()
 	return httpx.ListenAndServe(ctx, s.Handler(), httpx.ServeOptions{
 		Addr:           s.cfg.Addr,
 		RequestTimeout: s.cfg.RequestTimeout,

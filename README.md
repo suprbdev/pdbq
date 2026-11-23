@@ -48,6 +48,10 @@ time=... msg=listening addr=:8080 graphiql=true
   mutations, compiled to multi-CTE statements in a forced transaction). The opt-in `aggregates` plugin adds
   `@graphile/pg-aggregates`-style `aggregates`/`groupedAggregates` on
   connections, see [docs/aggregates.md](docs/aggregates.md).
+- **Subscriptions (opt-in)** — PostGraphile-style `listen(topic:)` over
+  LISTEN/NOTIFY on a WebSocket (`graphql-transport-ws`), each event resolved
+  under the subscriber's RLS identity, see
+  [docs/subscriptions.md](docs/subscriptions.md).
 - **Pipe-friendly CLI** — `echo '{users {email}}' | pdbq query -` prints
   JSON and exits non-zero on GraphQL errors.
 
@@ -110,6 +114,7 @@ See [docs/quickstart.md](docs/quickstart.md) for the full tour.
 | [docs/caching.md](docs/caching.md) | Schema cache and CI/CD gates |
 | [docs/deployment.md](docs/deployment.md) | Docker image, health checks, production checklist |
 | [docs/metrics.md](docs/metrics.md) | Prometheus `/metrics`: enabling, separate listener, metric reference |
+| [docs/subscriptions.md](docs/subscriptions.md) | Opt-in `listen` subscriptions over LISTEN/NOTIFY and WebSocket: protocol, auth, topics, limits, cost |
 
 ## Development
 

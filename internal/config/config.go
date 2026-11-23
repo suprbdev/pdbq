@@ -12,6 +12,7 @@ import (
 
 	flag "github.com/spf13/pflag"
 	"github.com/suprbdev/pdbcore/confx"
+	"github.com/suprbdev/pdbq/internal/subscribe"
 )
 
 type Config struct {
@@ -61,6 +62,13 @@ type Server struct {
 	PersistedOnly        bool          `koanf:"persisted_only" doc:"Reject requests that do not reference a persisted query via the persistedQuery extension (requires apq or persisted_queries_path)."`
 	ReadOnly             bool          `koanf:"read_only" doc:"Reject every mutation operation (read-only mode) for maintenance, demos or defense in depth. Also toggleable at runtime when embedding pdbq as a library (App.SetReadOnly)."`
 	DisableIntrospection bool          `koanf:"disable_introspection" doc:"Reject __schema / __type introspection queries (off by default). Enable in production to hide the schema shape; __typename keeps working."`
+
+	Subscriptions                 bool          `koanf:"subscriptions" doc:"Serve PostGraphile-style simple subscriptions (Subscription.listen over LISTEN/NOTIFY) on /graphql over WebSocket, graphql-transport-ws or the legacy graphql-ws subprotocol. Off by default; while off the schema has no Subscription type."`
+	SubscriptionsMaxPerConnection int           `koanf:"subscriptions_max_per_connection" doc:"Maximum operations running at once on one WebSocket connection; a subscribe beyond it gets an error."`
+	SubscriptionsTopicPrefix      string        `koanf:"subscriptions_topic_prefix" doc:"Prefix put before the listen topic to form the PostgreSQL channel, as in pg_notify('postgraphile:' || topic, payload). The channel must fit in 63 bytes."`
+	SubscriptionsTopics           []string      `koanf:"subscriptions_topics" doc:"Topics clients may listen to, without the prefix; an entry ending in * allows every topic starting with the rest. Empty allows any topic of letters, digits and _ . : / - characters."`
+	SubscriptionsKeepalive        time.Duration `koanf:"subscriptions_keepalive" doc:"Interval of the WebSocket ping (and legacy graphql-ws ka message) on subscription connections; a peer that does not answer within it is disconnected. 0 disables."`
+	SubscriptionsBuffer           int           `koanf:"subscriptions_buffer" doc:"Notifications queued per subscription while its events are being resolved; a subscriber that falls further behind gets an error and its subscription ends."`
 }
 
 // Schema is confx.Schema plus expose_partitions and domain_scalars. It
@@ -103,6 +111,11 @@ func DefaultConfig() Config {
 			MaxCost:           10000,
 			MaxPageSize:       100,
 			DocumentCacheSize: 1000,
+
+			SubscriptionsMaxPerConnection: 100,
+			SubscriptionsTopicPrefix:      "postgraphile:",
+			SubscriptionsKeepalive:        15 * time.Second,
+			SubscriptionsBuffer:           32,
 		},
 		Schema: Schema{
 			Schemas:       []string{"public"},
@@ -168,6 +181,9 @@ func (c *Config) Validate() error {
 	if c.Server.DocumentCacheSize < 0 {
 		errs = append(errs, "server.document_cache_size must be >= 0")
 	}
+	if c.Server.Subscriptions {
+		errs = append(errs, validateSubscriptions(c.Server)...)
+	}
 	errs = append(errs, confx.ValidateLog(c.Log)...)
 	if c.Metrics.Enabled {
 		errs = append(errs, confx.ValidateMetrics(c.Metrics, c.Server.Addr)...)
@@ -184,3 +200,20 @@ var reservedPaths = map[string]bool{"/graphql": true, "/healthz": true, "/readyz
 
 // DisabledPlugins returns the disabled-plugin set for registry filtering.
 func (c *Config) DisabledPlugins() map[string]bool { return c.Plugins.DisabledSet() }
+
+func validateSubscriptions(s Server) []string {
+	var errs []string
+	if s.SubscriptionsMaxPerConnection < 1 {
+		errs = append(errs, "server.subscriptions_max_per_connection must be >= 1")
+	}
+	if s.SubscriptionsBuffer < 1 {
+		errs = append(errs, "server.subscriptions_buffer must be >= 1")
+	}
+	if s.SubscriptionsKeepalive < 0 {
+		errs = append(errs, "server.subscriptions_keepalive must be >= 0")
+	}
+	if _, err := subscribe.NewTopicPolicy(s.SubscriptionsTopicPrefix, s.SubscriptionsTopics); err != nil {
+		errs = append(errs, "server."+err.Error())
+	}
+	return errs
+}

@@ -15,6 +15,20 @@ func TestDefaultsValid(t *testing.T) {
 	}
 }
 
+func TestSubscriptionSettingsIgnoredWhileOff(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.RLS.Auth.JWTSecret = "s"
+	cfg.Server.SubscriptionsTopics = []string{"bad topic"}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("subscription settings checked while off: %v", err)
+	}
+	cfg.Server.Subscriptions = true
+	cfg.Server.SubscriptionsTopics = []string{"chat", "user:*"}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("valid subscription settings rejected: %v", err)
+	}
+}
+
 func TestValidateAcceptsStrictErrors(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.RLS.Auth.JWTSecret = "s"
@@ -48,6 +62,14 @@ func TestValidateRejects(t *testing.T) {
 		"metrics path":  func(c *Config) { c.Metrics.Enabled = true; c.Metrics.Path = "metrics" },
 		"metrics route": func(c *Config) { c.Metrics.Enabled = true; c.Metrics.Path = "/graphql" },
 		"metrics addr":  func(c *Config) { c.Metrics.Enabled = true; c.Metrics.Addr = c.Server.Addr },
+		"subs max":      func(c *Config) { c.Server.Subscriptions = true; c.Server.SubscriptionsMaxPerConnection = 0 },
+		"subs buffer":   func(c *Config) { c.Server.Subscriptions = true; c.Server.SubscriptionsBuffer = 0 },
+		"subs ka":       func(c *Config) { c.Server.Subscriptions = true; c.Server.SubscriptionsKeepalive = -1 },
+		"subs prefix": func(c *Config) {
+			c.Server.Subscriptions = true
+			c.Server.SubscriptionsTopicPrefix = strings.Repeat("p", 63)
+		},
+		"subs topics": func(c *Config) { c.Server.Subscriptions = true; c.Server.SubscriptionsTopics = []string{"bad topic"} },
 	}
 	for name, mutate := range cases {
 		if err := bad(mutate); err == nil {

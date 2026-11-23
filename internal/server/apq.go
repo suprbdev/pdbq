@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"os"
 	"sync"
+
+	"github.com/vektah/gqlparser/v2/gqlerror"
 )
 
 // apqCacheSize bounds the client-registered APQ cache (FIFO eviction);
@@ -85,6 +87,39 @@ type persistedQueryExt struct {
 // error, not-found, or persisted-only rejection); otherwise req.Query is
 // ready to execute.
 func (s *Server) resolvePersisted(w http.ResponseWriter, req *gqlHTTPRequest) (handled bool) {
+	perr := s.applyPersisted(req)
+	if perr == nil {
+		return false
+	}
+	if perr.status == http.StatusOK {
+		// APQ protocol shape: 200 response carrying the well-known
+		// message so the client retries with the full query attached.
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"errors": gqlerror.List{perr.err}})
+		return true
+	}
+	writeError(w, perr.status, perr.err.Message)
+	return true
+}
+
+// persistedError is a persisted-query protocol failure: the HTTP status it
+// answers with and the GraphQL error the client sees.
+type persistedError struct {
+	status int
+	err    *gqlerror.Error
+}
+
+// applyPersisted resolves req's persistedQuery extension into req.Query,
+// registers APQ documents, and enforces server.persisted_only. It is shared
+// by HTTP and WebSocket requests and does nothing when persisted queries are
+// off.
+func (s *Server) applyPersisted(req *gqlHTTPRequest) *persistedError {
+	if s.pq == nil {
+		return nil
+	}
+	fail := func(msg string) *persistedError {
+		return &persistedError{status: http.StatusBadRequest, err: &gqlerror.Error{Message: msg}}
+	}
 	var ext struct {
 		PersistedQuery *persistedQueryExt `json:"persistedQuery"`
 	}
@@ -94,45 +129,34 @@ func (s *Server) resolvePersisted(w http.ResponseWriter, req *gqlHTTPRequest) (h
 	pq := ext.PersistedQuery
 	if pq == nil {
 		if s.cfg.PersistedOnly {
-			writeError(w, http.StatusBadRequest, "persisted queries only: send a persistedQuery extension")
-			return true
+			return fail("persisted queries only: send a persistedQuery extension")
 		}
-		return false
+		return nil
 	}
 	if pq.Version != 0 && pq.Version != 1 {
-		writeError(w, http.StatusBadRequest, "unsupported persistedQuery version")
-		return true
+		return fail("unsupported persistedQuery version")
 	}
 	if pq.Sha256Hash == "" {
-		writeError(w, http.StatusBadRequest, "persistedQuery: missing sha256Hash")
-		return true
+		return fail("persistedQuery: missing sha256Hash")
 	}
 	if req.Query == "" {
 		q, ok := s.pq.get(pq.Sha256Hash)
 		if !ok {
-			// APQ protocol shape: 200 response carrying the well-known
-			// message so the client retries with the full query attached.
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"errors": []map[string]any{{
-					"message":    "PersistedQueryNotFound",
-					"extensions": map[string]string{"code": "PERSISTED_QUERY_NOT_FOUND"},
-				}},
-			})
-			return true
+			return &persistedError{status: http.StatusOK, err: &gqlerror.Error{
+				Message:    "PersistedQueryNotFound",
+				Extensions: map[string]any{"code": "PERSISTED_QUERY_NOT_FOUND"},
+			}}
 		}
 		req.Query = q
-		return false
+		return nil
 	}
 	if hashQuery(req.Query) != pq.Sha256Hash {
-		writeError(w, http.StatusBadRequest, "provided sha256Hash does not match query")
-		return true
+		return fail("provided sha256Hash does not match query")
 	}
 	if !s.cfg.APQ {
 		// Static allowlist deployments do not accept client registrations.
-		writeError(w, http.StatusBadRequest, "persisted query registration is disabled")
-		return true
+		return fail("persisted query registration is disabled")
 	}
 	s.pq.put(pq.Sha256Hash, req.Query)
-	return false
+	return nil
 }

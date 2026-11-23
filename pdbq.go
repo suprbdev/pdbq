@@ -194,8 +194,9 @@ func (a *App) Connect(ctx context.Context) error {
 // Pool exposes the connection pool (nil before Connect).
 func (a *App) Pool() *pgxpool.Pool { return a.pool }
 
-// Close stops any running schema watcher, waits for it to release its
-// connection, then closes the pool. It is idempotent, needs no prior Serve or
+// Close stops any running schema watcher and waits for it to release its
+// connection, closes subscription WebSockets and the LISTEN connection, then
+// closes the pool. It is idempotent, needs no prior Serve or
 // Handler call, and does not require the context given to them to be
 // cancelled first.
 func (a *App) Close() {
@@ -245,6 +246,7 @@ func (a *App) BuildSchema(ctx context.Context, cat *introspect.Catalog) (*schema
 		ExposePartitions:  a.Config.Schema.ExposePartitions,
 		DomainScalars:     a.Config.Schema.DomainScalars,
 		JWTType:           a.Config.RLS.Auth.JWTType,
+		Subscriptions:     a.Config.Server.Subscriptions,
 		Logger:            a.Log,
 	})
 	if err := a.Registry.TransformSchema(ctx, disabled, b); err != nil {
