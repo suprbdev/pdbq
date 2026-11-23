@@ -663,11 +663,12 @@ func (c *wsSession) execute(ctx context.Context, id string, req gqlHTTPRequest, 
 			pctx, cancel = context.WithTimeout(pctx, t)
 			defer cancel()
 		}
-		if c.s.cfg.IncrementalDelivery {
+		if c.s.cfg.IncrementalDelivery && c.s.incremental.acquire(c.s.cfg.IncrementalMaxResponses) {
 			_ = ex.ExecuteIncremental(pctx, op, exec.IncrementalV02, func(body []byte, _ bool) error {
 				c.sendPayload(ctx, id, body)
 				return ctx.Err()
 			})
+			c.s.incremental.release()
 		} else {
 			c.sendNext(ctx, id, ex.ExecutePrepared(pctx, op))
 		}

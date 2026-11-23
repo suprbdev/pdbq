@@ -68,6 +68,10 @@ server:
   incremental_max_deferred: 16
   # Items per payload of a streamed list after its initialCount items; each batch is one statement.
   incremental_stream_batch_size: 10
+  # Longest one payload of an incremental HTTP response may take to reach a client that stopped reading; the response is then aborted and its transaction rolled back, releasing the pooled connection. request_timeout still bounds the whole response.
+  incremental_write_timeout: "10s"
+  # Incremental responses (HTTP and WebSocket) holding a transaction at once, over every contract; a request beyond it is answered by one result, with the defer and stream directives ignored. 0 means half of database.max_conns (at least 1).
+  incremental_max_responses: 0
   # Serve PostGraphile-style simple subscriptions (Subscription.listen over LISTEN/NOTIFY) on /graphql over WebSocket, graphql-transport-ws or the legacy graphql-ws subprotocol. Off by default; while off the schema has no Subscription type.
   subscriptions: false
   # Maximum operations running at once on one WebSocket connection, counted until each has fully stopped; a subscribe beyond it gets an error (or waits while completed operations are still stopping).

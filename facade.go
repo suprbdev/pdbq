@@ -142,7 +142,7 @@ func (a *App) buildServer(ctx context.Context) (httpServer, error) {
 		return nil, err
 	}
 	ex := a.Executor(built)
-	srv, err := server.New(a.Config.Server, server.NewAuthenticator(a.Config.RLS, a.Log), ex, built.SDL, a.Log)
+	srv, err := server.New(a.serverConfig(), server.NewAuthenticator(a.Config.RLS, a.Log), ex, built.SDL, a.Log)
 	if err != nil {
 		return nil, err
 	}
@@ -189,12 +189,20 @@ func (a *App) buildServer(ctx context.Context) (httpServer, error) {
 	return srv, nil
 }
 
+// serverConfig is the server section with the defaults that depend on other
+// sections resolved.
+func (a *App) serverConfig() config.Server {
+	cfg := a.Config.Server
+	cfg.IncrementalMaxResponses = a.Config.IncrementalResponses()
+	return cfg
+}
+
 // buildContractServer builds one schema, executor and Server per contract
 // from cat and mounts them on a server.Group; watch mode rebuilds every
 // contract.
 func (a *App) buildContractServer(ctx context.Context, cat *introspect.Catalog, catHash string) (*server.Group, error) {
 	authn := server.NewAuthenticator(a.Config.RLS, a.Log)
-	group := server.NewGroup(a.Config.Server, a.Log)
+	group := server.NewGroup(a.serverConfig(), a.Log)
 	group.SetReadiness(a.pool.Ping)
 	if a.Config.Metrics.Addr == "" {
 		group.SetMetrics(a.metrics, a.Config.Metrics.Path)
@@ -205,7 +213,7 @@ func (a *App) buildContractServer(ctx context.Context, cat *introspect.Catalog, 
 		if err != nil {
 			return nil, err
 		}
-		srv, err := server.New(a.Config.Server, authn, a.executor(built, a.instrumentsFor(ct.Name)), built.SDL, a.Log)
+		srv, err := server.New(a.serverConfig(), authn, a.executor(built, a.instrumentsFor(ct.Name)), built.SDL, a.Log)
 		if err != nil {
 			return nil, err
 		}

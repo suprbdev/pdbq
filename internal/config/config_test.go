@@ -91,10 +91,12 @@ func TestValidateRejects(t *testing.T) {
 			c.Contracts = []Contract{{Name: "a"}}
 			c.Plugins.Disabled = []string{"smart-comments"}
 		},
-		"inc deferred": func(c *Config) { c.Server.IncrementalDelivery = true; c.Server.IncrementalMaxDeferred = 0 },
-		"inc batch":    func(c *Config) { c.Server.IncrementalDelivery = true; c.Server.IncrementalStreamBatchSize = 0 },
-		"live no subs": func(c *Config) { c.Server.Live = true },
-		"live channel": func(c *Config) { c.Server.Subscriptions, c.Server.Live, c.Server.LiveChannel = true, true, "pdbq-live" },
+		"inc deferred":      func(c *Config) { c.Server.IncrementalDelivery = true; c.Server.IncrementalMaxDeferred = 0 },
+		"inc batch":         func(c *Config) { c.Server.IncrementalDelivery = true; c.Server.IncrementalStreamBatchSize = 0 },
+		"inc write timeout": func(c *Config) { c.Server.IncrementalDelivery = true; c.Server.IncrementalWriteTimeout = 0 },
+		"inc responses":     func(c *Config) { c.Server.IncrementalDelivery = true; c.Server.IncrementalMaxResponses = -1 },
+		"live no subs":      func(c *Config) { c.Server.Live = true },
+		"live channel":      func(c *Config) { c.Server.Subscriptions, c.Server.Live, c.Server.LiveChannel = true, true, "pdbq-live" },
 		"live channel length": func(c *Config) {
 			c.Server.Subscriptions, c.Server.Live, c.Server.LiveChannel = true, true, strings.Repeat("c", 55)
 		},
@@ -276,5 +278,28 @@ func TestContractsFromEnv(t *testing.T) {
 	}
 	if len(cfg.Contracts) != 2 || cfg.Contracts[0].Name != "public" || cfg.Contracts[1].Name != "partner" {
 		t.Errorf("contracts = %+v", cfg.Contracts)
+	}
+}
+
+func TestIncrementalResponses(t *testing.T) {
+	cfg := DefaultConfig()
+	for _, tc := range []struct {
+		maxConns  int32
+		responses int
+		want      int
+	}{
+		{10, 0, 5},
+		{1, 0, 1},
+		{3, 0, 1},
+		{10, 7, 7},
+	} {
+		cfg.Database.MaxConns, cfg.Server.IncrementalMaxResponses = tc.maxConns, tc.responses
+		if got := cfg.IncrementalResponses(); got != tc.want {
+			t.Errorf("max_conns %d, incremental_max_responses %d: IncrementalResponses() = %d, want %d", tc.maxConns, tc.responses, got, tc.want)
+		}
+	}
+	cfg.Database.MaxConns, cfg.Server.IncrementalMaxResponses = 0, 0
+	if got := cfg.IncrementalResponses(); got < 2 {
+		t.Errorf("pgxpool default pool: IncrementalResponses() = %d, want at least 2", got)
 	}
 }

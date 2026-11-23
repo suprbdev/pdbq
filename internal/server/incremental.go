@@ -2,10 +2,13 @@ package server
 
 import (
 	"context"
+	"errors"
 	"mime"
 	"net/http"
 	"strconv"
 	"strings"
+	"sync/atomic"
+	"time"
 
 	"github.com/suprbdev/pdbq/internal/exec"
 )
@@ -58,7 +61,11 @@ func (s *Server) streamsIncremental(r *http.Request) bool {
 // multipart/mixed. A query delivered incrementally is a multipart/mixed
 // response with one application/json part per payload, flushed as it is
 // produced; any other result is a plain application/json response.
-// server.request_timeout bounds the whole response.
+// server.request_timeout bounds the whole response, and
+// server.incremental_write_timeout each payload: a client that stops
+// reading gets its response aborted and its transaction rolled back. Beyond
+// server.incremental_max_responses responses in flight, the request is
+// answered by one result.
 func (s *Server) serveIncremental(w http.ResponseWriter, r *http.Request, ex *exec.Executor, req exec.Request) {
 	format, _, unsupported := incrementalAccept(r)
 	if unsupported {
@@ -71,14 +78,29 @@ func (s *Server) serveIncremental(w http.ResponseWriter, r *http.Request, ex *ex
 		ctx, cancel = context.WithTimeout(ctx, t)
 		defer cancel()
 	}
-	rc := http.NewResponseController(w)
+	out := &boundedWriter{w: w, rc: http.NewResponseController(w), ctx: ctx, timeout: s.cfg.IncrementalWriteTimeout}
+	defer func() { _ = out.wait() }()
+	if !s.incremental.acquire(s.cfg.IncrementalMaxResponses) {
+		body, err := ex.Execute(ctx, req).AppendJSON(nil)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = out.write(append(body, '\n'))
+		return
+	}
+	defer s.incremental.release()
 	started := false
 	err := ex.ExecuteIncrementalRequest(ctx, req, format, func(body []byte, incremental bool) error {
+		if out.err != nil {
+			return out.err
+		}
 		if !incremental {
 			w.Header().Set("Content-Type", "application/json")
-			_, err := w.Write(append(body, '\n'))
-			return err
+			return out.write(append(body, '\n'))
 		}
+		part := make([]byte, 0, len(body)+96)
 		if !started {
 			started = true
 			ct := `multipart/mixed; boundary="` + multipartBoundary + `"; incrementalSpec=v0.2`
@@ -88,27 +110,99 @@ func (s *Server) serveIncremental(w http.ResponseWriter, r *http.Request, ex *ex
 			w.Header().Set("Content-Type", ct)
 			w.Header().Set("Cache-Control", "no-cache")
 			w.WriteHeader(http.StatusOK)
-			if _, err := w.Write([]byte("\r\n--" + multipartBoundary)); err != nil {
-				return err
-			}
+			part = append(part, "\r\n--"+multipartBoundary...)
 		}
-		part := make([]byte, 0, len(body)+96)
 		part = append(part, "\r\nContent-Type: application/json; charset=utf-8\r\nContent-Length: "...)
 		part = strconv.AppendInt(part, int64(len(body)), 10)
 		part = append(part, "\r\n\r\n"...)
 		part = append(part, body...)
 		part = append(part, "\r\n--"+multipartBoundary...)
-		if _, err := w.Write(part); err != nil {
-			return err
-		}
-		return rc.Flush()
+		return out.write(part)
 	})
 	if err != nil && ctx.Err() == nil {
 		s.log.Debug("incremental response ended early", "err", err)
 	}
 	if started {
-		if _, err := w.Write([]byte("--\r\n")); err == nil {
-			_ = rc.Flush()
-		}
+		_ = out.write([]byte("--\r\n"))
 	}
 }
+
+// errWriteStalled fails a payload the client did not take within
+// server.incremental_write_timeout.
+var errWriteStalled = errors.New("incremental response: client stopped reading")
+
+// boundedWriter writes and flushes the payloads of one incremental
+// response, none taking longer than timeout (or, while ctx is live, than
+// ctx's deadline); a timeout <= 0 leaves only ctx's deadline. It sets that
+// deadline on the connection, and also returns errWriteStalled when the
+// deadline passes with the write still blocked (a ResponseWriter that does
+// not support deadlines), so the caller can roll its transaction back. A
+// failed write fails every later one.
+type boundedWriter struct {
+	w       http.ResponseWriter
+	rc      *http.ResponseController
+	ctx     context.Context
+	timeout time.Duration
+	err     error
+	// stalled receives the outcome of a write still blocked when it timed
+	// out; the handler must not return before it.
+	stalled chan error
+}
+
+func (b *boundedWriter) write(p []byte) error {
+	if b.err != nil {
+		return b.err
+	}
+	var deadline time.Time
+	if b.timeout > 0 {
+		deadline = time.Now().Add(b.timeout)
+	}
+	if d, ok := b.ctx.Deadline(); ok && b.ctx.Err() == nil && (deadline.IsZero() || d.Before(deadline)) {
+		deadline = d
+	}
+	_ = b.rc.SetWriteDeadline(deadline)
+	done := make(chan error, 1)
+	go func() {
+		_, err := b.w.Write(p)
+		if err == nil {
+			err = b.rc.Flush()
+		}
+		done <- err
+	}()
+	var expired <-chan time.Time
+	if !deadline.IsZero() {
+		timer := time.NewTimer(time.Until(deadline))
+		defer timer.Stop()
+		expired = timer.C
+	}
+	select {
+	case b.err = <-done:
+	case <-expired:
+		b.stalled, b.err = done, errWriteStalled
+	}
+	return b.err
+}
+
+// wait blocks until a write that timed out has returned, and returns its
+// error.
+func (b *boundedWriter) wait() error {
+	if b.stalled == nil {
+		return nil
+	}
+	return <-b.stalled
+}
+
+// slots counts holders against a limit.
+type slots struct{ n atomic.Int64 }
+
+// acquire takes a slot unless limit (> 0) are taken; limit <= 0 is no
+// limit.
+func (l *slots) acquire(limit int) bool {
+	if l.n.Add(1) > int64(limit) && limit > 0 {
+		l.n.Add(-1)
+		return false
+	}
+	return true
+}
+
+func (l *slots) release() { l.n.Add(-1) }

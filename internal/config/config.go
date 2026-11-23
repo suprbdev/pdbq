@@ -8,6 +8,7 @@ package config
 
 import (
 	"fmt"
+	"runtime"
 	"strings"
 	"time"
 
@@ -74,9 +75,11 @@ type Server struct {
 	ReadOnly                   bool          `koanf:"read_only" doc:"Reject every mutation operation (read-only mode) for maintenance, demos or defense in depth. Also toggleable at runtime when embedding pdbq as a library (App.SetReadOnly)."`
 	DisableIntrospection       bool          `koanf:"disable_introspection" doc:"Reject __schema / __type introspection queries and leave the \"Did you mean\" suggestions out of validation errors (off by default). Enable in production to hide the schema shape; __typename keeps working."`
 
-	IncrementalDelivery        bool `koanf:"incremental_delivery" doc:"Serve the defer and stream directives of GraphQL incremental delivery: the schema declares them, a query using them is answered over HTTP as multipart/mixed (Accept: multipart/mixed) and over WebSocket as several next messages, every payload read from one repeatable read snapshot. Off by default; while off the schema declares neither directive, stream is rejected and defer is ignored (one result)."`
-	IncrementalMaxDeferred     int  `koanf:"incremental_max_deferred" doc:"Maximum deferred fragments and streamed fields in one operation; each one runs its own statements."`
-	IncrementalStreamBatchSize int  `koanf:"incremental_stream_batch_size" doc:"Items per payload of a streamed list after its initialCount items; each batch is one statement."`
+	IncrementalDelivery        bool          `koanf:"incremental_delivery" doc:"Serve the defer and stream directives of GraphQL incremental delivery: the schema declares them, a query using them is answered over HTTP as multipart/mixed (Accept: multipart/mixed) and over WebSocket as several next messages, every payload read from one repeatable read snapshot. Off by default; while off the schema declares neither directive, stream is rejected and defer is ignored (one result)."`
+	IncrementalMaxDeferred     int           `koanf:"incremental_max_deferred" doc:"Maximum deferred fragments and streamed fields in one operation; each one runs its own statements."`
+	IncrementalStreamBatchSize int           `koanf:"incremental_stream_batch_size" doc:"Items per payload of a streamed list after its initialCount items; each batch is one statement."`
+	IncrementalWriteTimeout    time.Duration `koanf:"incremental_write_timeout" doc:"Longest one payload of an incremental HTTP response may take to reach a client that stopped reading; the response is then aborted and its transaction rolled back, releasing the pooled connection. request_timeout still bounds the whole response."`
+	IncrementalMaxResponses    int           `koanf:"incremental_max_responses" doc:"Incremental responses (HTTP and WebSocket) holding a transaction at once, over every contract; a request beyond it is answered by one result, with the defer and stream directives ignored. 0 means half of database.max_conns (at least 1)."`
 
 	Subscriptions                 bool          `koanf:"subscriptions" doc:"Serve PostGraphile-style simple subscriptions (Subscription.listen over LISTEN/NOTIFY) on /graphql over WebSocket, graphql-transport-ws or the legacy graphql-ws subprotocol. Off by default; while off the schema has no Subscription type."`
 	SubscriptionsMaxPerConnection int           `koanf:"subscriptions_max_per_connection" doc:"Maximum operations running at once on one WebSocket connection, counted until each has fully stopped; a subscribe beyond it gets an error (or waits while completed operations are still stopping)."`
@@ -121,6 +124,20 @@ type TX struct {
 	PartialMutations bool   `koanf:"partial_mutations" doc:"Let a request opt in (extensions.partialMutations) to running each mutation root field in its own savepoint, so a failing field is reported without rolling back the others. Requests asking for it while this is off are rejected."`
 }
 
+// IncrementalResponses returns server.incremental_max_responses, or when it
+// is 0 half of the pool size (database.max_conns, or pgxpool's default of
+// the larger of 4 and the CPU count when that is 0), at least 1.
+func (c *Config) IncrementalResponses() int {
+	if n := c.Server.IncrementalMaxResponses; n > 0 {
+		return n
+	}
+	pool := int(c.Database.MaxConns)
+	if pool <= 0 {
+		pool = max(4, runtime.NumCPU())
+	}
+	return max(1, pool/2)
+}
+
 // DefaultConfig returns the documented defaults.
 func DefaultConfig() Config {
 	return Config{
@@ -147,6 +164,7 @@ func DefaultConfig() Config {
 			DocumentCacheMaxEntryBytes: 1 << 20,
 			IncrementalMaxDeferred:     16,
 			IncrementalStreamBatchSize: 10,
+			IncrementalWriteTimeout:    10 * time.Second,
 
 			SubscriptionsMaxPerConnection: 100,
 			SubscriptionsMaxConnections:   1000,
@@ -249,6 +267,12 @@ func (c *Config) Validate() error {
 		}
 		if c.Server.IncrementalStreamBatchSize < 1 {
 			errs = append(errs, "server.incremental_stream_batch_size must be >= 1")
+		}
+		if c.Server.IncrementalWriteTimeout <= 0 {
+			errs = append(errs, "server.incremental_write_timeout must be > 0")
+		}
+		if c.Server.IncrementalMaxResponses < 0 {
+			errs = append(errs, "server.incremental_max_responses must be >= 0")
 		}
 	}
 	if c.Server.Subscriptions {

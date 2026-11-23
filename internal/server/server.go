@@ -66,6 +66,10 @@ type Server struct {
 	// ws counts WebSocket connections and operations against the limits;
 	// a Group shares one between its servers.
 	ws *wsLimits
+	// incremental counts the incremental responses holding a transaction
+	// against server.incremental_max_responses; a Group shares one between
+	// its servers.
+	incremental *slots
 
 	// prefix is the path the server is mounted under by a Group ("" at
 	// the root); the GraphiQL page posts to prefix + /graphql.
@@ -85,7 +89,7 @@ func New(cfg config.Server, authn *Authenticator, ex *exec.Executor, sdl string,
 	if log == nil {
 		log = slog.Default()
 	}
-	s := &Server{cfg: cfg, auth: authn, log: log, wsInitTimeout: wsInitTimeout, wsSessions: map[*wsSession]struct{}{}, ws: &wsLimits{}}
+	s := &Server{cfg: cfg, auth: authn, log: log, wsInitTimeout: wsInitTimeout, wsSessions: map[*wsSession]struct{}{}, ws: &wsLimits{}, incremental: &slots{}}
 	if cfg.Subscriptions {
 		topics, err := subscribe.NewTopicPolicy(cfg.SubscriptionsTopicPrefix, cfg.SubscriptionsTopics)
 		if err != nil {

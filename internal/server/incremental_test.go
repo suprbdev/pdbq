@@ -1,7 +1,10 @@
 package server
 
 import (
+	"context"
+	"errors"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -109,5 +112,113 @@ func TestIncrementalOffKeepsJSON(t *testing.T) {
 	rec := postAccept(s.Handler(), "multipart/mixed;deferSpec=20200101", `{"query":"{ __typename }"}`)
 	if rec.Code != http.StatusOK || rec.Header().Get("Content-Encoding") != "gzip" {
 		t.Fatalf("got %d %v", rec.Code, rec.Header())
+	}
+}
+
+// blockingWriter is a ResponseWriter without deadline support whose Write
+// blocks until release is closed.
+type blockingWriter struct {
+	header  http.Header
+	release chan struct{}
+}
+
+func (w *blockingWriter) Header() http.Header { return w.header }
+func (w *blockingWriter) WriteHeader(int)     {}
+func (w *blockingWriter) Write(p []byte) (int, error) {
+	<-w.release
+	return len(p), nil
+}
+
+func TestBoundedWriterStalledWriteWithoutDeadlineSupport(t *testing.T) {
+	w := &blockingWriter{header: http.Header{}, release: make(chan struct{})}
+	b := &boundedWriter{w: w, rc: http.NewResponseController(w), ctx: context.Background(), timeout: 50 * time.Millisecond}
+	start := time.Now()
+	if err := b.write([]byte("x")); !errors.Is(err, errWriteStalled) {
+		t.Fatalf("write = %v, want errWriteStalled", err)
+	}
+	if d := time.Since(start); d > time.Second {
+		t.Fatalf("stalled write returned after %v", d)
+	}
+	if err := b.write([]byte("y")); !errors.Is(err, errWriteStalled) {
+		t.Fatalf("write after a stall = %v, want errWriteStalled", err)
+	}
+	waited := make(chan struct{})
+	go func() { _ = b.wait(); close(waited) }()
+	select {
+	case <-waited:
+		t.Fatal("wait returned while the stalled write was still running")
+	case <-time.After(20 * time.Millisecond):
+	}
+	close(w.release)
+	<-waited
+}
+
+func TestBoundedWriterStopsAtTheContextDeadline(t *testing.T) {
+	w := &blockingWriter{header: http.Header{}, release: make(chan struct{})}
+	defer close(w.release)
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	b := &boundedWriter{w: w, rc: http.NewResponseController(w), ctx: ctx, timeout: time.Hour}
+	start := time.Now()
+	if err := b.write([]byte("x")); !errors.Is(err, errWriteStalled) {
+		t.Fatalf("write = %v, want errWriteStalled", err)
+	}
+	if d := time.Since(start); d > time.Second {
+		t.Fatalf("write outlived the request deadline: %v", d)
+	}
+}
+
+// TestBoundedWriterTimesOutOnAStalledConnection writes to a real client
+// that never reads: the connection's write deadline fails the write.
+func TestBoundedWriterTimesOutOnAStalledConnection(t *testing.T) {
+	result := make(chan error, 1)
+	hs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b := &boundedWriter{w: w, rc: http.NewResponseController(w), ctx: r.Context(), timeout: 200 * time.Millisecond}
+		defer func() { _ = b.wait() }()
+		chunk := make([]byte, 1<<20)
+		var err error
+		for i := 0; i < 256 && err == nil; i++ {
+			err = b.write(chunk)
+		}
+		result <- err
+	}))
+	defer hs.Close()
+	conn, err := net.Dial("tcp", strings.TrimPrefix(hs.URL, "http://"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = conn.Close() }()
+	if err := conn.(*net.TCPConn).SetReadBuffer(4096); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := conn.Write([]byte("GET / HTTP/1.1\r\nHost: x\r\n\r\n")); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-result:
+		if err == nil {
+			t.Fatal("256 MiB reached a client that never reads")
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the write to a stalled client never failed")
+	}
+}
+
+func TestSlots(t *testing.T) {
+	var l slots
+	for range 2 {
+		if !l.acquire(2) {
+			t.Fatal("acquire under the limit failed")
+		}
+	}
+	if l.acquire(2) {
+		t.Fatal("acquire beyond the limit succeeded")
+	}
+	l.release()
+	if !l.acquire(2) {
+		t.Fatal("acquire after a release failed")
+	}
+	if !l.acquire(0) {
+		t.Fatal("limit 0 must not limit")
 	}
 }
