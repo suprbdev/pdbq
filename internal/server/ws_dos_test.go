@@ -162,7 +162,7 @@ func TestWSMaxOperations(t *testing.T) {
 	}
 	a.send(`{"id":"a","type":"complete"}`)
 	deadline := time.Now().Add(5 * time.Second)
-	for f.srv.wsOps.Load() != 0 {
+	for f.srv.ws.ops.Load() != 0 {
 		if time.Now().After(deadline) {
 			t.Fatal("completed operation still counted")
 		}

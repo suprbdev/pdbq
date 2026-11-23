@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 
@@ -219,7 +220,7 @@ func TestBeforeOperationForcesTx(t *testing.T) {
 		if errs := validator.ValidateWithRules(built.Schema, doc, nil); len(errs) > 0 {
 			t.Fatal(errs)
 		}
-		op := &exec.Operation{Type: ast.Mutation, Document: doc, Definition: doc.Operations[0]}
+		op := &exec.Operation{Type: ast.Mutation, Document: doc, Definition: doc.Operations[0], Built: built}
 		if _, err := p.BeforeOperation(context.Background(), op); err != nil {
 			t.Fatal(err)
 		}
@@ -291,4 +292,39 @@ func sdlBlock(sdl, header string) string {
 		return rest[:j+2]
 	}
 	return rest
+}
+
+// TestStatePerSchema builds a second schema without the posts relation on
+// the same plugin, as a second contract or a watch-mode rebuild does: the
+// first schema's operations keep their nested fields.
+func TestStatePerSchema(t *testing.T) {
+	p := nestedmutations.New(nil)
+	reg, first := setupWith(t, plugin.NewRegistry(p))
+	cat := testutil.FixtureCatalog()
+	cat.Tables = slices.DeleteFunc(cat.Tables, func(t *introspect.Table) bool { return t.Name == "posts" || t.Name == "comments" })
+	b := schema.New(cat, inflect.Default, schema.Options{FilterIndexedOnly: true})
+	if err := reg.TransformSchema(context.Background(), nil, b); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := b.Build(); err != nil {
+		t.Fatal(err)
+	}
+	query := `mutation { updateUserById(id: 1, patch: {postsByAuthorId: {create: [{title: "x"}]}}) { user { id } } }`
+	doc, perr := parser.ParseQuery(&ast.Source{Input: query})
+	if perr != nil {
+		t.Fatal(perr)
+	}
+	if errs := validator.ValidateWithRules(first.Schema, doc, nil); len(errs) > 0 {
+		t.Fatal(errs)
+	}
+	op := &exec.Operation{Type: ast.Mutation, Document: doc, Definition: doc.Operations[0], Built: first}
+	if _, err := p.BeforeOperation(context.Background(), op); err != nil {
+		t.Fatal(err)
+	}
+	if !op.ForceTx {
+		t.Error("the first schema's nested field was forgotten after a second build")
+	}
+	if err := compileErr(t, reg, first, query); err != nil {
+		t.Errorf("compiling against the first schema: %v", err)
+	}
 }

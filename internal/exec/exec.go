@@ -44,6 +44,8 @@ type Operation struct {
 	Role string
 	// ForceTx forces a transaction even when the global policy would skip it.
 	ForceTx bool
+	// Built is the schema the operation was validated against.
+	Built *schema.Built
 
 	introBytes int64
 }
@@ -361,6 +363,7 @@ func (e *Executor) prepare(ctx context.Context, req Request) (context.Context, *
 		Vars:       vars,
 		Claims:     req.Claims,
 		Role:       req.Role,
+		Built:      e.Built,
 	}
 	// Expose the operation (claims, role, vars) to everything downstream that
 	// only sees a context — notably CompileHook plugins.

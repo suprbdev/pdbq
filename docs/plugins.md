@@ -64,6 +64,14 @@ tables; see [Mutations](mutations.md#what-the-payload-sees)). A
 `CompileHook` that rewrites a statement returned by `next` keeps `Then`;
 the field's value is what the last statement returns.
 
+One plugin instance builds every schema the App serves: one per
+[contract](contracts.md), and again on every watch-mode rebuild, while the
+executors of earlier schemas keep serving. A plugin whose `CompileHook` or
+`RequestHook` needs what its `SchemaHook` learned stores it in
+`SchemaBuilder.Ext[<plugin name>]` and reads it back from the request's
+schema (`compile.Request.Built.Ext`, `exec.Operation.Built.Ext`), never from
+its own fields; `nested-mutations` does this.
+
 Hooks compose middleware-style: call `next(...)` to continue the chain (the
 innermost link is pdbq's default behaviour). Ordering is deterministic —
 priority, then registration order. Users can disable any plugin by name

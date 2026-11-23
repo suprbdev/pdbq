@@ -58,12 +58,16 @@ $ pdbq schema dump -o schema.cache   # introspect + write versioned cache
 $ pdbq schema check --cache schema.cache   # exit 1 on drift (CI gate)
 $ pdbq schema print                  # generated SDL to stdout
 $ pdbq schema print --json           # introspection-format JSON (codegen tooling)
+$ pdbq schema print --contract public  # the schema of one configured contract
 ```
 
 `print --json` runs the standard introspection query in-process and emits the
 spec-shaped `{"data": {"__schema": ...}}` response, ready for
 `graphql-codegen`, `graphql-inspector`, and similar tools. Combined with
 `--schema.cache_path` it needs no database connection.
+
+`--contract <name>` prints the schema of a contract from the `contracts`
+config list instead of the full schema (see [contracts.md](contracts.md)).
 
 See [caching.md](caching.md) for the CI/CD patterns.
 
