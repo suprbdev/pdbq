@@ -12,7 +12,7 @@ import (
 	"github.com/suprbdev/pdbcore/postgis"
 )
 
-// spatialOp compiles one operator of a PostGIS filter (see postgis.Ops).
+// spatialOp compiles one operator of a PostGIS filter (see postgis.Ops()).
 //
 // Every operand — GeoJSON geometry, bounding-box corner, distance — travels as
 // a bind parameter. The SQL text depends only on which operator was used and
@@ -283,9 +283,9 @@ func (s *stmt) spatialFieldSQL(alias string, c *introspect.Column, f *ast.Field,
 		return s.typedGeometryDigitsSQL(expr, digits, gt, f.SelectionSet, depth)
 	}
 	if digits != "" {
-		return postgis.OutputJSONPrecisionSQL(expr, digits), nil
+		return postgis.OutputSQL(expr, postgis.Output{JSON: true, Precision: digits}), nil
 	}
-	return postgis.OutputJSONSQL(expr), nil
+	return postgis.OutputSQL(expr, postgis.Output{JSON: true}), nil
 }
 
 // spatialDerivedSQL renders a derived spatial accessor field (locationArea,
@@ -295,7 +295,7 @@ func (s *stmt) spatialDerivedSQL(alias string, c *introspect.Column, suffix stri
 	if !ok {
 		return "", fmt.Errorf("compile: unknown spatial accessor %q", suffix)
 	}
-	return d.JSONSQL(alias+"."+quoteIdent(c.Name), postgis.FlavourOf(c.PGType)), nil
+	return d.SQL(alias+"."+quoteIdent(c.Name), postgis.FlavourOf(c.PGType), postgis.Output{JSON: true}), nil
 }
 
 // rasterAccessorSQL renders a raster metadata accessor field (rastWidth,
@@ -305,7 +305,7 @@ func (s *stmt) rasterAccessorSQL(alias string, c *introspect.Column, suffix stri
 	if !ok {
 		return "", fmt.Errorf("compile: unknown raster accessor %q", suffix)
 	}
-	return a.JSONSQL(alias + "." + quoteIdent(c.Name)), nil
+	return a.SQL(alias+"."+quoteIdent(c.Name), postgis.Output{JSON: true}), nil
 }
 
 // rasterBand binds the 1-based band number of a raster field's band:

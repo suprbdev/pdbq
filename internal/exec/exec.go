@@ -1497,7 +1497,11 @@ func (e *Executor) gqlError(err error, f *ast.Field) *gqlerror.Error {
 			ext["table"] = pgErr.TableName
 			ext["constraint"] = pgErr.ConstraintName
 		} else {
-			msg = pgexec.SanitizeMessage(pgErr, e.Opts.StrictErrors)
+			detail := pgexec.Prod
+			if e.Opts.StrictErrors {
+				detail = pgexec.Strict
+			}
+			msg = pgexec.Classify(pgErr, detail).Message
 			if e.Built != nil && !e.Opts.StrictErrors {
 				msg = integrityMessage(e.Built.Catalog, pgErr, msg)
 			}

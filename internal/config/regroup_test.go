@@ -58,12 +58,15 @@ func TestMovedKeysFromEnv(t *testing.T) {
 }
 
 func TestRemovedKeysRejected(t *testing.T) {
-	for _, yaml := range []string{
-		"transactions:\n  mutations: true\n",
-		"plugins:\n  settings:\n    nested_mutations:\n      force_transactions: true\n",
+	for yaml, want := range map[string]string{
+		"transactions:\n  mutations: true\n":                                             "unknown key transactions.mutations: removed: mutations always run in a transaction",
+		"plugins:\n  settings:\n    nested_mutations:\n      force_transactions: true\n": "unknown key plugins.settings.nested_mutations.force_transactions: removed: nested mutations always run in a transaction",
 	} {
-		wantLoadError(t, writeConfig(t, "auth:\n  jwt:\n    secret: s\n"+yaml), "unknown key")
+		wantLoadError(t, writeConfig(t, "auth:\n  jwt:\n    secret: s\n"+yaml), want)
 	}
+	t.Setenv("PDBQ_AUTH_JWT_SECRET", "s")
+	t.Setenv("PDBQ_TRANSACTIONS_MUTATIONS", "false")
+	wantLoadError(t, "", "unknown environment variable PDBQ_TRANSACTIONS_MUTATIONS (transactions.mutations): removed: mutations always run in a transaction")
 }
 
 func TestRegroupedKeysLoad(t *testing.T) {
@@ -142,4 +145,18 @@ func TestRegroupDefaults(t *testing.T) {
 	if cfg.Incremental.MaxResponses != 5 || cfg.TX.Partial.MaxItems != 1000 || cfg.TX.Partial.Enabled {
 		t.Errorf("incremental.max_responses %d, transactions.partial %+v", cfg.Incremental.MaxResponses, cfg.TX.Partial)
 	}
+}
+
+func TestDoubledUnderscoreAfterSectionRejected(t *testing.T) {
+	t.Setenv("PDBQ_AUTH_JWT_SECRET", "s")
+	t.Setenv("PDBQ_ROLES__ALLOWED", "app_user")
+	wantLoadError(t, "", "unknown environment variable PDBQ_ROLES__ALLOWED (roles_allowed): did you mean PDBQ_ROLES_ALLOWED?")
+}
+
+func TestSharedDurationsValidated(t *testing.T) {
+	t.Setenv("PDBQ_AUTH_JWT_SECRET", "s")
+	t.Setenv("PDBQ_DATABASE_CONNECT__TIMEOUT", "0s")
+	t.Setenv("PDBQ_WATCH_ENABLED", "true")
+	t.Setenv("PDBQ_WATCH_POLL__INTERVAL", "0s")
+	wantLoadError(t, "", "database.connect_timeout must be > 0", "watch.poll_interval must be > 0")
 }

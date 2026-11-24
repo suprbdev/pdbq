@@ -45,8 +45,8 @@ same names: `limits.*` (`max_body_bytes`, `max_depth`, `max_cost`,
 | Key | Default | Notes |
 |---|---|---|
 | `database.url` | — | required |
-| `database.max_conns` | 10 | maximum pooled connections |
-| `database.connect_timeout` | `10s` | timeout for establishing a connection |
+| `database.max_conns` | 10 | maximum pooled connections; `0` uses the pgx pool default, negative is an error |
+| `database.connect_timeout` | `10s` | timeout for establishing a connection; must be positive |
 | `database.statement_timeout` | `25s` | per-statement timeout on every request (`0` disables); kept below `server.request_timeout` so a slow statement fails with SQLSTATE `57014` (code `pg:57014`) before the request is cut off |
 | `server.addr` | `:8080` | |
 | `server.graphiql` | `false` | GraphiQL playground at `/` (enable for dev) |
@@ -128,7 +128,7 @@ same names: `limits.*` (`max_body_bytes`, `max_depth`, `max_cost`,
 | `transactions.partial.enabled` | `false` | let a request opt in (`extensions.partialMutations`) to running each mutation root field in its own savepoint, so a failing field does not roll back the others; see [Mutations](mutations.md#partial-success). Same key as pdbr's partial bulk writes |
 | `transactions.partial.max_items` | 1000 | most mutation root fields a partial request may have (each is a statement and a savepoint); more is rejected; must be `>= 1` |
 | `watch.enabled` | `false` | dev only; refuses to combine with cache |
-| `watch.poll_interval` | `5s` | fallback polling when event triggers can't be installed |
+| `watch.poll_interval` | `5s` | fallback polling when event triggers can't be installed; must be positive when `watch.enabled` |
 | `watch.channel` | `pdbq_ddl` | NOTIFY channel used by the DDL event trigger |
 | `errors.detail` | `prod` | `dev` exposes full PG error detail; `strict` hides even constraint-violation messages; status and `extensions.code` never change ([errors.md](errors.md)) |
 | `plugins.disabled` | `[]` | built-in plugin names to disable: `smart_comments`, `simple_names`, `advanced_filters`, `postgis`, `contrib`, `aggregates`, `nested_mutations`; any other name is an error (with a "did you mean" hint) |

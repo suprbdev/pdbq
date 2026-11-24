@@ -111,7 +111,7 @@ func (s *stmt) groupKeyText(expr string, c *introspect.Column) string {
 		return "to_jsonb(" + expr + ")::text"
 	}
 	if postgis.FlavourOf(c.PGType).Spatial() {
-		return "to_jsonb(" + postgis.OutputSQL(expr) + ") #>> '{}'"
+		return "to_jsonb(" + postgis.OutputSQL(expr, postgis.Output{}) + ") #>> '{}'"
 	}
 	return "to_jsonb(" + s.exprJSON(expr, c) + ") #>> '{}'"
 }

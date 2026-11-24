@@ -77,7 +77,7 @@ const (
 	KindContribDerived FieldKind = "contrib_derived"
 	// KindRasterAccessor is a metadata accessor of a postgis_raster column
 	// (postgis plugin): <field>Width, <field>Srid, <field>Envelope, ...,
-	// named by Meta.Nested["suffix"] (see postgis.RasterAccessors).
+	// named by Meta.Nested["suffix"] (see postgis.RasterAccessors()).
 	KindRasterAccessor FieldKind = "raster_accessor"
 	// KindRasterValue is <field>Value(point:, band:) of a raster column
 	// (postgis plugin): the pixel value of a band at a point (ST_Value).

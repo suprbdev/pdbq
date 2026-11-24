@@ -60,47 +60,15 @@ const (
 // Hides reports whether the smart tags in comment hide their object from
 // action a: a bare @omit, an @omit listing a, or the @behavior token
 // mapping to a (-select, -insert, -update, -delete, the PostGraphile V5
-// -filterBy and -orderBy, and their deprecated forms -filter and -order).
+// -filterBy and -orderBy, and their deprecated forms -filter and -order;
+// see smarttags.Tags.Omits).
 func Hides(comment string, a Action) bool {
 	if !strings.Contains(comment, "@") {
 		return false
 	}
 	tags, _ := smarttags.Parse(comment)
 	actions, everything := tags.Omits()
-	if everything || actions[string(a)] {
-		return true
-	}
-	for _, v := range tags.All("behavior") {
-		for _, tok := range smarttags.SplitList(v) {
-			if BehaviorActions[strings.ToLower(tok)] == a {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-// BehaviorActions maps the negative @behavior tokens that hide an object
-// from an action, lowercased, to that action. pdbcore's smarttags.Omits
-// maps the rest of them (and the deprecated -filter and -order, see
-// [DeprecatedBehaviors]); pdbq adds PostGraphile V5's -filterBy and
-// -orderBy.
-var BehaviorActions = map[string]Action{
-	"-select":   Read,
-	"-insert":   Create,
-	"-update":   Update,
-	"-delete":   Delete,
-	"-filterby": Filter,
-	"-orderby":  Order,
-	"-filter":   Filter,
-	"-order":    Order,
-}
-
-// DeprecatedBehaviors maps the deprecated @behavior tokens, lowercased, to
-// the PostGraphile V5 token replacing them.
-var DeprecatedBehaviors = map[string]string{
-	"-filter": "-filterBy",
-	"-order":  "-orderBy",
+	return everything || actions[string(a)]
 }
 
 // Everything reports whether comment carries a bare @omit.

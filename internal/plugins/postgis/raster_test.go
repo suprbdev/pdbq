@@ -60,7 +60,7 @@ func TestRasterFields(t *testing.T) {
 	if obj.Field("rast") != nil || obj.Field("mask") != nil {
 		t.Error("raster columns have an output field")
 	}
-	for _, a := range postgis.RasterAccessors {
+	for _, a := range postgis.RasterAccessors() {
 		f := obj.Field("rast" + a.Suffix)
 		if f == nil || f.Type != a.Type || f.Meta.Kind != schema.KindRasterAccessor || f.Meta.Nested["suffix"] != a.Suffix {
 			t.Errorf("rast%s: %+v", a.Suffix, f)

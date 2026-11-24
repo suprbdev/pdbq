@@ -6,9 +6,9 @@
 database:
   # PostgreSQL connection URL, e.g. postgres://user:pass@host:5432/db. Also honours standard PG* env vars when empty.
   url: ""
-  # Maximum pooled connections.
+  # Maximum pooled connections; 0 uses the pgx pool default (the larger of 4 and the number of CPUs).
   max_conns: 10
-  # Timeout for establishing a connection.
+  # Timeout for establishing a connection (must be positive).
   connect_timeout: "10s"
   # Per-statement timeout applied to every request (0 disables). Keep it below the HTTP request timeout so a slow statement fails with SQLSTATE 57014 (a timeout error the client can act on) before the request is cut off.
   statement_timeout: "25s"
@@ -223,7 +223,7 @@ transactions:
 watch:
   # Re-introspect and hot-swap the schema on DDL changes (dev only; refuses to combine with schema.cache_path).
   enabled: false
-  # Poll interval used when event triggers cannot be installed.
+  # Poll interval used when event triggers cannot be installed (must be positive).
   poll_interval: "5s"
   # NOTIFY channel used by the DDL event trigger.
   channel: "pdbq_ddl"

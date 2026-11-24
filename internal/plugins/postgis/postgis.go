@@ -313,12 +313,12 @@ func (p *Plugin) ensureOpsInput(b *schema.Builder) {
 			"Bounding-box operators and dwithin can use a GiST index; the exact " +
 			"predicates are precise but scan more rows.",
 	}
-	for _, op := range postgis.Ops {
+	for _, op := range postgis.Ops() {
 		desc := op.Description
-		if op.Index {
+		if op.Indexable {
 			desc += " Index-usable."
 		}
-		in.AddField(&schema.InputField{Name: op.Name, Type: op.Arg, Description: desc})
+		in.AddField(&schema.InputField{Name: op.Name, Type: op.OperandType, Description: desc})
 	}
 	b.Inputs[opsInputName] = in
 }
@@ -337,7 +337,7 @@ func (p *Plugin) addDerivedFields(b *schema.Builder, t *introspect.Table, cols [
 			continue
 		}
 		base := b.Inflect(inflect.KindFieldName, inflect.Input{Schema: t.Schema, Table: t.Name, Column: c.Name})
-		for _, d := range postgis.Deriveds {
+		for _, d := range postgis.Deriveds() {
 			if !derivedApplies(d, c) {
 				continue
 			}
@@ -710,7 +710,7 @@ func (rb *rasterBuild) addFields(t *introspect.Table, cols []*introspect.Column)
 			continue
 		}
 		base := b.Inflect(inflect.KindFieldName, inflect.Input{Schema: t.Schema, Table: t.Name, Column: c.Name})
-		for _, a := range postgis.RasterAccessors {
+		for _, a := range postgis.RasterAccessors() {
 			add(&schema.Field{
 				Name: base + a.Suffix, Type: a.Type, Description: a.Description,
 				Meta: &schema.FieldMeta{Kind: schema.KindRasterAccessor, Table: t, Column: c, Nested: map[string]any{"suffix": a.Suffix}},
