@@ -56,6 +56,12 @@ becomes the release notes of the next tag.
   vocabulary, so pdbq and pdbr warn about the same comments.
 - Built against pdbcore's API hygiene changes (see its changelog).
 
+### Fixed
+
+- A live boot no longer alphabetises `schema.schemas` in place; type names
+  resolve through the schemas in their configured order, as on a
+  schema-cache boot.
+
 ## [0.30.0] - 2026-11-24
 
 ### Added
