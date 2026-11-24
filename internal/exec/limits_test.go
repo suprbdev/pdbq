@@ -360,3 +360,21 @@ func TestCostRasterFields(t *testing.T) {
 		}
 	}
 }
+
+// TestCostMutationResultListPricedAtPageSize charges the result list of a
+// custom mutation returning SETOF rows like a connection without first: the
+// page-size cap rows the compiled LIMIT fetches, each with its nested
+// connection.
+func TestCostMutationResultListPricedAtPageSize(t *testing.T) {
+	cat := testutil.FixtureCatalog()
+	cat.Functions = append(cat.Functions, &introspect.Function{
+		Schema: "public", Name: "publish_posts",
+		Args:       []introspect.FuncArg{{Name: "post_ids", PGType: "_int4", TypeSchema: "pg_catalog"}},
+		ReturnType: "posts", ReturnTypeSchema: "public", ReturnsSet: true, Volatility: introspect.VolatilityVolatile,
+	})
+	list := costWith(t, cat, `mutation { publishPosts(input: {postIds: [1]}) { posts { id commentsByPostId { nodes { id body } } } } }`, nil)
+	conn := cost(t, `{ allPosts { nodes { id commentsByPostId { nodes { id body } } } } }`, nil)
+	if want := conn - 99; list != want {
+		t.Errorf("mutation result list costs %d, want %d like the same rows through a connection (less its nodes fields, plus the payload)", list, want)
+	}
+}
