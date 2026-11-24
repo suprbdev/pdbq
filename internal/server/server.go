@@ -121,7 +121,7 @@ func New(cfg config.Config, authn *Authenticator, ex *exec.Executor, sdl string,
 	s.executor.Store(ex)
 	s.sdl.Store(&sdl)
 	if cfg.PersistedQueries.APQ || cfg.PersistedQueries.Path != "" {
-		pq, err := newPQStore(cfg.PersistedQueries.Path)
+		pq, err := newPQStore(cfg.PersistedQueries.Path, cfg.PersistedQueries.MaxBytes, cfg.PersistedQueries.MaxEntryBytes)
 		if err != nil {
 			return nil, err
 		}
@@ -305,6 +305,9 @@ type gqlHTTPRequest struct {
 	OperationName string          `json:"operationName"`
 	Variables     map[string]any  `json:"variables"`
 	Extensions    json.RawMessage `json:"extensions"`
+	// apqHash is the hash the request asks to register its query under
+	// (see applyPersisted).
+	apqHash string
 }
 
 // partialMutations reports the request's extensions.partialMutations opt-in;
@@ -371,16 +374,11 @@ func (s *Server) handleGraphQL(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	claims, role, err := s.auth.Authenticate(r)
-	if err != nil {
-		writeAuthError(w, err)
+	claims, role, ok := s.authenticate(w, r)
+	if !ok {
 		return
 	}
-	if role != "" && !pgexec.ValidRole(role) {
-		w.Header().Set("WWW-Authenticate", auth.Challenge(auth.ErrRoleNotAllowed))
-		writeError(w, http.StatusForbidden, errcode.RoleNotAllowed, fmt.Sprintf("role %q is not allowed", role))
-		return
-	}
+	s.registerPersisted(ex, &req)
 
 	execReq := exec.Request{
 		Query:            req.Query,
@@ -433,7 +431,13 @@ func (s *Server) writeResult(w http.ResponseWriter, res *exec.Result) {
 	}
 }
 
-func (s *Server) handleSDL(w http.ResponseWriter, _ *http.Request) {
+// handleSDL serves the schema SDL to the requests /graphql would answer an
+// introspection query for: without credentials only when roles.anonymous is
+// set, else 401 (or 403) like /graphql.
+func (s *Server) handleSDL(w http.ResponseWriter, r *http.Request) {
+	if _, _, ok := s.authenticate(w, r); !ok {
+		return
+	}
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.Write([]byte(*s.sdl.Load())) //nolint:errcheck
 }
@@ -449,6 +453,23 @@ func (s *Server) handleGraphiQL(w http.ResponseWriter, r *http.Request) {
 		page = strings.Replace(page, "{url: '/graphql'}", "{url: '"+s.prefix+"/graphql'}", 1)
 	}
 	w.Write([]byte(page)) //nolint:errcheck
+}
+
+// authenticate resolves r's claims and role. When the credentials are
+// refused or the role can never be assumed it answers the request (401 or
+// 403) and reports false.
+func (s *Server) authenticate(w http.ResponseWriter, r *http.Request) (map[string]any, string, bool) {
+	claims, role, err := s.auth.Authenticate(r)
+	if err != nil {
+		writeAuthError(w, err)
+		return nil, "", false
+	}
+	if role != "" && !pgexec.ValidRole(role) {
+		w.Header().Set("WWW-Authenticate", auth.Challenge(auth.ErrRoleNotAllowed))
+		writeError(w, http.StatusForbidden, errcode.RoleNotAllowed, fmt.Sprintf("role %q is not allowed", role))
+		return nil, "", false
+	}
+	return claims, role, true
 }
 
 // writeAuthError answers a request whose credentials were refused, with

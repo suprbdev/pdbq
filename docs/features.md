@@ -147,6 +147,7 @@ These shipped features are outside the 1.0 compatibility promise: they may chang
 - [x] Scalar returns (via `to_jsonb`)
 - [x] `SETOF <table>` returns → list of the table's object type with full selection support
 - [x] `SETOF <scalar>` returns → scalar lists
+- [x] Set-returning function lists (root and computed) cut at `limits.max_page_size` items and costed as that many rows
 - [x] Single-row table returns with selection support
 - [x] Composite returns → the composite's object type (except `auth.mint_type`, minted into a token string)
 - [x] Rows nested in other values (`<table>[]` results and columns, composite attributes, `RETURNS TABLE` columns and columns of a row type) → `<Type>Row`, the columns the table's type exposes (no `@omit read` or contract-hidden column, no raster), built with `json_build_object`; values of an omitted or contract-hidden table's row type have no field
@@ -178,7 +179,7 @@ These shipped features are outside the 1.0 compatibility promise: they may chang
 - [x] One transaction per operation; mutations abort remaining root fields on error
 - [x] Queries transaction-free unless RLS context requires one
 - [x] Plugins can force a transaction (`op.ForceTx`)
-- [x] Transactions sent as one pipelined batch (identity, root field statements, commit): one round trip for queries, two for single-statement mutations; multi-statement mutations (and custom mutations whose payload is read by a second statement) run statement by statement
+- [x] Transactions sent as one pipelined batch (identity, root field statements, commit): one round trip for queries, two for single-statement mutations; a query field's database error re-runs the query with a savepoint per root field, so the other fields keep their values; multi-statement mutations (and custom mutations whose payload is read by a second statement) run statement by statement
 - [x] Isolation level config (read_committed / repeatable_read / serializable)
 - [x] Statement timeout per connection (`database.statement_timeout`)
 - [x] PG error → GraphQL error mapping with `errors.detail: dev|prod` (constraint violations pass through in prod, internals sanitized)
@@ -199,7 +200,7 @@ These shipped features are outside the 1.0 compatibility promise: they may chang
 - [x] Machine-readable `extensions.code` on every error (HTTP bodies, GraphQL errors, WebSocket), one closed vocabulary shared with pdbr, `pg:<SQLSTATE>` for database errors — see [Errors](errors.md)
 - [x] Atomic schema hot-swap (in-flight requests finish on the old schema)
 - [x] `/metrics` (Prometheus) endpoint (opt-in `metrics.enabled`, optional separate `metrics.addr`; see [metrics.md](metrics.md))
-- [x] Persisted queries / APQ (`persisted_queries.apq` Apollo protocol, `persisted_queries.path` allowlist file, `persisted_queries.only` lockdown)
+- [x] Persisted queries / APQ (`persisted_queries.apq` Apollo protocol, `persisted_queries.path` allowlist file, `persisted_queries.only` lockdown); APQ registration only after authentication and document validation, bounded by `persisted_queries.max_bytes` / `max_entry_bytes`
 - [x] `@defer` / `@stream` incremental delivery (opt-in `incremental.enabled`): `multipart/mixed` over HTTP (`incrementalSpec=v0.2` and `deferSpec=20220824` shapes), `next` messages over WebSocket; deferred fragments and stream batches run as their own statements in one repeatable read snapshot under the request's RLS identity — see [Incremental delivery](incremental.md)
 - [x] Schema contracts — named schema variants that hide tagged tables, columns, functions and relations per audience (e.g. `public`/`partner`/`internal`), each with its own SDL export (`schema print --contract`) and served endpoint; builds on the `@omit` machinery in `smart_comments` ([contracts.md](contracts.md))
 - [x] CORS configuration (`server.cors_origins`: exact-match allowlist or `*`)

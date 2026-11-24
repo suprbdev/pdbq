@@ -2226,8 +2226,12 @@ func TestFunctionCalls(t *testing.T) {
 	t.Run("spatial operands and postgis input errors", func(t *testing.T) {
 		prod := testServer(t, func(c *config.Config) { c.Errors.Detail = "prod" })
 		res := post(t, prod.URL, `{ allPlaces(filter: {location: {intersects: "SRID=3857;POINT(-0.1281 51.508)"}}) { nodes { id } } }`, nil)
+		if len(res.Errors) != 1 || !strings.Contains(res.Errors[0].Message, "spatial value has SRID 3857, but the column's SRID is 4326") {
+			t.Errorf("mixed SRID: errors = %+v, want the SRID mismatch", res.Errors)
+		}
+		res = post(t, prod.URL, `{ allPlaces(filter: {location: {intersects: "POINT(1)"}}) { nodes { id } } }`, nil)
 		if len(res.Errors) != 1 || res.Errors[0].Message != "invalid geometry" {
-			t.Errorf("mixed SRID: errors = %+v, want invalid geometry", res.Errors)
+			t.Errorf("unparsable WKT: errors = %+v, want invalid geometry", res.Errors)
 		}
 		res = post(t, prod.URL, `{ allPlaces(filter: {location: {intersects: "POINT(-0.1281 51.508)"}}) { nodes { name } } }`, nil)
 		requireNoErrors(t, res)

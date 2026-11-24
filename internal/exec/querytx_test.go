@@ -189,12 +189,23 @@ func TestBatchTxAlwaysWithClaimsJSONSetting(t *testing.T) {
 	}
 }
 
+// TestBatchTxQueryFieldErrors reruns a query whose batch a field's database
+// error cut short with each field in its own savepoint: the failing field
+// reports its own error, the fields after it their values, and the response
+// has no error without a path.
 func TestBatchTxQueryFieldErrors(t *testing.T) {
 	f := &fakeBatch{attempts: []attempt{{stmts: map[string]outcome{
 		"a": {raw: `1`},
 		"b": {err: pgFailure},
 	}}}}
+	r := &txRun{tx: &spTx{rows: map[string]outcome{
+		"a": {raw: `1`},
+		"b": {err: pgFailure},
+		"c": {raw: `3`},
+		"d": {raw: `5`},
+	}}}
 	e := newBatchExecutor(t, Options{TxPerRequest: true, DevErrors: true}, f)
+	e.runTx = r.runTx
 	res := e.Execute(context.Background(), Request{Query: `{
 		a: userById(id: 1) { id }
 		b: userById(id: 2) { id }
@@ -203,17 +214,46 @@ func TestBatchTxQueryFieldErrors(t *testing.T) {
 		bad: userById(id: 4) { id }
 		d: userById(id: 5) { id }
 	}`})
-	want := `{"data":{"a":1,"b":null,"c":null,"t":"Query","bad":null,"d":null},"errors":[` +
+	want := `{"data":{"a":1,"b":null,"c":3,"t":"Query","bad":null,"d":5},"errors":[` +
 		`{"message":"division by zero","path":["b"],"extensions":{"code":"pg:22012","constraint":"","detail":"","hint":"","table":""}},` +
-		`{"message":"current transaction is aborted, commands ignored until end of transaction block","path":["c"],"extensions":{"code":"pg:25P02","constraint":"","detail":"","hint":"","table":""}},` +
-		`{"message":"bad field","path":["bad"],"extensions":{"code":"internal"}},` +
-		`{"message":"current transaction is aborted, commands ignored until end of transaction block","path":["d"],"extensions":{"code":"pg:25P02","constraint":"","detail":"","hint":"","table":""}},` +
-		`{"message":"commit unexpectedly resulted in rollback","extensions":{"code":"internal"}}]}`
+		`{"message":"bad field","path":["bad"],"extensions":{"code":"internal"}}]}`
 	if got := resultJSON(t, res); got != want {
 		t.Fatalf("response:\n got %s\nwant %s", got, want)
 	}
 	if got := strings.Join(f.calls[0].sql, ","); got != "a,b,c,d" {
 		t.Errorf("statements = %s, want a,b,c,d (compile errors left out)", got)
+	}
+	if r.calls != 1 {
+		t.Fatalf("savepoint transactions = %d, want 1", r.calls)
+	}
+	wantLog := []string{
+		"SAVEPOINT pdb_savepoint", "a", "RELEASE SAVEPOINT pdb_savepoint",
+		"SAVEPOINT pdb_savepoint", "b", "ROLLBACK TO SAVEPOINT pdb_savepoint", "RELEASE SAVEPOINT pdb_savepoint",
+		"SAVEPOINT pdb_savepoint", "c", "RELEASE SAVEPOINT pdb_savepoint",
+		"SAVEPOINT pdb_savepoint", "d", "RELEASE SAVEPOINT pdb_savepoint",
+	}
+	if got := strings.Join(r.tx.log, ","); got != strings.Join(wantLog, ",") {
+		t.Errorf("savepoint statements = %s, want %s", got, strings.Join(wantLog, ","))
+	}
+}
+
+// TestBatchTxQueryLastFieldError keeps the batch's results when the failing
+// field was the last statement: nothing was skipped, so nothing reruns.
+func TestBatchTxQueryLastFieldError(t *testing.T) {
+	f := &fakeBatch{attempts: []attempt{{stmts: map[string]outcome{
+		"a": {raw: `1`},
+		"b": {err: pgFailure},
+	}}}}
+	r := &txRun{tx: &spTx{}}
+	e := newBatchExecutor(t, Options{TxPerRequest: true}, f)
+	e.runTx = r.runTx
+	res := e.Execute(context.Background(), Request{Query: `{ a: userById(id: 1) { id } b: userById(id: 2) { id } }`})
+	want := `{"data":{"a":1,"b":null},"errors":[{"message":"division by zero","path":["b"],"extensions":{"code":"pg:22012"}}]}`
+	if got := resultJSON(t, res); got != want {
+		t.Fatalf("response:\n got %s\nwant %s", got, want)
+	}
+	if r.calls != 0 {
+		t.Errorf("savepoint transactions = %d, want 0", r.calls)
 	}
 }
 
@@ -222,14 +262,18 @@ func TestBatchTxQueryReadError(t *testing.T) {
 		"a": {err: errors.New("conn closed")},
 		"b": {raw: `2`},
 	}}}}
+	r := &txRun{tx: &spTx{}}
 	e := newBatchExecutor(t, Options{TxPerRequest: true, DevErrors: true}, f)
+	e.runTx = r.runTx
 	res := e.Execute(context.Background(), Request{Query: `{ a: userById(id: 1) { id } b: userById(id: 2) { id } }`})
 	want := `{"data":{"a":null,"b":null},"errors":[` +
 		`{"message":"conn closed","path":["a"],"extensions":{"code":"internal"}},` +
-		`{"message":"current transaction is aborted, commands ignored until end of transaction block","path":["b"],"extensions":{"code":"pg:25P02","constraint":"","detail":"","hint":"","table":""}},` +
-		`{"message":"commit unexpectedly resulted in rollback","extensions":{"code":"internal"}}]}`
+		`{"message":"current transaction is aborted, commands ignored until end of transaction block","path":["b"],"extensions":{"code":"pg:25P02","constraint":"","detail":"","hint":"","table":""}}]}`
 	if got := resultJSON(t, res); got != want {
 		t.Fatalf("response:\n got %s\nwant %s", got, want)
+	}
+	if r.calls != 0 {
+		t.Errorf("savepoint transactions = %d, want 0 after a non-database error", r.calls)
 	}
 }
 
@@ -276,10 +320,12 @@ func TestBatchTxRetries(t *testing.T) {
 	})
 	t.Run("non-retryable errors are not retried", func(t *testing.T) {
 		f := &fakeBatch{attempts: []attempt{{stmts: map[string]outcome{"a": {err: pgFailure}}}}}
+		r := &txRun{tx: &spTx{rows: map[string]outcome{"a": {err: pgFailure}, "b": {raw: `2`}}}}
 		e := newBatchExecutor(t, Options{TxPerRequest: true, TxRetries: 3}, f)
+		e.runTx = r.runTx
 		e.Execute(context.Background(), Request{Query: query})
-		if len(f.calls) != 1 {
-			t.Fatalf("QueryTx calls = %d, want 1", len(f.calls))
+		if len(f.calls) != 1 || r.calls != 1 {
+			t.Fatalf("QueryTx calls = %d, savepoint transactions = %d, want 1 each", len(f.calls), r.calls)
 		}
 	})
 }

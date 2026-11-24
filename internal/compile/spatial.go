@@ -98,9 +98,9 @@ func (s *stmt) spatialOp(f postgis.Flavour, srid int, ref, op string, val any) (
 // to render so a geography column compared through a geometry-only predicate
 // gets a geometry operand with the same SRID.
 func (s *stmt) spatialOperandAs(f, render postgis.Flavour, srid int, v any) (string, error) {
-	val, err := postgis.ParseFor(v, f, srid)
+	val, err := parseSpatialOperand(v, f, srid)
 	if err != nil {
-		return "", errUser("%s", err.Error())
+		return "", err
 	}
 	val.Flavour = render
 	return val.SQL(s.param(val.Param)), nil
@@ -110,11 +110,26 @@ func (s *stmt) spatialOperandAs(f, render postgis.Flavour, srid int, v any) (str
 // value expression for a column of flavour f and typmod SRID srid (see
 // postgis.ParseFor).
 func (s *stmt) spatialOperand(f postgis.Flavour, srid int, v any) (string, error) {
-	val, err := postgis.ParseFor(v, f, srid)
+	val, err := parseSpatialOperand(v, f, srid)
 	if err != nil {
-		return "", errUser("%s", err.Error())
+		return "", err
 	}
 	return val.SQL(s.param(val.Param)), nil
+}
+
+// parseSpatialOperand parses an operand for a column of flavour f and typmod
+// SRID srid (see postgis.ParseFor). GeoJSON is reprojected to srid, but WKT
+// is not, so an EWKT value naming another SRID is rejected here rather than
+// failing in PostGIS on mixed SRIDs.
+func parseSpatialOperand(v any, f postgis.Flavour, srid int) (postgis.Value, error) {
+	val, err := postgis.ParseFor(v, f, srid)
+	if err != nil {
+		return val, errUser("%s", err.Error())
+	}
+	if _, wkt := v.(string); wkt && srid > 0 && val.SRID != srid {
+		return val, errUser("spatial value has SRID %d, but the column's SRID is %d: send it in SRID %d or as GeoJSON (reprojected)", val.SRID, srid, srid)
+	}
+	return val, nil
 }
 
 // bboxExpr renders a BBoxInput as ST_MakeEnvelope over four bind parameters.

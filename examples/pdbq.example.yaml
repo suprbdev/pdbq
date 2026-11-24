@@ -18,9 +18,9 @@ server:
   addr: ":8080"
   # Serve the GraphiQL playground at / (off by default; enable for development).
   graphiql: false
-  # Answer __schema / __type introspection queries, serve the generated SDL at /schema.graphql and add "Did you mean" suggestions to validation errors. On by default, like pdbr's OpenAPI document; it reveals every table, column and relation to unauthenticated callers, so disable it in production to hide the schema shape (__typename keeps working).
+  # Answer __schema / __type introspection queries, serve the generated SDL at /schema.graphql (authenticated like /graphql) and add "Did you mean" suggestions to validation errors. On by default, like pdbr's OpenAPI document; it reveals every table, column and relation to every caller /graphql accepts (unauthenticated ones when roles.anonymous is set), so disable it in production to hide the schema shape (__typename keeps working).
   introspection: true
-  # Overall HTTP request timeout.
+  # Overall HTTP request timeout; must be at least 1s.
   request_timeout: "30s"
   # Timeout of the database ping behind GET /readyz; an unreachable or slow database answers 503. /healthz stays a liveness check.
   readyz_timeout: "2s"
@@ -44,9 +44,9 @@ limits:
   max_body_bytes: 1048576
   # Maximum GraphQL selection depth per operation.
   max_depth: 15
-  # Maximum estimated cost per operation: each selected field costs 1 (plus its surcharges), and a list multiplies its selections by the rows it can fetch: its first/last, else max_page_size (the page a connection or list fetches when given neither), and 10 for a list without page arguments. @costMultiplier smart comments tune the estimate.
+  # Maximum estimated cost per operation: each selected field costs 1 (plus its surcharges), and a list multiplies its selections by the rows it can fetch: its first/last, else max_page_size (the page a connection or list fetches when given neither, and the rows of a list a set-returning function returns), and 10 for other lists without page arguments. @costMultiplier smart comments tune the estimate.
   max_cost: 100000
-  # Maximum rows per page; first/last above this are rejected and it is the default page size when neither is given.
+  # Maximum rows per page; first/last above this are rejected and it is the default page size when neither is given. A list returned by a set-returning function (root function or computed column) holds at most this many items.
   max_page_size: 100
   # Characters of a document a full-text headline (<field>Headline) reads: text is cut to its first max_headline_document characters, a longer json/jsonb document gets a null headline. ts_headline's work grows with the document, and the cost estimate charges each headline by this bound.
   max_headline_document: 65536
@@ -68,6 +68,10 @@ persisted_queries:
   path: ""
   # Reject requests that do not reference a persisted query via the persistedQuery extension (requires apq or path).
   only: false
+  # Memory the APQ-registered documents may hold (query text plus hash and bookkeeping); least recently used registrations are evicted beyond it. Documents preloaded from path do not count.
+  max_bytes: 8388608
+  # Size above which a document sent for APQ registration is executed but not registered.
+  max_entry_bytes: 65536
 
 subscriptions:
   # Serve PostGraphile-style simple subscriptions (Subscription.listen over LISTEN/NOTIFY) on /graphql over WebSocket, graphql-transport-ws or the legacy graphql-ws subprotocol. Off by default; while off the schema has no Subscription type.

@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestDefaultsValid(t *testing.T) {
@@ -75,6 +76,10 @@ func TestValidateRejects(t *testing.T) {
 		"body bytes":    func(c *Config) { c.Limits.MaxBodyBytes = 0 },
 		"partial items": func(c *Config) { c.TX.Partial.MaxItems = 0 },
 		"pq only":       func(c *Config) { c.PersistedQueries.Only = true },
+		"pq bytes":      func(c *Config) { c.PersistedQueries.MaxBytes = 0 },
+		"pq entry":      func(c *Config) { c.PersistedQueries.MaxEntryBytes = 0 },
+		"no timeout":    func(c *Config) { c.Server.RequestTimeout = 0 },
+		"short timeout": func(c *Config) { c.Server.RequestTimeout = 500 * time.Millisecond },
 		"watch channel": func(c *Config) { c.Watch.Enabled = true; c.Watch.Channel = "bad$$chan" },
 		"trusted proxy": func(c *Config) { c.Auth.Headers.TrustedProxies = []string{"10.0.0.0/8", "not-an-ip"} },
 		"metrics path":  func(c *Config) { c.Metrics.Enabled = true; c.Metrics.Path = "metrics" },

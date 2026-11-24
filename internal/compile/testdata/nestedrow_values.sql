@@ -7,11 +7,12 @@ SELECT coalesce(json_agg(__s_2.data), '[]'::json) AS data
 FROM (
   SELECT json_build_object('n', __t_1."n", 'p', CASE WHEN (__t_1."p")::text IS NULL THEN NULL ELSE json_build_object('id', (__t_1."p")."id", 'authorId', (__t_1."p")."author_id") END) AS data
   FROM "public"."post_tab"() AS __t_1
+  LIMIT 100
 ) AS __s_2
 -- args: null
 
 -- field: vaultBoxes
-SELECT coalesce(json_agg(CASE WHEN (__v.v)::text IS NULL THEN NULL ELSE json_build_object('label', (__v.v)."label") END), '[]'::json) AS data FROM (SELECT "public"."vault_boxes"() AS v) AS __v
+SELECT coalesce(json_agg(CASE WHEN (__v.v)::text IS NULL THEN NULL ELSE json_build_object('label', (__v.v)."label") END), '[]'::json) AS data FROM (SELECT "public"."vault_boxes"() AS v LIMIT 100) AS __v
 -- args: null
 
 -- field: allHolders

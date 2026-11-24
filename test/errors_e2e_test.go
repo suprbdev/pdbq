@@ -144,7 +144,7 @@ func TestErrorCodesE2E(t *testing.T) {
 	}).URL
 	shallow := testServer(t, func(c *config.Config) { c.Limits.MaxDepth = 2 }).URL
 	timeout := testServer(t, func(c *config.Config) {
-		c.Server.RequestTimeout = 300 * time.Millisecond
+		c.Server.RequestTimeout = time.Second
 		c.Database.StatementTimeout = 5 * time.Second
 	}).URL
 	locked := testServer(t, func(c *config.Config) {

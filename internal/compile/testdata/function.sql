@@ -9,6 +9,7 @@ FROM (
     WHERE __t_2."id" = __t_1."author_id"
     LIMIT 1
   ) AS __l_3 ON true
+  LIMIT 100
 ) AS __s_4
 -- args: ["graphql"]
 

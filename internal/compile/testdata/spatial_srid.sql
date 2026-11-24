@@ -20,7 +20,7 @@ FROM (
   LIMIT 101
 ) AS __s_2
 GROUP BY ()
--- args: ["SRID=3857;POINT(1 2)",100]
+-- args: ["SRID=4326;POINT(1 2)",100]
 
 -- field: allPlaces
 SELECT json_build_object('nodes', coalesce(json_agg(__s_2.ndata ORDER BY __s_2.__rn ASC) FILTER (WHERE __s_2.__rn <= $2), '[]'::json)) AS data

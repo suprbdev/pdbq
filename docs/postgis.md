@@ -80,7 +80,7 @@ geometry) follows it:
 | input | on `geometry(..., 3857)` |
 |---|---|
 | bare WKT `POINT(1 2)` | bound as `SRID=3857;POINT(1 2)` |
-| EWKT `SRID=4326;POINT(1 2)` | keeps 4326; PostgreSQL rejects the mismatch |
+| EWKT `SRID=4326;POINT(1 2)` | rejected as `invalid_argument` in filters and `near:` (send it in 3857, or as GeoJSON to have it reprojected); in a mutation input PostgreSQL rejects the mismatch |
 | GeoJSON (4326, or its `crs`) | reprojected by the `ST_Transform(..., 3857)` branch (a no-op when already 3857) |
 | bounding box without `srid` | built in 3857 |
 

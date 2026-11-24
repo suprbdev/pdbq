@@ -8,6 +8,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/golang-jwt/jwt/v5"
+
 	"github.com/suprbdev/pdbq/internal/config"
 )
 
@@ -52,6 +54,41 @@ func TestSDLServedWhenExposed(t *testing.T) {
 	}
 	if rec.Body.String() != "type Query { ok: Boolean }" {
 		t.Fatalf("unexpected SDL body: %q", rec.Body.String())
+	}
+}
+
+// TestSDLRequiresCredentialsLikeIntrospection answers /schema.graphql 401
+// without credentials when roles.anonymous is empty, as /graphql answers an
+// introspection query, and serves it to an authenticated request.
+func TestSDLRequiresCredentialsLikeIntrospection(t *testing.T) {
+	roles := config.DefaultConfig().Roles
+	roles.Anonymous = ""
+	authn, err := NewAuthenticator(jwtAuth(), roles, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := New(config.Config{Server: config.Server{Introspection: true}}, authn, nil, "type Query { ok: Boolean }", slog.Default())
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := s.Handler()
+	for name, header := range map[string]string{"no credentials": "", "invalid token": "Bearer nope"} {
+		req := httptest.NewRequest("GET", "/schema.graphql", nil)
+		if header != "" {
+			req.Header.Set("Authorization", header)
+		}
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusUnauthorized || rec.Header().Get("WWW-Authenticate") == "" {
+			t.Errorf("%s: /schema.graphql = %d (WWW-Authenticate %q), want 401 with a challenge", name, rec.Code, rec.Header().Get("WWW-Authenticate"))
+		}
+	}
+	req := httptest.NewRequest("GET", "/schema.graphql", nil)
+	req.Header.Set("Authorization", "Bearer "+signedToken(t, jwt.MapClaims{"role": "app_user"}))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || rec.Body.String() != "type Query { ok: Boolean }" {
+		t.Errorf("authenticated /schema.graphql = %d %q, want the SDL", rec.Code, rec.Body.String())
 	}
 }
 

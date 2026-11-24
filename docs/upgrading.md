@@ -242,6 +242,34 @@ connection's `totalCount`, `pageInfo`, `aggregates` and `groupedAggregates`
 are no longer multiplied by its page size: they are computed once per
 connection, so only `nodes` and `edges` repeat per row.
 
+### Set-returning function lists hold at most a page
+
+A list returned by a set-returning function, a `SETOF` root function
+(`searchPosts(term:)`) or a `SETOF` computed column (`User.recentPosts`),
+had no `LIMIT` but was costed as 10 rows, so a function over a growing
+table could return any number of rows, each with its nested selections,
+within `limits.max_cost`. Such a list now holds at most
+`limits.max_page_size` items (100 by default), the rows after them are cut
+off, and the cost estimate charges it that many rows, like a connection
+without `first`. A list that needs more rows pages inside the function (for
+example `limit`/`offset` parameters), or is exposed through a table or view
+connection instead.
+
+| Before | After |
+|---|---|
+| `searchPosts(term: "")` returns every matching row | at most `limits.max_page_size` rows |
+| `{ searchPosts { … postsByAuthorId { nodes { … } } } }` costs 10 × its selection | `max_page_size` × its selection, so a nested connection below it may now exceed `limits.max_cost` |
+
+### Smaller behaviour changes
+
+| Before | After |
+|---|---|
+| `server.request_timeout: 0` silently disabled the request timeout | rejected at startup: `server.request_timeout must be >= 1s` |
+| `/schema.graphql` was served without credentials even when `roles.anonymous` was empty (and `__schema` on `/graphql` answered `401`) | it requires the same credentials as `/graphql`: `401 auth_required` / `invalid_token` without valid ones unless `roles.anonymous` is set |
+| an EWKT filter operand or `near:` reference in another SRID than a `geometry(…, n)` column: `pg:XX000` `invalid geometry` (or an empty result) | `invalid_argument`, `spatial value has SRID m, but the column's SRID is n` |
+| under a transaction (role switching, claims, `transactions.per_request`), a query field's database error failed every later root field with `pg:25P02` and added a pathless `internal` error (logged at `ERROR`) | the query runs again with a savepoint per root field: only the failing field reports its error, the others keep their values |
+| APQ registered a document before authentication and the document limits, up to 1024 documents of any size | registration only after the request authenticated and the document validated; the store is bounded by `persisted_queries.max_bytes` (8 MiB) and `persisted_queries.max_entry_bytes` (64 KiB), least recently used first |
+
 ### Default naming
 
 pdbq's default names are now PostGraphile v4's, and `simple_names` is an

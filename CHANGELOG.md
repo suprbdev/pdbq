@@ -12,6 +12,36 @@ becomes the release notes of the next tag.
 
 ## [Unreleased]
 
+### Added
+
+- `persisted_queries.max_bytes` (default 8 MiB) and
+  `persisted_queries.max_entry_bytes` (default 64 KiB) bound the APQ store
+  by memory (least recently used evicted first) instead of a count of 1024
+  documents of any size.
+
+### Changed
+
+- **Breaking:** a list returned by a set-returning function (a `SETOF` root
+  function or computed column) holds at most `limits.max_page_size` items
+  and the cost estimate charges it that many rows; it was unbounded and
+  costed as 10 rows, so `limits.max_cost` did not bound its work
+  ([upgrading](docs/upgrading.md#set-returning-function-lists-hold-at-most-a-page)).
+- **Breaking:** `server.request_timeout` must be at least `1s`; `0` silently
+  disabled the timeout.
+- **Breaking:** `/schema.graphql` requires the credentials `/graphql`
+  requires: without an anonymous role, a request without valid credentials
+  is answered `401`, as an introspection query is.
+- **Breaking:** an EWKT filter operand or `near:` reference whose SRID
+  differs from the column's typmod SRID is rejected as `invalid_argument`
+  instead of failing in PostGIS with `pg:XX000`.
+- APQ documents are registered only after the request authenticated and the
+  document parsed, passed the document limits and validated; unauthenticated
+  clients can no longer fill the store.
+- Under a transaction (role switching, claims, `transactions.per_request`),
+  a database error in one query root field no longer fails the later fields
+  with `pg:25P02` or adds a pathless `internal` error logged at `ERROR`: the
+  query runs again with each root field in its own savepoint.
+
 ## [0.30.0] - 2026-11-24
 
 ### Added

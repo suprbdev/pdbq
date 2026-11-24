@@ -5,13 +5,19 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net/http"
+	"net/http/httptest"
 	"os"
+	"strings"
+	"sync"
 	"testing"
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/suprbdev/pdbq"
 	"github.com/suprbdev/pdbq/internal/config"
+	"github.com/suprbdev/pdbq/internal/server"
 )
 
 const qtxSchemaSQL = `
@@ -135,7 +141,6 @@ func qtxSetSeq(t *testing.T, conn *pgx.Conn, last int) {
 const (
 	qtxFailDev    = `{"message":"qtx failure","path":["b"],"extensions":{"code":"pg:22012","constraint":"","detail":"","hint":"","table":""}}`
 	qtxCompileErr = `{"message":"compile: first must be \u003e= 0","path":["e"],"extensions":{"code":"invalid_argument"}}`
-	qtxCommitDev  = `{"message":"commit unexpectedly resulted in rollback","extensions":{"code":"internal"}}`
 )
 
 func qtxAbortedDev(field string) string {
@@ -145,9 +150,10 @@ func qtxAbortedDev(field string) string {
 
 // TestTxQueryFieldErrors pins the response of a query document mixing
 // succeeding fields, a SQL error, later SQL fields, an in-memory field and a
-// compile error. Without a transaction every field is independent. In one,
-// the SQL fields after the failure fail with 25P02 and the commit reports
-// the rollback, as when the fields ran statement by statement.
+// compile error. Without a transaction every field is independent; in one,
+// the operation runs again with each field in its own savepoint once the
+// SQL error cut the batch short, so the response is the same: only the
+// failing fields report errors, and none without a path.
 func TestTxQueryFieldErrors(t *testing.T) {
 	qtxDB(t)
 	const query = `{
@@ -158,29 +164,24 @@ func TestTxQueryFieldErrors(t *testing.T) {
 		e: allUsers(first: -1) { totalCount }
 		f: qtxOk(n: 6)
 	}`
-	inTx := `{"data":{"a":1,"b":null,"c":null,"d":"Query","e":null,"f":null},"errors":[` +
-		qtxFailDev + `,` + qtxAbortedDev("c") + `,` + qtxCompileErr + `,` + qtxAbortedDev("f") + `,` + qtxCommitDev + `]}`
+	isolated := `{"data":{"a":1,"b":null,"c":3,"d":"Query","e":null,"f":6},"errors":[` + qtxFailDev + `,` + qtxCompileErr + `]}`
 	cases := []struct {
 		name   string
 		mutate func(*config.Config)
 		want   string
 	}{
-		{"no transaction", nil,
-			`{"data":{"a":1,"b":null,"c":3,"d":"Query","e":null,"f":6},"errors":[` + qtxFailDev + `,` + qtxCompileErr + `]}`},
-		{"per request", func(c *config.Config) { c.TX.PerRequest = true }, inTx},
+		{"no transaction", nil, isolated},
+		{"per request", func(c *config.Config) { c.TX.PerRequest = true }, isolated},
 		{"per request serializable", func(c *config.Config) {
 			c.TX.PerRequest = true
 			c.TX.Isolation = "serializable"
-		}, inTx},
+		}, isolated},
 		{"per request prod errors", func(c *config.Config) {
 			c.TX.PerRequest = true
 			c.Errors.Detail = "prod"
-		}, `{"data":{"a":1,"b":null,"c":null,"d":"Query","e":null,"f":null},"errors":[` +
+		}, `{"data":{"a":1,"b":null,"c":3,"d":"Query","e":null,"f":6},"errors":[` +
 			`{"message":"qtx failure","path":["b"],"extensions":{"code":"pg:22012"}},` +
-			`{"message":"database error","path":["c"],"extensions":{"code":"pg:25P02"}},` +
-			`{"message":"compile: first must be \u003e= 0","path":["e"],"extensions":{"code":"invalid_argument"}},` +
-			`{"message":"database error","path":["f"],"extensions":{"code":"pg:25P02"}},` +
-			`{"message":"internal error","extensions":{"code":"internal"}}]}`},
+			`{"message":"compile: first must be \u003e= 0","path":["e"],"extensions":{"code":"invalid_argument"}}]}`},
 		{"per request without failure", func(c *config.Config) { c.TX.PerRequest = true }, ``},
 	}
 	for _, tc := range cases {
@@ -322,5 +323,86 @@ func TestTxRLSIdentity(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// lockedBuffer is a bytes.Buffer safe for concurrent writes by a logger.
+type lockedBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+// loggedServer is testServer with the executor logging into the returned
+// buffer.
+func loggedServer(t *testing.T, mutate func(*config.Config)) (string, *lockedBuffer) {
+	t.Helper()
+	url := os.Getenv("PDBQ_TEST_DATABASE_URL")
+	if url == "" {
+		t.Skip("PDBQ_TEST_DATABASE_URL not set; run `make test-e2e`")
+	}
+	cfg := config.DefaultConfig()
+	cfg.Database.URL = url
+	if mutate != nil {
+		mutate(&cfg)
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	logs := &lockedBuffer{}
+	app := pdbq.New(cfg, pdbq.WithLogger(slog.New(slog.NewTextHandler(logs, nil))))
+	t.Cleanup(app.Close)
+	ctx := context.Background()
+	cat, err := app.LoadCatalog(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	built, err := app.BuildSchema(ctx, cat)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv, err := server.New(cfg, mustAuthenticator(t, cfg), app.Executor(built), built.SDL, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hs := httptest.NewServer(srv.Handler())
+	t.Cleanup(hs.Close)
+	return hs.URL, logs
+}
+
+// TestTxQueryFieldErrorUnderRoleSwitching: under role switching (a
+// transaction for every request), a client-caused database error in one
+// query root field is that field's error alone. The other root fields keep
+// their values, no 25P02 or pathless internal error is added and nothing is
+// logged at ERROR, as without a transaction.
+func TestTxQueryFieldErrorUnderRoleSwitching(t *testing.T) {
+	url, logs := loggedServer(t, func(c *config.Config) { jwtIdentity(c, "e2e-role-switch-secret") })
+	for _, tc := range []struct{ name, query, want string }{
+		{"invalid input", `{ bad: node(nodeId: "WyJVc2VyIiwieCJd") { nodeId } allUsers(orderBy: [ID_ASC], first: 1) { nodes { id } } }`,
+			`{"data":{"bad":null,"allUsers":{"nodes":[{"id":1}]}},"errors":[` +
+				`{"message":"invalid input syntax for type integer: \"x\"","path":["bad"],"extensions":{"code":"pg:22P02"}}]}`},
+		{"permission denied", `{ allComments { nodes { id } } allUsers(orderBy: [ID_ASC], first: 1) { nodes { id } } }`,
+			`{"data":{"allComments":null,"allUsers":{"nodes":[{"id":1}]}},"errors":[` +
+				`{"message":"permission denied","path":["allComments"],"extensions":{"code":"pg:42501"}}]}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := postRaw(t, url, tc.query, nil); got != tc.want {
+				t.Errorf("got  %s\nwant %s", got, tc.want)
+			}
+		})
+	}
+	if l := logs.String(); strings.Contains(l, "level=ERROR") {
+		t.Errorf("client errors were logged at ERROR:\n%s", l)
 	}
 }
