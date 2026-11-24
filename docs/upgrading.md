@@ -145,7 +145,8 @@ variables `PDBQ_SERVER_MAX__COST ... moved to PDBQ_LIMITS_MAX__COST`).
 - **New sections.** `limits` (request limits), `persisted_queries`,
   `subscriptions`, `live`, `incremental` and `server.document_cache`; see
   the table below and [Configuration](configuration.md). Flags follow the
-  keys (`--limits.max_cost`, `--subscriptions.enabled`, …).
+  keys (`--limits.max_cost`, `--subscriptions.enabled`, …); an old flag is
+  only rejected as `unknown flag` without a suggestion, so use the table.
 - **`server.introspection: true` replaces `server.disable_introspection`
   and `server.expose_schema`.** The polarity is inverted
   (`disable_introspection: true` is `introspection: false`), and the SDL at

@@ -3,6 +3,7 @@
 ## With the bundled dev stack
 
 ```console
+$ git clone https://github.com/suprbdev/pdbq && cd pdbq
 $ docker compose up
 ```
 
@@ -89,7 +90,10 @@ The SQL is identical for pdbr.
    request roles: pdbq introspects with the connection role's own privileges,
    so a table that role cannot reach would not be generated (do not create it
    `NOINHERIT` as for PostgREST). Each request then runs `SET LOCAL ROLE` to
-   the role in its token.
+   the role in its token. Run this in a database cluster of its own: the
+   bundled dev stack's fixture already creates an `anonymous` role, so
+   `CREATE ROLE anonymous` fails there with `role "anonymous" already exists`
+   (drop that line to reuse the role).
 
    ```sql
    CREATE ROLE authenticator LOGIN PASSWORD 'change-me';
@@ -141,18 +145,21 @@ The SQL is identical for pdbr.
    $ TOKEN=$h.$p.$s
    ```
 
-4. Call the API. Each user sees only their own rows:
+4. Call the API. Each user sees only their own rows. The query is
+   `allTodos` because the default names are PostGraphile v4's (`todos` needs
+   the `simple_names` plugin, see the note under the first query above):
 
    ```console
    $ curl -s localhost:8080/graphql -H "Authorization: Bearer $TOKEN" \
        -H 'Content-Type: application/json' \
        -d '{"query":"mutation { createTodo(input: {todo: {title: \"buy milk\"}}) { todo { id owner title } } }"}'
-   {"data":{"createTodo":{"todo":{"id":1,"owner":"alice","title":"buy milk"}}}}
+   {"data":{"createTodo":{"todo" : {"id" : 1, "owner" : "alice", "title" : "buy milk"}}}}
    $ curl -s localhost:8080/graphql -H "Authorization: Bearer $TOKEN" \
        -H 'Content-Type: application/json' \
-       -d '{"query":"{ todos { nodes { id title owner } } }"}'
+       -d '{"query":"{ allTodos { nodes { id title owner } } }"}'
+   {"data":{"allTodos":{"nodes" : [{"id" : 1, "title" : "buy milk", "owner" : "alice"}]}}}
    $ curl -si localhost:8080/graphql -H 'Content-Type: application/json' \
-       -d '{"query":"{ todos { nodes { id } } }"}' | head -1
+       -d '{"query":"{ allTodos { nodes { id } } }"}' | head -1
    HTTP/1.1 401 Unauthorized
    ```
 

@@ -12,6 +12,13 @@ becomes the release notes of the next tag.
 
 ## [Unreleased]
 
+### Documentation
+
+- Fix the quickstart's Secure setup (the query is `allTodos`, the `anonymous`
+  role may already exist), add the `git clone` step to the dev stack
+  quickstarts, correct the `pdbq plugins list` sample, and refresh the
+  migrating-from-postgraphile guide for the release candidates.
+
 ## [1.0.0-rc.1] - 2026-11-24
 
 ### Changed

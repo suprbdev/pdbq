@@ -135,5 +135,5 @@ advanced_filters     priority=150  enabled  hooks: schema
 postgis              priority=160  enabled  hooks: schema
 contrib              priority=170  enabled  hooks: schema
 aggregates           priority=180  enabled  hooks: schema
-nested_mutations     priority=200  enabled  hooks: schema, compile, request
+nested_mutations     priority=200  enabled  hooks: schema, compile
 ```
