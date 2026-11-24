@@ -168,6 +168,7 @@ func rootCmd() *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
+	root.SetFlagErrorFunc(func(_ *cobra.Command, err error) error { return config.ExplainFlagError(err) })
 	root.PersistentFlags().String("config", "", "path to config file (default: ./pdbq.yaml if present)")
 	root.AddCommand(serveCmd(), queryCmd(), schemaCmd(), configCmd(), pluginsCmd())
 	return root
@@ -491,10 +492,9 @@ func pluginsCmd() *cobra.Command {
 				return err
 			}
 			app := pdbq.New(cfg)
-			disabled := cfg.DisabledPlugins()
 			for _, p := range app.Plugins() {
 				status := "enabled"
-				if disabled[p.Name()] {
+				if !cfg.PluginEnabled(p.Name()) {
 					status = "disabled"
 				}
 				fmt.Printf("%-20s priority=%-4d %-8s hooks: %s\n",

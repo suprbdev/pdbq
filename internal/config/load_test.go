@@ -168,6 +168,21 @@ func TestPluginsDisabledNames(t *testing.T) {
 	}
 }
 
+func TestPluginEnabledReflectsSettings(t *testing.T) {
+	cfg := DefaultConfig()
+	if cfg.PluginEnabled("simple_names") || !cfg.PluginEnabled("advanced_filters") {
+		t.Errorf("defaults: simple_names %v, advanced_filters %v", cfg.PluginEnabled("simple_names"), cfg.PluginEnabled("advanced_filters"))
+	}
+	cfg.Plugins.Settings.SimpleNames.Enabled = true
+	if !cfg.PluginEnabled("simple_names") {
+		t.Error("simple_names enabled by its setting reads disabled")
+	}
+	cfg.Plugins.Disabled = []string{"simple_names", "postgis"}
+	if cfg.PluginEnabled("simple_names") || cfg.PluginEnabled("postgis") {
+		t.Error("plugins.disabled ignored")
+	}
+}
+
 func TestLogFormatValidated(t *testing.T) {
 	wantLoadError(t, writeConfig(t, "auth:\n  jwt:\n    secret: s\nlog:\n  format: logfmt\n"), `log.format: "logfmt" is not 'text' or 'json'`)
 }

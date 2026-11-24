@@ -146,7 +146,8 @@ variables `PDBQ_SERVER_MAX__COST ... moved to PDBQ_LIMITS_MAX__COST`).
   `subscriptions`, `live`, `incremental` and `server.document_cache`; see
   the table below and [Configuration](configuration.md). Flags follow the
   keys (`--limits.max_cost`, `--subscriptions.enabled`, …); an old flag is
-  only rejected as `unknown flag` without a suggestion, so use the table.
+  rejected like an old key and names its replacement
+  (`unknown flag: --server.max_cost: moved to --limits.max_cost`).
 - **`server.introspection: true` replaces `server.disable_introspection`
   and `server.expose_schema`.** The polarity is inverted
   (`disable_introspection: true` is `introspection: false`), and the SDL at
@@ -397,7 +398,7 @@ messages are unchanged except where the table says so.
 | `server.request_timeout` elapsed: `503`, `{"errors":[{"message":"request timeout"}]}` without a JSON content type | `504`, `Content-Type: application/json`, `{"errors":[{"message":"request timeout","extensions":{"code":"timeout"}}]}` |
 | role claim outside `roles.allowed` or never assumable: `401` | `403`, code `role_not_allowed` (same `WWW-Authenticate: Bearer error="insufficient_scope"`) |
 | missing / invalid credentials: `401` without a code | `401`, code `auth_required` / `invalid_token` |
-| body above `limits.max_body_bytes`: `400 malformed request body` | `413`, code `body_too_large` |
+| body above `limits.max_body_bytes`: `400 malformed request body` | `413`, code `body_too_large`, also for a body that is not JSON |
 | APQ miss: code `PERSISTED_QUERY_NOT_FOUND` | code `persisted_query_not_found` (message `PersistedQueryNotFound` kept) |
 | hash-only request with persisted queries off: `400 missing query` | `200`, message `PersistedQueryNotSupported`, code `persisted_query_not_supported` |
 | `persisted_queries.only` without a hash; registration with `apq` off | same `400`s, codes `persisted_query_required` / `persisted_query_not_supported` |

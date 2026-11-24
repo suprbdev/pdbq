@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"errors"
+	"io"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -133,5 +134,24 @@ func TestParseClaims(t *testing.T) {
 	}
 	if got, err := parseClaims(""); got != nil || err != nil {
 		t.Errorf("empty: %v, %v", got, err)
+	}
+}
+
+func TestOldFlagsNameTheirReplacement(t *testing.T) {
+	for args, want := range map[string]string{
+		"serve --rls.enabled=false":                           "unknown flag: --rls.enabled: moved to --roles.switch",
+		"serve --server.max_cost=5":                           "unknown flag: --server.max_cost: moved to --limits.max_cost",
+		"serve --plugins.settings.advanced-filters.enabled=1": "moved to --plugins.settings.advanced_filters.enabled",
+		"plugins list --server.subscriptions":                 "moved to --subscriptions.enabled",
+		"serve --transactions.mutations":                      "removed: mutations always run in a transaction",
+	} {
+		cmd := rootCmd()
+		cmd.SetArgs(strings.Fields(args))
+		cmd.SetOut(io.Discard)
+		cmd.SetErr(io.Discard)
+		err := cmd.Execute()
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%s: err = %v, want %q", args, err, want)
+		}
 	}
 }
