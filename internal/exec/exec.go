@@ -1199,8 +1199,8 @@ func (m *measurer) connection(sel ast.SelectionSet, depth int) (rows, once measu
 }
 
 // setReturningList reports whether f is a list returned by a set-returning
-// function (a root function or a computed column), which the compiler cuts
-// at the page-size cap.
+// function (a root function, a computed column or the result of a custom
+// mutation), which the compiler cuts at the page-size cap.
 func setReturningList(f *ast.Field, meta schema.Meta) bool {
 	if meta == nil || f.ObjectDefinition == nil || f.Definition == nil || f.Definition.Type.NamedType != "" {
 		return false
@@ -1209,7 +1209,7 @@ func setReturningList(f *ast.Field, meta schema.Meta) bool {
 	if fm == nil || fm.Function == nil || !fm.Function.ReturnsSet {
 		return false
 	}
-	return fm.Kind == schema.KindFunction || fm.Kind == schema.KindComputed
+	return fm.Kind == schema.KindFunction || fm.Kind == schema.KindComputed || fm.Kind == schema.KindPayloadResult
 }
 
 // fieldCostMultiplier returns the @costMultiplier override bound to a field,

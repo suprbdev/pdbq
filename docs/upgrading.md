@@ -260,6 +260,20 @@ connection instead.
 | `searchPosts(term: "")` returns every matching row | at most `limits.max_page_size` rows |
 | `{ searchPosts { … postsByAuthorId { nodes { … } } } }` costs 10 × its selection | `max_page_size` × its selection, so a nested connection below it may now exceed `limits.max_cost` |
 
+### Set-returning mutation result lists hold at most a page
+
+The result list of a volatile `SETOF` function exposed as a custom mutation
+(`publishPosts { posts { … } }`) had no `LIMIT` and was costed as 10 rows.
+It now holds at most `limits.max_page_size` items (100 by default) and the
+cost estimate charges it that many rows, like a `SETOF` query function. The
+function itself still runs to completion; only the returned list is cut off.
+A function that must return more rows pages inside the function.
+
+| Before | After |
+|---|---|
+| `publishPosts` returns every row the function returned | at most `limits.max_page_size` rows |
+| `publishPosts { posts { … commentsByPostId { nodes { … } } } }` costs 10 × its selection | `max_page_size` × its selection |
+
 ### Smaller behaviour changes
 
 | Before | After |

@@ -12,6 +12,14 @@ becomes the release notes of the next tag.
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking:** the result list of a volatile `SETOF` function exposed as a
+  custom mutation holds at most `limits.max_page_size` items (the function
+  still runs to completion) and the cost estimate charges it that many rows;
+  it was unbounded and costed as 10 rows
+  ([upgrading](docs/upgrading.md#set-returning-mutation-result-lists-hold-at-most-a-page)).
+
 ## [0.31.0] - 2026-11-24
 
 ### Added

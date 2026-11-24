@@ -164,6 +164,12 @@ The result field is named the way PostGraphile names it:
 | `void` | no result field |
 | the `auth.mint_type` composite | the composite's name (`jwt: String`, the signed token) |
 
+A `SETOF` result list (rows, composites or scalars) holds at most
+`limits.max_page_size` items, like a set-returning query function, and the
+cost estimate charges it that many rows. The function still runs to
+completion and writes everything it writes; only the returned list is cut
+off, so a function that must return more rows pages inside the function.
+
 Functions returning an anonymous `record` without `OUT` parameters (or
 `SETOF record`) are not exposed, as in PostGraphile: the shape of the row is
 only known per call (PostgreSQL requires a column definition list to read it),

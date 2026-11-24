@@ -53,7 +53,7 @@ FROM (SELECT "public"."retry_probe"() AS v) AS __fn
 
 -- field: publishPosts
 SELECT coalesce(json_agg(__t_1::text), '[]'::json) AS data
-FROM "public"."publish_posts"("post_ids" => $1::"pg_catalog"."_int4") AS __t_1
+FROM (SELECT * FROM "public"."publish_posts"("post_ids" => $1::"pg_catalog"."_int4") LIMIT 100) AS __t_1
 -- args: [[1,2]]
 -- then:
 SELECT json_build_object('posts', (SELECT coalesce(json_agg(__s_5.data ORDER BY __s_5.n), '[]'::json) FROM (

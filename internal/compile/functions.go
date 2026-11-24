@@ -305,7 +305,11 @@ func (s *stmt) functionMutation(meta *schema.FieldMeta, f *ast.Field) (string, e
 	var first, second string
 	if table != nil {
 		alias := s.alias("t")
-		first = fmt.Sprintf("SELECT coalesce(json_agg(%s::text), '[]'::json) AS data\nFROM %s AS %s", alias, call, alias)
+		from := fmt.Sprintf("%s AS %s", call, alias)
+		if fn.ReturnsSet {
+			from = fmt.Sprintf("(SELECT * FROM %s LIMIT %d) AS %s", call, s.maxPageSize, alias)
+		}
+		first = fmt.Sprintf("SELECT coalesce(json_agg(%s::text), '[]'::json) AS data\nFROM %s", alias, from)
 		second, err = then.functionRowsPayload(fn, table, f, payloadType, fields)
 	} else {
 		var results []*ast.Field
@@ -535,19 +539,19 @@ func (s *stmt) functionPayload(fn *introspect.Function, call string, f *ast.Fiel
 			}
 			sub := s.alias("s")
 			from = fmt.Sprintf("(SELECT coalesce(json_agg(%s.data), '[]'::json) AS data FROM (\n%s\n) AS %s) AS __agg",
-				sub, indent(fmt.Sprintf("SELECT %s AS data\nFROM %s AS %s%s", jsonExpr, call, rowAlias, joinLaterals(lats))), sub)
+				sub, indent(fmt.Sprintf("SELECT %s AS data\nFROM %s AS %s%s\nLIMIT %d", jsonExpr, call, rowAlias, joinLaterals(lats), s.maxPageSize)), sub)
 		case fnComposite:
 			expr, err := s.fnCompositeJSON("__v.v", fn, comp, resultSel, 1)
 			if err != nil {
 				return "", err
 			}
-			from = fmt.Sprintf("(SELECT coalesce(json_agg(%s), '[]'::json) AS data FROM (SELECT %s AS v) AS __v) AS __agg", expr, call)
+			from = fmt.Sprintf("(SELECT coalesce(json_agg(%s), '[]'::json) AS data FROM (SELECT %s AS v LIMIT %d) AS __v) AS __agg", expr, call, s.maxPageSize)
 		default:
 			value, err := s.fnValueJSON("__v", fn, resultField)
 			if err != nil {
 				return "", err
 			}
-			from = fmt.Sprintf("(SELECT coalesce(json_agg(%s), '[]'::json) AS data FROM %s AS __v) AS __agg", value, call)
+			from = fmt.Sprintf("(SELECT coalesce(json_agg(%s), '[]'::json) AS data FROM (SELECT __v FROM %s AS __v LIMIT %d) AS __v(__v)) AS __agg", value, call, s.maxPageSize)
 		}
 		resultExpr = "__agg.data"
 	case row != nil || shape == fnRows:
