@@ -36,13 +36,13 @@ func TestIntegrityErrorsHideIndexNames(t *testing.T) {
 	}).URL
 	for _, tc := range []struct{ name, patch, want string }{
 		{"expression index over a hidden column", `id: 2, uxPatch: {owner: 1}`,
-			`{"data":{"updateUxById":null},"errors":[{"message":"unique violation","path":["updateUxById"],"extensions":{"code":"23505"}}]}`},
+			`{"data":{"updateUxById":null},"errors":[{"message":"unique violation","path":["updateUxById"],"extensions":{"code":"pg:23505"}}]}`},
 		{"partial index predicate on a hidden column", `id: 4, uxPatch: {code: "z"}`,
-			`{"data":{"updateUxById":null},"errors":[{"message":"unique violation","path":["updateUxById"],"extensions":{"code":"23505"}}]}`},
+			`{"data":{"updateUxById":null},"errors":[{"message":"unique violation","path":["updateUxById"],"extensions":{"code":"pg:23505"}}]}`},
 		{"expression index over visible columns", `id: 2, uxPatch: {note: "N1"}`,
-			`{"data":{"updateUxById":null},"errors":[{"message":"duplicate key value violates unique constraint \"ux_note_lower_key\"","path":["updateUxById"],"extensions":{"code":"23505"}}]}`},
+			`{"data":{"updateUxById":null},"errors":[{"message":"duplicate key value violates unique constraint \"ux_note_lower_key\"","path":["updateUxById"],"extensions":{"code":"pg:23505"}}]}`},
 		{"check over visible columns", `id: 1, uxPatch: {note: "0123456789abc"}`,
-			`{"data":{"updateUxById":null},"errors":[{"message":"new row for relation \"ux\" violates check constraint \"ux_note_len\"","path":["updateUxById"],"extensions":{"code":"23514"}}]}`},
+			`{"data":{"updateUxById":null},"errors":[{"message":"new row for relation \"ux\" violates check constraint \"ux_note_len\"","path":["updateUxById"],"extensions":{"code":"pg:23514"}}]}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := postRaw(t, url, `mutation { updateUxById(input: {`+tc.patch+`}) { clientMutationId } }`, nil); got != tc.want {

@@ -221,6 +221,21 @@ has no resolvers. Prefer these, in order:
    **experimental**, and some helpers a third-party plugin needs are internal
    today ([plugins.md](plugins.md)).
 
+## Errors
+
+Every pdbq error carries `extensions.code` from one closed vocabulary
+([errors.md](errors.md)). Database errors are `pg:<SQLSTATE>`
+(`pg:23505`), whatever `errors.detail` says. PostGraphile v4 adds the
+SQLSTATE only through `extendedErrors` / `--extended-errors` (`errcode`),
+so a client that reads `errcode` reads `extensions.code` instead and strips
+the `pg:` prefix. pdbq's own failures have names: `not_found` for a keyed
+update or delete that matched no row, `cost_exceeded`, `depth_exceeded`,
+`graphql_validation_failed` and so on. Requests pdbq cannot execute get a
+non-`200` status with the same JSON body (`401 auth_required`,
+`403 role_not_allowed`, `413 body_too_large`, `504 timeout`). Apollo APQ
+clients get the standard `PersistedQueryNotFound` and
+`PersistedQueryNotSupported` messages.
+
 ## Operations
 
 | PostGraphile | pdbq |

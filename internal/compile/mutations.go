@@ -590,6 +590,17 @@ func (s *stmt) insertCTE(t *introspect.Table, meta *schema.FieldMeta, f *ast.Fie
 		tableRef(t), strings.Join(quoted, ", "), strings.Join(params, ", ")), nil
 }
 
+// inputFieldFor returns the field of input type inputType bound to column
+// col, or col when no field binds it.
+func inputFieldFor(built *schema.Built, inputType, col string) string {
+	for field, c := range built.InputColumns[inputType] {
+		if c == col {
+			return field
+		}
+	}
+	return col
+}
+
 // inputColumns maps a GraphQL input object to (columns, placeholders) using
 // the input type's field->column bindings, in schema field order for
 // deterministic SQL.
@@ -655,7 +666,7 @@ func (s *stmt) upsertCTE(t *introspect.Table, meta *schema.FieldMeta, f *ast.Fie
 	for i, kc := range meta.KeyColumns {
 		p, ok := provided[kc]
 		if !ok {
-			return dml{}, fmt.Errorf("compile: %s: %s must set conflict column %q", f.Name, meta.Values, kc)
+			return dml{}, errUser("%s: %s must set %s", f.Name, meta.Values, inputFieldFor(s.c.Built, inputType, kc))
 		}
 		keyConds[i] = fmt.Sprintf("%s.%s %s %s", tableRef(t), quoteIdent(kc), s.contrib(t.Column(kc)).Operator("="), p)
 	}

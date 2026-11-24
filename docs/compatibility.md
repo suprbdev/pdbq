@@ -38,7 +38,7 @@ major release as appropriate and is described in the changelog.
 - **GraphQL surface.** The generated schema for a given database and config:
   naming (per inflector and `simple_names` setting), connection and mutation
   shapes, filter and orderBy operators, error `extensions` and codes, and the
-  SQLSTATE-to-error mapping.
+  SQLSTATE-to-error mapping ([errors.md](errors.md)).
 - **Smart tags.** The tag vocabulary of `smart_comments` and what each tag
   does.
 - **Schema cache.** The cache format version rules below.

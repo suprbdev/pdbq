@@ -340,13 +340,13 @@ func TestContractsIntegrityErrorsHideNames(t *testing.T) {
 		name, url, query, want string
 	}{
 		{"hidden table in a foreign key error", base + "/public", del,
-			`{"data":{"deleteCustomerById":null},"errors":[{"message":"foreign key violation","path":["deleteCustomerById"],"extensions":{"code":"23503"}}]}`},
+			`{"data":{"deleteCustomerById":null},"errors":[{"message":"foreign key violation","path":["deleteCustomerById"],"extensions":{"code":"pg:23503"}}]}`},
 		{"hidden column in a not-null error", base + "/public", create,
-			`{"data":{"createCustomer":null},"errors":[{"message":"not-null violation","path":["createCustomer"],"extensions":{"code":"23502"}}]}`},
+			`{"data":{"createCustomer":null},"errors":[{"message":"not-null violation","path":["createCustomer"],"extensions":{"code":"pg:23502"}}]}`},
 		{"visible foreign key error", base, del,
-			`{"data":{"deleteCustomerById":null},"errors":[{"message":"update or delete on table \"customers\" violates foreign key constraint \"invoices_customer_id_fkey\" on table \"invoices\"","path":["deleteCustomerById"],"extensions":{"code":"23503"}}]}`},
+			`{"data":{"deleteCustomerById":null},"errors":[{"message":"update or delete on table \"customers\" violates foreign key constraint \"invoices_customer_id_fkey\" on table \"invoices\"","path":["deleteCustomerById"],"extensions":{"code":"pg:23503"}}]}`},
 		{"visible not-null error", base, `mutation { updateCustomerById(input: {id: 1, customerPatch: {pin: null}}) { clientMutationId } }`,
-			`{"data":{"updateCustomerById":null},"errors":[{"message":"null value in column \"pin\" of relation \"customers\" violates not-null constraint","path":["updateCustomerById"],"extensions":{"code":"23502"}}]}`},
+			`{"data":{"updateCustomerById":null},"errors":[{"message":"null value in column \"pin\" of relation \"customers\" violates not-null constraint","path":["updateCustomerById"],"extensions":{"code":"pg:23502"}}]}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := postRaw(t, tc.url, tc.query, nil); got != tc.want {

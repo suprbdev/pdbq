@@ -339,3 +339,28 @@ every reference to it, removing an input type that required it (a bulk
 update's input requiring its filter) and the mutations taking such an
 input, so a `SchemaHook` removing a filter type cannot leave an
 unrestricted bulk update.
+### Error codes
+
+Every error now carries `extensions.code` from one closed vocabulary
+([errors.md](errors.md)), with the codes pdbr uses for the concepts the two
+share. Clients that matched on messages can match on codes instead;
+messages are unchanged except where the table says so.
+
+| Before (0.x) | After (1.0) |
+|---|---|
+| database error `"extensions": {"code": "23505"}` | `"code": "pg:23505"` (every SQLSTATE gets the `pg:` prefix; the dev members `detail`, `hint`, `table`, `constraint` are unchanged) |
+| nested mutation key matching no row: SQLSTATE `22P02`, message `invalid input syntax for type boolean: "nested_mutations: <path> matched 0 rows"` | code `not_found`, message `nested_mutations: <path> matched 0 rows` |
+| keyed update/delete matching no row: `no row matched "<alias>"` without a code | same message, code `not_found` |
+| `server.request_timeout` elapsed: `503`, `{"errors":[{"message":"request timeout"}]}` without a JSON content type | `504`, `Content-Type: application/json`, `{"errors":[{"message":"request timeout","extensions":{"code":"timeout"}}]}` |
+| role claim outside `roles.allowed` or never assumable: `401` | `403`, code `role_not_allowed` (same `WWW-Authenticate: Bearer error="insufficient_scope"`) |
+| missing / invalid credentials: `401` without a code | `401`, code `auth_required` / `invalid_token` |
+| body above `limits.max_body_bytes`: `400 malformed request body` | `413`, code `body_too_large` |
+| APQ miss: code `PERSISTED_QUERY_NOT_FOUND` | code `persisted_query_not_found` (message `PersistedQueryNotFound` kept) |
+| hash-only request with persisted queries off: `400 missing query` | `200`, message `PersistedQueryNotSupported`, code `persisted_query_not_supported` |
+| `persisted_queries.only` without a hash; registration with `apq` off | same `400`s, codes `persisted_query_required` / `persisted_query_not_supported` |
+| unknown path or method: the mux's `text/plain` `404 page not found` / `405 Method Not Allowed` | JSON error, codes `not_found` / `method_not_allowed` (`Allow` kept) |
+| other `400`, `405`, `406`, `415`, `500`, `503` bodies without a code | codes `invalid_request`, `method_not_allowed`, `not_acceptable`, `unsupported_media_type`, `internal`, `unavailable` |
+| GraphQL parse, validation, limit, policy and compile errors without a code | `graphql_parse_failed`, `graphql_validation_failed`, `document_limit_exceeded`, `depth_exceeded`, `cost_exceeded`, `page_size_exceeded`, `introspection_disabled`, `introspection_limit_exceeded`, `read_only`, `partial_mutations_disabled`, `operation_not_supported`, `invalid_argument`, `invalid_cursor`, ... |
+| a dropped database connection: `internal error` | `database unavailable`, code `unavailable` |
+| a `RequestHook` error: its message, no code | its message, code `operation_rejected` (a `*gqlerror.Error` that carries a code keeps it) |
+| WebSocket subscription caps, topic and stream errors without a code | `subscription_limit_exceeded`, `unavailable`, `invalid_argument` |

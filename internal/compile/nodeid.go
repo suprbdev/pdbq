@@ -61,7 +61,7 @@ type cursorVal struct {
 func decodeCursorVal(cur string) (cursorVal, error) {
 	raw, err := base64.StdEncoding.DecodeString(cur)
 	if err != nil {
-		return cursorVal{}, errUser("malformed cursor")
+		return cursorVal{}, errCursor("malformed cursor")
 	}
 	str := string(raw)
 	if strings.HasPrefix(str, "o:") {
@@ -73,7 +73,7 @@ func decodeCursorVal(cur string) (cursorVal, error) {
 	}
 	typeName, keys, err := decodeNodeID(cur)
 	if err != nil {
-		return cursorVal{}, errUser("malformed cursor")
+		return cursorVal{}, errCursor("malformed cursor")
 	}
 	return cursorVal{keyset: true, typeName: typeName, keys: keys}, nil
 }

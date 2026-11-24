@@ -124,7 +124,7 @@ Coming from PostGraphile? See
 ## Stability
 
 pdbq follows semantic versioning. Configuration keys, the CLI, the HTTP and
-GraphQL surface, error codes and metrics are covered by the 1.0 compatibility
+GraphQL surface, [error codes](docs/errors.md) and metrics are covered by the 1.0 compatibility
 promise; a few features (live queries, `@defer`/`@stream`, contracts, nested and
 partial mutations, rasters and others) and the Go embedding and plugin API are
 **experimental** and outside it. Details, the deprecation policy and the
@@ -146,6 +146,7 @@ and [CHANGELOG.md](CHANGELOG.md).
 | [docs/migrating-from-postgraphile.md](docs/migrating-from-postgraphile.md) | Moving from PostGraphile v4 or v5 |
 | [docs/rls.md](docs/rls.md) | Roles, JWT/header claims, policies |
 | [docs/filtering.md](docs/filtering.md) | Filter operators, indexed-only policy |
+| [docs/errors.md](docs/errors.md) | Error format, the `extensions.code` vocabulary, HTTP statuses, `pg:<SQLSTATE>` and `errors.detail` |
 | [docs/mutations.md](docs/mutations.md) | Table and custom mutations, payload fields (`query`, relations, edges), what a payload sees |
 | [docs/temporal.md](docs/temporal.md) | PostgreSQL 18 temporal keys, PERIOD and NOT ENFORCED foreign keys |
 | [docs/postgis.md](docs/postgis.md) | PostGIS: GeoJSON scalar, spatial filters, distance ordering, opt-in typed geometry |

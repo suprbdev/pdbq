@@ -74,6 +74,14 @@ executors of earlier schemas keep serving. A plugin whose `CompileHook` or
 schema (`compile.Request.Built.Ext`, `exec.Operation.Built.Ext`), never from
 its own fields; `nested_mutations` does this.
 
+Errors a hook returns reach the client with an `extensions.code`
+([errors.md](errors.md#plugins)): a `BeforeOperation` error that is a
+`*gqlerror.Error` carrying `Extensions["code"]` passes through unchanged,
+any other one becomes `operation_rejected` with its message; a
+`CompileHook` reports a client error with `compile.UserErrorf` (code
+`invalid_argument`) or `compile.UserErrorCodef(code, …)`, and any other
+compile error is `internal`.
+
 Hooks compose middleware-style: call `next(...)` to continue the chain (the
 innermost link is pdbq's default behaviour). Ordering is deterministic —
 priority, then registration order.
@@ -320,7 +328,7 @@ mutation {
 - `connect…`, `update…` and `delete…` must match a row, and so must the key
   of an update mutation using nested fields: a key that matches nothing
   (missing, or filtered out by RLS) fails the whole mutation with
-  `nested_mutations: <path> matched 0 rows` (SQLSTATE `22P02`, e.g.
+  `nested_mutations: <path> matched 0 rows` (code `not_found`, e.g.
   `postsByAuthorId.updateById[0]` or `updateUserById`). `disconnect…` of a
   row that is not linked does nothing.
 - At most `plugins.settings.nested_mutations.max_operations` operations

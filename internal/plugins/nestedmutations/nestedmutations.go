@@ -17,6 +17,7 @@ import (
 	coreinflect "github.com/suprbdev/pdbcore/inflect"
 	"github.com/suprbdev/pdbcore/introspect"
 	"github.com/suprbdev/pdbq/internal/compile"
+	"github.com/suprbdev/pdbq/internal/errcode"
 	"github.com/suprbdev/pdbq/internal/inflect"
 	"github.com/suprbdev/pdbq/internal/omit"
 	"github.com/suprbdev/pdbq/internal/schema"
@@ -1026,7 +1027,7 @@ func (g *cteGen) rowFields(t *introspect.Table, inputType string, input map[stri
 // child row from its parent's CTE.
 func (g *cteGen) insertRow(t *introspect.Table, inputType string, input map[string]any, cteName string, depth int, fill *parentFill, path string) error {
 	if depth > g.p.maxDepth {
-		return compile.UserErrorf("nested_mutations: nesting depth exceeds limit %d", g.p.maxDepth)
+		return compile.UserErrorCodef(errcode.DepthExceeded, "nested_mutations: nesting depth exceeds limit %d", g.p.maxDepth)
 	}
 	var a assignments
 	children, err := g.rowFields(t, inputType, input, &a, depth, nil, path)
@@ -1093,7 +1094,7 @@ func (g *cteGen) parentScope(fk *introspect.ForeignKey, owner *introspect.Table,
 // privilege and passes the UPDATE policies. A non-nil sc narrows the row.
 func (g *cteGen) updateRow(t *introspect.Table, patchType string, patch map[string]any, cteName string, depth int, key rowKey, sc *scope, path string) error {
 	if depth > g.p.maxDepth {
-		return compile.UserErrorf("nested_mutations: nesting depth exceeds limit %d", g.p.maxDepth)
+		return compile.UserErrorCodef(errcode.DepthExceeded, "nested_mutations: nesting depth exceeds limit %d", g.p.maxDepth)
 	}
 	var a assignments
 	children, err := g.rowFields(t, patchType, patch, &a, depth, &key, path)
@@ -1314,7 +1315,7 @@ func (g *cteGen) children(work []childWork, parentCTE string, depth int, path st
 // already referencing it.
 func (g *cteGen) backward(spec *nestedSpec, nested map[string]any, parentCTE string, depth int, path string) error {
 	if depth+1 > g.p.maxDepth {
-		return compile.UserErrorf("nested_mutations: nesting depth exceeds limit %d", g.p.maxDepth)
+		return compile.UserErrorCodef(errcode.DepthExceeded, "nested_mutations: nesting depth exceeds limit %d", g.p.maxDepth)
 	}
 	ops := g.st.ops[spec.Input]
 	child := spec.Owner

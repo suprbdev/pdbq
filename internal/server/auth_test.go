@@ -29,8 +29,8 @@ func TestReservedRoleClaimRejected(t *testing.T) {
 		req.Header.Set("X-Pdbq-Claim-Role", role)
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, req)
-		if rec.Code != http.StatusUnauthorized || !strings.Contains(rec.Body.String(), "is not allowed") {
-			t.Errorf("role %q: %d %s, want 401 role not allowed", role, rec.Code, rec.Body)
+		if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), `"code":"role_not_allowed"`) {
+			t.Errorf("role %q: %d %s, want 403 role_not_allowed", role, rec.Code, rec.Body)
 		}
 	}
 }

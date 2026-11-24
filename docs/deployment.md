@@ -118,7 +118,8 @@ the browser and were never exposed. GraphiQL and the usual GraphQL clients
 
 - `persisted_queries.apq: true` enables Apollo automatic persisted queries: clients send
   `extensions.persistedQuery = {version: 1, sha256Hash}` instead of the query
-  text; a miss returns the standard `PersistedQueryNotFound` response and the
+  text; a miss returns the standard `PersistedQueryNotFound` response (code
+  `persisted_query_not_found`) and the
   client retries once with the full document, registering it in an in-memory
   cache (bounded, FIFO eviction; empty after every restart until clients
   re-register).
@@ -126,9 +127,14 @@ the browser and were never exposed. GraphiQL and the usual GraphQL clients
   `{"<sha256 hex>": "<GraphQL document>"}` entries (validated at startup,
   never evicted).
 - `persisted_queries.only: true` locks the endpoint down to persisted queries:
-  requests without a `persistedQuery` extension are rejected. Combine with a
-  file (and `apq: false`) for a strict build-time allowlist — client
-  registration is refused without `apq`.
+  requests without a `persistedQuery` extension are rejected (`400`,
+  `persisted_query_required`). Combine with a file (and `apq: false`) for a
+  strict build-time allowlist — client registration is refused without `apq`
+  (`400`, `persisted_query_not_supported`).
+- With persisted queries off, a hash-only request gets the standard
+  `PersistedQueryNotSupported` response (code
+  `persisted_query_not_supported`), so Apollo clients stop sending hashes
+  and send the full query.
 
 ## Rate limiting
 

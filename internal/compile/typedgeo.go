@@ -110,7 +110,7 @@ func (s *stmt) typedGeometryDigitsSQL(expr, digits string, t geotype.Type, sel a
 // as null instead of carrying a __typename the schema does not define.
 func (s *stmt) geoObject(ctx geoCtx, n geoNode, t geotype.Type, sel ast.SelectionSet, depth int) (string, error) {
 	if depth > s.maxDepth {
-		return "", errUser("selection depth exceeds limit (%d)", s.maxDepth)
+		return "", errDepth(s.maxDepth)
 	}
 	if t.Concrete() {
 		return s.geoConcrete(ctx, n, t, quoteLiteral(t.Name()), sel, depth)

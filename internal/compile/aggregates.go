@@ -19,7 +19,7 @@ import (
 // its page, like totalCount.
 func (s *stmt) connectionAggregate(t *introspect.Table, conn, f *ast.Field, meta *schema.FieldMeta, extraCond string, depth int) (string, error) {
 	if depth > s.maxDepth {
-		return "", errUser("selection depth exceeds limit (%d)", s.maxDepth)
+		return "", errDepth(s.maxDepth)
 	}
 	alias := s.alias("a")
 	where, err := s.whereClause(t, conn, alias, strings.ReplaceAll(extraCond, "%%ALIAS%%", alias))

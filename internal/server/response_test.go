@@ -23,9 +23,9 @@ func TestResponseKeepsRootFieldOrder(t *testing.T) {
 func TestResponseErrorFormat(t *testing.T) {
 	h := apqServer(t, config.Config{Limits: config.Limits{MaxBodyBytes: 1 << 20}}).Handler()
 	cases := map[string]string{
-		`{"query":"{nope}"}`:                           `{"errors":[{"message":"Cannot query field \"nope\" on type \"Query\". Did you mean \"node\"?","locations":[{"line":1,"column":2}]}]}`,
-		`{"query":"{userById(id: 1) {"}`:               `{"errors":[{"message":"Expected Name, found \u003cEOF\u003e","locations":[{"line":1,"column":19}]}]}`,
-		`{"query":"{__typename}","operationName":"X"}`: `{"errors":[{"message":"operation \"X\" not found"}]}`,
+		`{"query":"{nope}"}`:                           `{"errors":[{"message":"Cannot query field \"nope\" on type \"Query\". Did you mean \"node\"?","locations":[{"line":1,"column":2}],"extensions":{"code":"graphql_validation_failed"}}]}`,
+		`{"query":"{userById(id: 1) {"}`:               `{"errors":[{"message":"Expected Name, found \u003cEOF\u003e","locations":[{"line":1,"column":19}],"extensions":{"code":"graphql_parse_failed"}}]}`,
+		`{"query":"{__typename}","operationName":"X"}`: `{"errors":[{"message":"operation \"X\" not found","extensions":{"code":"invalid_request"}}]}`,
 	}
 	for body, want := range cases {
 		for range 2 {

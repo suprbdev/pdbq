@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/suprbdev/pdbq/internal/errcode"
 	"github.com/suprbdev/pdbq/internal/exec"
 )
 
@@ -69,7 +70,7 @@ func (s *Server) streamsIncremental(r *http.Request) bool {
 func (s *Server) serveIncremental(w http.ResponseWriter, r *http.Request, ex *exec.Executor, req exec.Request) {
 	format, _, unsupported := incrementalAccept(r)
 	if unsupported {
-		writeError(w, http.StatusNotAcceptable, "unsupported incremental delivery format: accept multipart/mixed;incrementalSpec=v0.2 or multipart/mixed;deferSpec=20220824")
+		writeError(w, http.StatusNotAcceptable, errcode.NotAcceptable, "unsupported incremental delivery format: accept multipart/mixed;incrementalSpec=v0.2 or multipart/mixed;deferSpec=20220824")
 		return
 	}
 	ctx := r.Context()
@@ -83,7 +84,7 @@ func (s *Server) serveIncremental(w http.ResponseWriter, r *http.Request, ex *ex
 	if !s.incremental.acquire(s.cfg.Incremental.MaxResponses) {
 		body, err := ex.Execute(ctx, req).AppendJSON(nil)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "internal error")
+			writeError(w, http.StatusInternalServerError, errcode.Internal, "internal error")
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")

@@ -104,7 +104,9 @@ either of two subprotocols:
   `complete`.
 
 Any other subprotocol is closed with `4406`. Plain HTTP `POST /graphql` with
-a subscription operation answers with an error.
+a subscription operation answers with an error (code
+`operation_not_supported`). Every error a client receives carries an
+`extensions.code` ([errors.md](errors.md)).
 
 WebSocket upgrades skip the HTTP middleware chain: gzip, CORS headers and
 HTTP metrics do not apply to them. `server.request_timeout` bounds each query
@@ -154,7 +156,7 @@ subscriptions:
 
 Channel names are always sent as quoted identifiers (`LISTEN "app:chat:1"`)
 and never as interpolated text. A subscription to a disallowed topic gets an
-`error` message. Topics are not secrets: any client allowed to connect can
+`error` message (code `invalid_argument`). Topics are not secrets: any client allowed to connect can
 listen to any allowed topic, and RLS protects what an event reveals through
 `relatedNode` and `query`. `relatedNodeId` is the notifier's `__node__`
 encoded as is, as in PostGraphile: it reaches every subscriber even when
@@ -180,7 +182,8 @@ PostGraphile's `pgSubscriptionAuthorizationFunction` is not supported.
   is noticed.
 - **Fan-out.** Each notification is copied into a bounded queue per
   subscription (`subscriptions.buffer`). A subscriber whose queue is
-  full gets an `error` message and its subscription ends. Other subscribers
+  full gets an `error` message (code `subscription_limit_exceeded`) and its
+  subscription ends. Other subscribers
   are not slowed down by it. Writes to a client time out after 10 seconds,
   and a timed-out write drops the connection.
 - **Per-event cost.** Each event is resolved separately for each

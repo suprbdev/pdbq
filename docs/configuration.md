@@ -47,13 +47,13 @@ same names: `limits.*` (`max_body_bytes`, `max_depth`, `max_cost`,
 | `database.url` | — | required |
 | `database.max_conns` | 10 | maximum pooled connections |
 | `database.connect_timeout` | `10s` | timeout for establishing a connection |
-| `database.statement_timeout` | `25s` | per-statement timeout on every request (`0` disables); kept below `server.request_timeout` so a slow statement fails with SQLSTATE `57014` before the request is cut off |
+| `database.statement_timeout` | `25s` | per-statement timeout on every request (`0` disables); kept below `server.request_timeout` so a slow statement fails with SQLSTATE `57014` (code `pg:57014`) before the request is cut off |
 | `server.addr` | `:8080` | |
 | `server.graphiql` | `false` | GraphiQL playground at `/` (enable for dev) |
 | `server.introspection` | `true` | answer `__schema`/`__type` queries, serve the SDL at `/schema.graphql` and add "Did you mean …" suggestions to validation errors; `false` hides the schema shape so guessed names don't reveal real ones (`__typename` keeps working). On by default like pdbr's `openapi.enabled`; turn it off in production |
 | `server.readyz_timeout` | `2s` | deadline of the pool ping behind `GET /readyz`; must be `> 0` |
-| `server.request_timeout` | `30s` | overall HTTP request timeout |
-| `limits.max_body_bytes` | 1048576 | maximum request body size (1 MiB) |
+| `server.request_timeout` | `30s` | overall HTTP request timeout; an expired request is answered `504` with code `timeout` ([errors.md](errors.md)) |
+| `limits.max_body_bytes` | 1048576 | maximum request body size (1 MiB); a larger body is answered `413` with code `body_too_large` |
 | `limits.max_depth` | 15 | maximum selection depth per operation |
 | `limits.max_cost` | 100000 | estimated cost per operation: each field costs 1, a list multiplies its selections, a connection its `nodes`/`edges`, by `first`/`last`, or by `max_page_size` when neither is given (the page it fetches); `totalCount`, `pageInfo` and aggregates count once; recursive relations can tune the estimate with `@costMultiplier` (see [smart comments](smart-comments.md#cost-estimation-for-recursive-relations)) |
 | `limits.max_page_size` | 100 | largest accepted `first`/`last` (a larger value errors); also the default page size when neither is given |
@@ -128,7 +128,7 @@ same names: `limits.*` (`max_body_bytes`, `max_depth`, `max_cost`,
 | `watch.enabled` | `false` | dev only; refuses to combine with cache |
 | `watch.poll_interval` | `5s` | fallback polling when event triggers can't be installed |
 | `watch.channel` | `pdbq_ddl` | NOTIFY channel used by the DDL event trigger |
-| `errors.detail` | `prod` | `dev` exposes full PG error detail; `strict` hides even constraint-violation messages |
+| `errors.detail` | `prod` | `dev` exposes full PG error detail; `strict` hides even constraint-violation messages; status and `extensions.code` never change ([errors.md](errors.md)) |
 | `plugins.disabled` | `[]` | built-in plugin names to disable: `smart_comments`, `simple_names`, `advanced_filters`, `postgis`, `contrib`, `aggregates`, `nested_mutations`; any other name is an error (with a "did you mean" hint) |
 | `plugins.settings.simple_names.enabled` | `false` | short names (`users`, `user(id:)`, `updateUser`, `author`, `posts`) instead of PostGraphile v4's (`allUsers`, `userById`, `updateUserById`, `userByAuthorId`, `postsByAuthorId`); see [Plugins](plugins.md#worked-example-1-simple_names) |
 | `plugins.settings.advanced_filters.relations` | `true` | relation filters (forward, reverse `some`/`none`/`every`, `<rel>Exists`); see [Filtering](filtering.md) |

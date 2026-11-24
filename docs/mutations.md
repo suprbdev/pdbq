@@ -103,7 +103,8 @@ named through `inflect.KindPayloadDeletedNodeID`, follows `@name` on the
 table and is not affected by `simple_names`. It is present on every
 `delete<Type>By<Key>` payload, including the by-unique mutations, and absent
 when the table has no `nodeId` (no primary key, or `@omit read` on a key
-column). A delete that matches no row is still the not-found error.
+column). A delete that matches no row is still the not-found error
+(`no row matched "<alias>"`, code `not_found`; see [errors.md](errors.md)).
 
 ```graphql
 mutation {
@@ -310,7 +311,7 @@ and a request asks for it with a request extension:
 ```json
 {
   "data": { "a": { "user": { "id": 7 } }, "b": null, "c": { "user": { "id": 8 } } },
-  "errors": [{ "message": "...", "path": ["b"], "extensions": { "code": "23505" } }]
+  "errors": [{ "message": "...", "path": ["b"], "extensions": { "code": "pg:23505" } }]
 }
 ```
 
@@ -321,12 +322,14 @@ It is read from the HTTP body (or the `extensions` query parameter of a
 GET, which cannot run a mutation anyway) and from WebSocket `subscribe`
 messages; only the JSON value `true` turns it on, and it has no effect on a
 query. While `transactions.partial.enabled` is off, a mutation asking for
-it is rejected with `partial mutations are disabled` before anything runs,
+it is rejected with `partial mutations are disabled` (code
+`partial_mutations_disabled`) before anything runs,
 so a client never believes it got partial semantics that it did not.
 
 What a failure covers:
 
-- A field's error is its database error, a `no row matched` error, a
+- A field's error is its database error, a `no row matched` error (code
+  `not_found`), a
   compile error or a JWT mint failure. The field is `null`, its error
   carries `path: [<alias>]`, and everything the field wrote (a nested
   mutation's whole CTE chain, a custom mutation's two statements) is rolled

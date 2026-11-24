@@ -14,6 +14,7 @@ import (
 
 	"github.com/suprbdev/pdbcore/pgexec"
 	"github.com/suprbdev/pdbq/internal/compile"
+	"github.com/suprbdev/pdbq/internal/errcode"
 )
 
 // Incremental delivery defaults (see IncrementalOptions).
@@ -61,7 +62,7 @@ type Emit func(body []byte, incremental bool) error
 
 // errIncrementalTimeout completes the deferred fragments and streams still
 // pending when the operation's context ends.
-var errIncrementalTimeout = gqlerror.Errorf("request timeout")
+var errIncrementalTimeout = errcode.Errorf(errcode.Timeout, "request timeout")
 
 // ExecuteIncremental executes an operation returned by Prepare and delivers
 // its result through emit. A query whose deferred fragments or streamed
@@ -357,7 +358,7 @@ func (p *planner) fragment(cond string, dirs ast.DirectiveList, sel ast.Selectio
 
 func (p *planner) add(kind incKind, label string, parent *incRecord, steps []ast.Selection, tmpl []pathElem) (*incRecord, error) {
 	if len(p.plan.records) >= p.max {
-		return nil, gqlerror.Errorf("operation defers or streams more than %d selections", p.max)
+		return nil, errcode.Errorf(errcode.DocumentLimitExceeded, "operation defers or streams more than %d selections", p.max)
 	}
 	rec := &incRecord{kind: kind, label: label, id: len(p.plan.records), parent: parent, steps: steps, tmpl: tmpl}
 	p.plan.records = append(p.plan.records, rec)
@@ -396,7 +397,7 @@ func (p *planner) streamArgs(d *ast.Directive, f *ast.Field, lists int) (bool, s
 		if f.ObjectDefinition != nil {
 			parent = f.ObjectDefinition.Name + "."
 		}
-		return false, "", 0, gqlerror.ErrorPosf(d.Position, `Directive "@stream" cannot be used on non-list field "%s%s".`, parent, f.Name)
+		return false, "", 0, errcode.With(gqlerror.ErrorPosf(d.Position, `Directive "@stream" cannot be used on non-list field "%s%s".`, parent, f.Name), errcode.GraphQLValidationFailed)
 	}
 	label, err := p.label(d)
 	if err != nil {
@@ -410,7 +411,7 @@ func (p *planner) streamArgs(d *ast.Directive, f *ast.Field, lists int) (bool, s
 		}
 		if n, ok := v.(int64); ok {
 			if n < 0 {
-				return false, "", 0, gqlerror.ErrorPosf(d.Position, "initialCount must be a positive integer")
+				return false, "", 0, errcode.With(gqlerror.ErrorPosf(d.Position, "initialCount must be a positive integer"), errcode.GraphQLValidationFailed)
 			}
 			initial = int(min(n, 1<<31))
 		}
@@ -441,11 +442,11 @@ func (p *planner) label(d *ast.Directive) (string, error) {
 		return "", nil
 	}
 	if a.Value.Kind != ast.StringValue && a.Value.Kind != ast.BlockValue {
-		return "", gqlerror.ErrorPosf(a.Position, `Argument "label" on directive "@%s" must be a static string.`, d.Name)
+		return "", errcode.With(gqlerror.ErrorPosf(a.Position, `Argument "label" on directive "@%s" must be a static string.`, d.Name), errcode.GraphQLValidationFailed)
 	}
 	label := a.Value.Raw
 	if prev, ok := p.labels[label]; ok && prev != d {
-		return "", gqlerror.ErrorPosf(a.Position, "Defer/Stream directive label argument must be unique.")
+		return "", errcode.With(gqlerror.ErrorPosf(a.Position, "Defer/Stream directive label argument must be unique."), errcode.GraphQLValidationFailed)
 	}
 	p.labels[label] = d
 	return label, nil
@@ -660,7 +661,7 @@ func (x *incRun) deliverDefer(item incQueued) error {
 		data, ok := found[pathKey(inst.path)]
 		if !ok {
 			if len(errs) == 0 {
-				errs = gqlerror.List{gqlerror.Errorf("deferred fragment data is missing")}
+				errs = gqlerror.List{errcode.Errorf(errcode.Internal, "deferred fragment data is missing")}
 			}
 			p.completed = append(p.completed, incDone{p: inst, errors: withPath(errs, inst.path)})
 			continue
@@ -695,7 +696,7 @@ func (x *incRun) deliverStream(item incQueued) error {
 		case !ok:
 			errs := res.Errors
 			if len(errs) == 0 {
-				errs = gqlerror.List{gqlerror.Errorf("streamed list is missing")}
+				errs = gqlerror.List{errcode.Errorf(errcode.Internal, "streamed list is missing")}
 			}
 			p.completed = []incDone{{p: inst, start: start, errors: withPath(errs, inst.path)}}
 		default:

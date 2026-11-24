@@ -7,6 +7,7 @@ import (
 	"github.com/vektah/gqlparser/v2/ast"
 	"github.com/vektah/gqlparser/v2/gqlerror"
 
+	"github.com/suprbdev/pdbq/internal/errcode"
 	"github.com/suprbdev/pdbq/internal/exec"
 	"github.com/suprbdev/pdbq/internal/live"
 	"github.com/suprbdev/pdbq/internal/schema"
@@ -55,18 +56,18 @@ func (s *Server) liveFields(ex *exec.Executor, op *exec.Operation) ([]*ast.Field
 func (c *wsSession) executeLive(ctx, pctx context.Context, id string, ex *exec.Executor, op *exec.Operation, fields []*ast.Field) {
 	s := c.s
 	if s.live == nil {
-		c.sendErrors(ctx, id, gqlerror.List{gqlerror.Errorf("live queries are not enabled")})
+		c.sendErrors(ctx, id, gqlerror.List{errcode.Errorf(errcode.OperationNotSupported, "live queries are not enabled")})
 		return
 	}
 	if !c.reserveLive() {
 		s.live.Rejected()
-		c.sendErrors(ctx, id, gqlerror.List{gqlerror.Errorf("too many live queries on this connection (limit %d)", s.cfg.Live.MaxPerConnection)})
+		c.sendErrors(ctx, id, gqlerror.List{errcode.Errorf(errcode.SubscriptionLimitExceeded, "too many live queries on this connection (limit %d)", s.cfg.Live.MaxPerConnection)})
 		return
 	}
 	defer c.releaseLive()
 	if !s.reserveLiveOperation() {
 		s.live.Rejected()
-		c.sendErrors(ctx, id, gqlerror.List{gqlerror.Errorf("too many live queries on this server; try again later")})
+		c.sendErrors(ctx, id, gqlerror.List{errcode.Errorf(errcode.Unavailable, "too many live queries on this server; try again later")})
 		return
 	}
 	defer s.releaseLiveOperation()
@@ -96,7 +97,7 @@ func (c *wsSession) executeLive(ctx, pctx context.Context, id string, ex *exec.E
 		body, err := res.AppendJSON(nil)
 		if err != nil {
 			s.log.Error("websocket: encode result", "err", err)
-			return []byte(`{"errors":[{"message":"internal error"}]}`), true
+			return []byte(`{"errors":[{"message":"internal error","extensions":{"code":"internal"}}]}`), true
 		}
 		return body, len(res.Errors) > 0
 	})
@@ -106,7 +107,7 @@ func (c *wsSession) executeLive(ctx, pctx context.Context, id string, ex *exec.E
 		case ctx.Err() != nil:
 			return
 		case errors.Is(err, subscribe.ErrClosed):
-			c.sendErrors(ctx, id, gqlerror.List{gqlerror.Errorf("%s", err.Error())})
+			c.sendErrors(ctx, id, gqlerror.List{streamError(err)})
 			return
 		case err != nil:
 			c.sendErrors(ctx, id, errorList(err))

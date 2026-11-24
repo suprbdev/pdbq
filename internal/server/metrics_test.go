@@ -15,7 +15,7 @@ func TestMetricsEndpointAndRouteClasses(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := testServer(config.Config{Server: config.Server{GraphiQL: true, Introspection: true}})
+	s := testServer(config.Config{Server: config.Server{GraphiQL: true, Introspection: true}, Limits: config.Limits{MaxBodyBytes: 1 << 20}})
 	s.SetMetrics(m, "/metrics")
 	h := s.Handler()
 	for _, p := range []string{"/healthz", "/readyz", "/", "/schema.graphql", "/nope"} {

@@ -89,7 +89,7 @@ func (s *stmt) planPage(t *introspect.Table, f *ast.Field, typeName string) (pag
 				return nil, errUser("keyset cursor on a table without a primary key")
 			}
 			if cv.typeName != typeName {
-				return nil, errUser("cursor for wrong type")
+				return nil, errCursor("cursor for wrong type")
 			}
 		}
 		return &cv, nil
@@ -141,7 +141,7 @@ func (s *stmt) planPage(t *introspect.Table, f *ast.Field, typeName string) (pag
 func (s *stmt) anchorVals(t *introspect.Table, terms []orderTerm, keys []any) ([]string, error) {
 	pk := t.PrimaryKey.Columns
 	if len(pk) != len(keys) {
-		return nil, errUser("cursor has %d key values, want %d", len(keys), len(pk))
+		return nil, errCursor("cursor has %d key values, want %d", len(keys), len(pk))
 	}
 	vals := make([]string, len(terms))
 	subWhere := "" // shared across subqueries: the params are allocated once

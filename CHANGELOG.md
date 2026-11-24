@@ -23,6 +23,9 @@ becomes the release notes of the next tag.
 - `pdbq query --role <name>` and `--claims '<json object>'` run an operation
   under a request's role and claims (default: the connection role without
   claims); `App.Execute` is the matching Go API.
+- Every error carries a machine-readable `extensions.code` from one closed
+  vocabulary shared with pdbr: HTTP error bodies, GraphQL errors and
+  WebSocket messages ([docs/errors.md](docs/errors.md)).
 
 ### Changed
 
@@ -59,6 +62,16 @@ becomes the release notes of the next tag.
   distances, `ts_headline`, index-aware contrib ordering, polymorphic
   function resolution and the Go embedding/plugin API are marked
   experimental ([docs/compatibility.md](docs/compatibility.md)).
+- **Breaking:** database error codes are `pg:<SQLSTATE>` (was the bare
+  SQLSTATE); the APQ miss code is `persisted_query_not_found` (was
+  `PERSISTED_QUERY_NOT_FOUND`); a keyed update or delete, root or nested,
+  matching no row is `not_found` (nested ones were SQLSTATE `22P02`).
+- **Breaking:** `server.request_timeout` answers `504` with a JSON body and
+  code `timeout` (was `503` from `http.TimeoutHandler`); a refused role is
+  `403 role_not_allowed` (was `401`); a body above `limits.max_body_bytes`
+  is `413 body_too_large` (was `400`); a hash-only request with persisted
+  queries off gets `PersistedQueryNotSupported` (was `400 missing query`);
+  unknown paths and methods answer a JSON `404` / `405`.
 
 For the changes between 0.x and 1.0 see [docs/upgrading.md](docs/upgrading.md).
 

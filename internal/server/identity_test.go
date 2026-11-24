@@ -93,7 +93,7 @@ func TestAnonymousRefusedByDefault(t *testing.T) {
 	if rec.Code != http.StatusUnauthorized || rec.Header().Get("WWW-Authenticate") != "Bearer" {
 		t.Fatalf("status %d, WWW-Authenticate %q, want 401 Bearer", rec.Code, rec.Header().Get("WWW-Authenticate"))
 	}
-	if !strings.Contains(rec.Body.String(), `"errors":[{"message":"authentication required"}]`) {
+	if !strings.Contains(rec.Body.String(), `"errors":[{"message":"authentication required","extensions":{"code":"auth_required"}}]`) {
 		t.Errorf("body = %s", rec.Body)
 	}
 	if hook.calls != 0 {
@@ -124,7 +124,7 @@ func TestRoleNotAllowedChallenge(t *testing.T) {
 	r.Allowed = []string{"app_user"}
 	h, hook := identityServer(t, jwtAuth(), r, config.Config{})
 	rec := postIdentity(h, http.Header{"Authorization": {"Bearer " + signedToken(t, jwt.MapClaims{"role": "admin"})}})
-	if rec.Code != http.StatusUnauthorized || rec.Header().Get("WWW-Authenticate") != `Bearer error="insufficient_scope"` {
+	if rec.Code != http.StatusForbidden || rec.Header().Get("WWW-Authenticate") != `Bearer error="insufficient_scope"` {
 		t.Fatalf("status %d, WWW-Authenticate %q", rec.Code, rec.Header().Get("WWW-Authenticate"))
 	}
 	if hook.calls != 0 {

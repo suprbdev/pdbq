@@ -12,8 +12,8 @@ import (
 	"time"
 
 	"github.com/vektah/gqlparser/v2/ast"
-	"github.com/vektah/gqlparser/v2/gqlerror"
 
+	"github.com/suprbdev/pdbq/internal/errcode"
 	"github.com/suprbdev/pdbq/internal/exec"
 	"github.com/suprbdev/pdbq/internal/schema"
 	"github.com/suprbdev/pdbq/internal/subscribe"
@@ -21,7 +21,7 @@ import (
 
 // errSubscriptionsUnavailable is what a client sees when the LISTEN
 // connection cannot be established; the cause is logged.
-var errSubscriptionsUnavailable = gqlerror.Errorf("subscriptions are temporarily unavailable")
+var errSubscriptionsUnavailable = errcode.Errorf(errcode.Unavailable, "subscriptions are temporarily unavailable")
 
 // listenStream is one running Subscription.listen operation: its prepared
 // operation, the listen field, and the hub listener feeding it.
@@ -41,25 +41,25 @@ type listenStream struct {
 // waits until the hub LISTENs on it.
 func (s *Server) startListen(ctx context.Context, ex *exec.Executor, op *exec.Operation) (*listenStream, error) {
 	if s.hub == nil || ex.Built.Schema.Subscription == nil {
-		return nil, gqlerror.Errorf("subscriptions are not enabled")
+		return nil, errcode.Errorf(errcode.OperationNotSupported, "subscriptions are not enabled")
 	}
 	roots := exec.CollectRootFields(op.Definition.SelectionSet, op.Document.Fragments, op.Vars)
 	if len(roots) != 1 {
-		return nil, gqlerror.Errorf("a subscription must select exactly one root field")
+		return nil, errcode.Errorf(errcode.OperationNotSupported, "a subscription must select exactly one root field")
 	}
 	f := roots[0]
 	if m := ex.Built.Meta[ex.Built.Schema.Subscription.Name][f.Name]; m == nil || m.Kind != schema.KindListen {
-		return nil, gqlerror.Errorf("subscription field %q is not supported", f.Name)
+		return nil, errcode.Errorf(errcode.OperationNotSupported, "subscription field %q is not supported", f.Name)
 	}
 	args := f.ArgumentMap(op.Vars)
 	topic, _ := args["topic"].(string)
 	initial, _ := args["initialEvent"].(bool)
 	channel, err := s.topics.Channel(topic)
 	if err != nil {
-		return nil, gqlerror.Errorf("%s", err.Error())
+		return nil, errcode.Errorf(errcode.InvalidArgument, "%s", err.Error())
 	}
 	if s.live != nil && channel == s.live.Channel() {
-		return nil, gqlerror.Errorf("topic %q is not allowed", topic)
+		return nil, errcode.Errorf(errcode.InvalidArgument, "topic %q is not allowed", topic)
 	}
 	l, err := s.hub.Subscribe(ctx, channel, s.cfg.Subscriptions.Buffer)
 	if err != nil {
@@ -67,7 +67,7 @@ func (s *Server) startListen(ctx context.Context, ex *exec.Executor, op *exec.Op
 			return nil, ctx.Err()
 		}
 		if errors.Is(err, subscribe.ErrBusy) {
-			return nil, gqlerror.Errorf("%s", err.Error())
+			return nil, errcode.Errorf(errcode.Unavailable, "%s", err.Error())
 		}
 		s.log.Warn("subscriptions: listen failed", "channel", channel, "err", err)
 		return nil, errSubscriptionsUnavailable

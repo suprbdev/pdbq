@@ -195,7 +195,8 @@ These shipped features are outside the 1.0 compatibility promise: they may chang
 - [x] Embedded GraphiQL playground (opt-in, off by default)
 - [x] `GET /healthz` (liveness) / `/readyz` (bounded pool ping, `server.readyz_timeout`, `503` when the database is unreachable)
 - [x] `GET /schema.graphql` (SDL export; served with `server.introspection`, on by default)
-- [x] Request timeout, max body size
+- [x] Request timeout (`504`, code `timeout`), max body size (`413`, code `body_too_large`)
+- [x] Machine-readable `extensions.code` on every error (HTTP bodies, GraphQL errors, WebSocket), one closed vocabulary shared with pdbr, `pg:<SQLSTATE>` for database errors — see [Errors](errors.md)
 - [x] Atomic schema hot-swap (in-flight requests finish on the old schema)
 - [x] `/metrics` (Prometheus) endpoint (opt-in `metrics.enabled`, optional separate `metrics.addr`; see [metrics.md](metrics.md))
 - [x] Persisted queries / APQ (`persisted_queries.apq` Apollo protocol, `persisted_queries.path` allowlist file, `persisted_queries.only` lockdown)

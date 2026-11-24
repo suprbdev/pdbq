@@ -159,11 +159,11 @@ func TestTemporal(t *testing.T) {
 		prod := testServer(t, func(c *config.Config) { c.Errors.Detail = "prod" })
 		cases := []struct{ name, query, code, msg string }{
 			{"overlapping temporal key", `mutation { createRoomBooking(input: {roomBooking: {roomId: 1, validAt: {start: {value: "2026-03-02", inclusive: true}, end: {value: "2026-03-03", inclusive: false}}, guest: "Overlap"}}) { roomBooking { guest } } }`,
-				"23P01", `conflicting key value violates exclusion constraint "room_bookings_pkey"`},
+				"pg:23P01", `conflicting key value violates exclusion constraint "room_bookings_pkey"`},
 			{"period not covered", `mutation { createBookingNote(input: {bookingNote: {roomId: 2, validAt: {start: {value: "2030-01-01", inclusive: true}, end: {value: "2030-01-02", inclusive: false}}, note: "orphan", authorId: 1}}) { bookingNote { id } } }`,
-				"23503", `insert or update on table "booking_notes" violates foreign key constraint "booking_notes_room_id_valid_at_fkey"`},
+				"pg:23503", `insert or update on table "booking_notes" violates foreign key constraint "booking_notes_room_id_valid_at_fkey"`},
 			{"restrict", `mutation { deleteBookingNoteById(input: {id: 2}) { bookingNote { id } } }`,
-				"23001", `update or delete on table "booking_notes" violates RESTRICT setting of foreign key constraint "note_pins_note_id_fkey" on table "note_pins"`},
+				"pg:23001", `update or delete on table "booking_notes" violates RESTRICT setting of foreign key constraint "note_pins_note_id_fkey" on table "note_pins"`},
 		}
 		for _, tc := range cases {
 			t.Run(tc.name, func(t *testing.T) {
