@@ -31,7 +31,7 @@ bench: ## Run compile benchmarks
 	$(GO) test -bench=. -benchmem -run=^$$ ./internal/compile/
 
 fuzz: ## Fuzz the filter compiler for 30s
-	$(GO) test -fuzz=FuzzFilter -fuzztime=30s ./internal/compile/
+	$(GO) test -fuzz=FuzzFilter -fuzztime=30s -fuzzminimizetime=1s ./internal/compile/
 
 lint: ## Run golangci-lint
 	golangci-lint run ./...

@@ -28,6 +28,46 @@ import (
 // offset and offset-cursor pagination (with and without distinctOn), and
 // through a custom mutation whose payload compiles to a Then statement.
 func FuzzFilter(f *testing.F) {
+	compileWith, baseline := filterHarness(f)
+
+	f.Add("a@example.com", "admin", 5)
+	f.Add(`'; DROP TABLE users; --`, `"]}`, -1)
+	f.Add("%_\\", "'", 0)
+	f.Add("", "", 1<<30)
+
+	f.Fuzz(func(t *testing.T, email, tag string, n int) {
+		for i, stmt := range compileWith(t, email, tag, n) {
+			if stmt == nil {
+				continue
+			}
+			if stmt.SQL != baseline[i].SQL {
+				t.Fatalf("SQL text varied with input values:\n--- baseline ---\n%s\n--- got ---\n%s", baseline[i].SQL, stmt.SQL)
+			}
+			if len(stmt.Args) != len(baseline[i].Args) {
+				t.Fatalf("parameter count varied: %d != %d", len(stmt.Args), len(baseline[i].Args))
+			}
+			then, want := stmt.Then, baseline[i].Then
+			if (then == nil) != (want == nil) || then != nil && (then.SQL != want.SQL || len(then.Args) != len(want.Args)) {
+				t.Fatalf("Then statement varied with input values:\n--- baseline ---\n%+v\n--- got ---\n%+v", want, then)
+			}
+		}
+	})
+}
+
+// BenchmarkFuzzFilterExec times one FuzzFilter iteration (every operation
+// compiled for one value set), the unit the fuzzer's execs/sec counts.
+func BenchmarkFuzzFilterExec(b *testing.B) {
+	compileWith, _ := filterHarness(b)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		compileWith(b, "a@example.com", "admin", 5)
+	}
+}
+
+// filterHarness builds the schemas and operations FuzzFilter drives once, and
+// returns the function compiling every operation for one value set together
+// with the statements compiled for a baseline value set.
+func filterHarness(f testing.TB) (func(t testing.TB, email, tag string, n int) []*compile.Statement, []*compile.Statement) {
 	built := buildContrib(f)
 	aggBuilt := buildAggregates(f)
 
@@ -221,28 +261,7 @@ func FuzzFilter(f *testing.F) {
 		f.Fatal("the custom mutation compiled without a Then statement")
 	}
 
-	f.Add("a@example.com", "admin", 5)
-	f.Add(`'; DROP TABLE users; --`, `"]}`, -1)
-	f.Add("%_\\", "'", 0)
-	f.Add("", "", 1<<30)
-
-	f.Fuzz(func(t *testing.T, email, tag string, n int) {
-		for i, stmt := range compileWith(t, email, tag, n) {
-			if stmt == nil {
-				continue
-			}
-			if stmt.SQL != baseline[i].SQL {
-				t.Fatalf("SQL text varied with input values:\n--- baseline ---\n%s\n--- got ---\n%s", baseline[i].SQL, stmt.SQL)
-			}
-			if len(stmt.Args) != len(baseline[i].Args) {
-				t.Fatalf("parameter count varied: %d != %d", len(stmt.Args), len(baseline[i].Args))
-			}
-			then, want := stmt.Then, baseline[i].Then
-			if (then == nil) != (want == nil) || then != nil && (then.SQL != want.SQL || len(then.Args) != len(want.Args)) {
-				t.Fatalf("Then statement varied with input values:\n--- baseline ---\n%+v\n--- got ---\n%+v", want, then)
-			}
-		}
-	})
+	return compileWith, baseline
 }
 
 // FuzzSpatial is FuzzFilter for the PostGIS path: WKT strings and bounding-box
