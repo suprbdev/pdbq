@@ -12,6 +12,10 @@ becomes the release notes of the next tag.
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-11-24
+
+First stable release. No changes since 1.0.0-rc.2; see the 1.0.0-rc.1 and 1.0.0-rc.2 entries below and docs/upgrading.md for the changes from 0.x.
+
 ## [1.0.0-rc.2] - 2026-11-24
 
 ### Fixed
