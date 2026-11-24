@@ -257,3 +257,85 @@ fields exist.
 | a forward relation named like a column or an earlier relation fell back to `<referencedTable>By<Columns>` | schema build error naming the type, the field, the constraint and the fix | rename with `@fieldName` (forward) or `@foreignFieldName` (backward) on the constraint, or switch naming mode; also a conflict with a computed column |
 | a payload relation named like a payload field (`query`, …) fell back to `<referencedTable>By<Columns>` | left out of that payload with a build warning | the row field still reaches it (`createRun { run { query { … } } }`) |
 | `@name` on a referenced table did not reach forward relation names | it does (`customerByAuthorId`) | as for every other derived name |
+
+### Mutation shapes
+
+Table mutations take PostGraphile v4's shapes: every create, update,
+delete and upsert, bulk ones included, takes exactly one argument, `input`,
+of its own input type named after the mutation field
+(`UpperCamel(<field>) + "Input"`, so it follows `@name`, `simple_names`
+and naming plugins). `clientMutationId` is a field of that input only, never
+of the row values, and every payload echoes it. The bulk mutations are
+renamed so an uncountable table name (`news`, `series`) no longer gives the
+single-row and the bulk mutation the same name.
+
+| Mutation | Before | After |
+|---|---|---|
+| create | `createUser(input: UserCreateInput!)` with `{email, clientMutationId}` | `createUser(input: CreateUserInput!)` with `{clientMutationId, user: UserInput!}` |
+| update by key | `updateUserById(id: Int!, patch: UserUpdateInput!)` (`clientMutationId` in the patch) | `updateUserById(input: UpdateUserByIdInput!)` with `{clientMutationId, id: Int!, userPatch: UserPatch!}` |
+| update by unique key | `updateUserByEmail(email:, patch:)` | `updateUserByEmail(input: {clientMutationId, email, userPatch})` |
+| delete by key | `deleteUserById(id: Int!, clientMutationId: String)` | `deleteUserById(input: DeleteUserByIdInput!)` with `{clientMutationId, id: Int!}` |
+| upsert | `upsertUserByEmail(input: UserCreateInput!)` | `upsertUserByEmail(input: UpsertUserByEmailInput!)` with `{clientMutationId, user: UserInput!}` |
+| bulk create | `createUsers(input: [UserCreateInput!]!, clientMutationId:)` | `createManyUsers(input: CreateManyUsersInput!)` with `{clientMutationId, users: [UserInput!]!}` |
+| bulk update | `updateUsers(filter:, patch:, clientMutationId:)` | `updateManyUsers(input: UpdateManyUsersInput!)` with `{clientMutationId, filter: UserFilter!, userPatch: UserPatch!}` |
+| bulk delete | `deleteUsers(filter:, clientMutationId:)` | `deleteManyUsers(input: DeleteManyUsersInput!)` with `{clientMutationId, filter: UserFilter!}` |
+| nested update | `updateById: {id, postPatch: PostUpdateInput!}` | `updateById: {id, postPatch: PostPatch!}` (`PostUpdateByIdInput` and the other nested key inputs keep their names) |
+| nested create | `create: [PostCreateInput!]` | `create: [PostInput!]` |
+
+| Type | Before | After |
+|---|---|---|
+| create values | `UserCreateInput` (with `clientMutationId`) | `UserInput` (without) |
+| update values | `UserUpdateInput` (with `clientMutationId`) | `UserPatch` (without) |
+| function row argument (`fn(u users)`) | `UserInput` | `UserRowInput` |
+| bulk payloads | `CreateManyUserPayload`, `UpdateManyUserPayload`, `DeleteManyUserPayload` | `CreateManyUsersPayload`, `UpdateManyUsersPayload`, `DeleteManyUsersPayload` |
+| single-row payloads | `CreateUserPayload`, `UpdateUserPayload`, ... | unchanged |
+
+A call site changes like this:
+
+```graphql
+# before
+mutation {
+  createUser(input: {email: "a@x.io", clientMutationId: "1"}) { user { id } }
+  updateUserById(id: 1, patch: {fullName: "Ada"}) { user { id } }
+  deleteUserById(id: 1) { deletedUserNodeId }
+  updateUsers(filter: {mood: {equalTo: SAD}}, patch: {mood: OK}) { affectedCount }
+}
+# after
+mutation {
+  createUser(input: {clientMutationId: "1", user: {email: "a@x.io"}}) { user { id } }
+  updateUserById(input: {id: 1, userPatch: {fullName: "Ada"}}) { user { id } }
+  deleteUserById(input: {id: 1}) { deletedUserNodeId }
+  updateManyUsers(input: {filter: {mood: {equalTo: SAD}}, userPatch: {mood: OK}}) { affectedCount }
+}
+```
+
+Collisions are now build errors. When two table mutations get the same
+root field name, or their input or payload types the same type name (two
+tables of the same name in different schemas, a naming plugin mapping two
+kinds to one name, an enum named `user_patch`), the schema build fails
+naming both, e.g.
+`schema: mutation name collision: "createNews" is both the create mutation of table public.news and the create mutation of table app.news; rename the table or column with the @name smart comment, or the generated name in an InflectionHook plugin`.
+Before, the first one was kept and a warning logged. A key column whose
+field name equals the input's own fields (`clientMutationId`, the
+`<row>Patch` field) is an `input field collision` error. Function
+(custom) mutations colliding with a table mutation keep the documented
+behaviour: the function is skipped with a warning.
+
+A table whose every column PostgreSQL computes keeps a create mutation that
+inserts the defaults, `createTick(input: {clientMutationId})`, and has no
+bulk create or update (the old update could never set a column). The rows
+field of a bulk payload pluralizes the type's last word (`msNews`, was
+`msNewses`).
+
+For plugin authors: `inflect.KindUpdateInput` is renamed
+`inflect.KindPatchInput`; `inflect.KindMutationInput` (the input type,
+`Value` carries the field name) and `inflect.KindManyPayloadTypeName`
+(bulk payloads, `Value` carries the field name) are new.
+`schema.FieldMeta.Values` names the row values field of a table mutation's
+input; `compile.MutationInput`, `compile.InputFieldType` and
+`compile.InputKey` read a table mutation's input in a `CompileHook`.
+`schema.Builder.RemoveInputType` / `RemoveEnumType` remove a type and
+every reference to it, removing an input type that required it (a bulk
+update's input requiring its filter) and the mutations taking such an
+input, so a `SchemaHook` removing a filter type cannot leave an
+unrestricted bulk update.

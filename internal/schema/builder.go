@@ -149,7 +149,15 @@ type Builder struct {
 	// recordTypes caches the object type generated per function returning
 	// OUT/TABLE parameter records.
 	recordTypes map[*introspect.Function]string
-	// errs collects the naming conflicts Build reports.
+	// mutationSources describes the table mutation behind each Mutation
+	// root field name, and typeSources the table mutation type behind each
+	// type name they claimed (see claimType), for collision errors.
+	mutationSources map[string]string
+	typeSources     map[string]string
+	// mutationTypes holds the table mutation input and payload types,
+	// removed when no field references them (see pruneMutations).
+	mutationTypes map[string]bool
+	// errs holds the build errors Build returns (see fail).
 	errs []error
 }
 
@@ -272,6 +280,9 @@ func New(cat *introspect.Catalog, inflector inflect.Next, opts Options) *Builder
 		hidden:             hidden,
 		relationHidden:     relationHidden,
 		recordTypes:        map[*introspect.Function]string{},
+		mutationSources:    map[string]string{},
+		typeSources:        map[string]string{},
+		mutationTypes:      map[string]bool{},
 	}
 	// The GeoJSON scalar is only declared when the database actually has a
 	// PostGIS column, so schemas without spatial data are byte-identical to
@@ -1327,247 +1338,6 @@ func (b *Builder) lookupKeys(t *introspect.Table) []*introspect.Constraint {
 	return keys
 }
 
-func (b *Builder) addMutations(t *introspect.Table, filterName string) {
-	typeName := b.TypeForTable[tableKey(t.Schema, t.Name)]
-	rowField := strings.ToLower(typeName[:1]) + typeName[1:]
-
-	payload := func(verb string) string {
-		name := b.Inflect(inflect.KindPayloadTypeName, inflect.Input{Schema: t.Schema, Table: t.Name, Column: verb})
-		if _, ok := b.Objects[name]; !ok {
-			obj := &Object{Name: name, Fields: []*Field{
-				{Name: rowField, Type: typeName, Meta: &FieldMeta{Kind: KindPayloadRow, Table: t}},
-				{Name: "clientMutationId", Type: "String", Meta: &FieldMeta{Kind: KindClientMutationID}},
-			}}
-			deletedNodeID := ""
-			if verb == "delete" && t.PrimaryKey != nil {
-				deletedNodeID = b.Inflect(inflect.KindPayloadDeletedNodeID, inflect.Input{Schema: t.Schema, Table: t.Name})
-			}
-			b.addPayloadFields(obj, t, deletedNodeID)
-			if deletedNodeID != "" {
-				b.addRootField(obj, &Field{
-					Name:        deletedNodeID,
-					Type:        "ID",
-					Description: "The nodeId of the deleted " + typeName + ".",
-					Meta:        &FieldMeta{Kind: KindPayloadDeletedNodeID, Table: t},
-				})
-			}
-			b.Objects[name] = obj
-		}
-		return name
-	}
-
-	// payloadMany is the bulk-mutation payload: the mutated rows plus a count.
-	payloadMany := func(verb string) string {
-		name := b.Inflect(inflect.KindPayloadTypeName, inflect.Input{Schema: t.Schema, Table: t.Name, Column: verb})
-		if _, ok := b.Objects[name]; !ok {
-			rowsField := coreinflect.LowerCamel(coreinflect.Pluralize(typeName))
-			obj := &Object{Name: name, Fields: []*Field{
-				{Name: rowsField, Type: "[" + typeName + "!]!", Meta: &FieldMeta{Kind: KindPayloadRows, Table: t}},
-				{Name: "affectedCount", Type: "Int!", Meta: &FieldMeta{Kind: KindPayloadCount}},
-				{Name: "clientMutationId", Type: "String", Meta: &FieldMeta{Kind: KindClientMutationID}},
-			}}
-			b.addPayloadFields(obj, nil)
-			b.Objects[name] = obj
-		}
-		return name
-	}
-
-	if t.Insertable() {
-		inputName := b.Inflect(inflect.KindCreateInput, inflect.Input{Schema: t.Schema, Table: t.Name})
-		in := &Input{Name: inputName}
-		for _, c := range t.Columns {
-			if c.GeneratedAlways() {
-				continue
-			}
-			required := !c.OmittableOnInsert()
-			in.AddField(&InputField{
-				Name:   b.Inflect(inflect.KindFieldName, inflect.Input{Table: t.Name, Column: c.Name}),
-				Type:   nonNull(b.gqlInputTypeForColumn(c), required),
-				Column: c.Name,
-			})
-		}
-		in.AddField(&InputField{Name: "clientMutationId", Type: "String"})
-		b.Inputs[inputName] = in
-		b.addRootField(b.Mutation, &Field{
-			Name: b.Inflect(inflect.KindCreateMutation, inflect.Input{Schema: t.Schema, Table: t.Name}),
-			Type: payload("create") + "!",
-			Args: []Arg{{Name: "input", Type: inputName + "!"}},
-			Meta: &FieldMeta{Kind: KindCreate, Table: t},
-		})
-		b.addRootField(b.Mutation, &Field{
-			Name:        b.Inflect(inflect.KindCreateManyMutation, inflect.Input{Schema: t.Schema, Table: t.Name}),
-			Type:        payloadMany("createMany") + "!",
-			Description: "Inserts multiple " + typeName + " rows in one statement.",
-			Args: []Arg{
-				{Name: "input", Type: "[" + inputName + "!]!"},
-				{Name: "clientMutationId", Type: "String"},
-			},
-			Meta: &FieldMeta{Kind: KindCreateMany, Table: t},
-		})
-	}
-
-	// Update/delete key targets: the primary key, then each unique constraint
-	// (mirroring the single-row lookup surface).
-	var targets []*introspect.Constraint
-	if t.PrimaryKey != nil {
-		targets = append(targets, t.PrimaryKey)
-	}
-	targets = append(targets, t.Uniques...)
-	if len(targets) == 0 {
-		return
-	}
-	keyArgs := func(con *introspect.Constraint) ([]Arg, bool) {
-		var args []Arg
-		for _, cn := range con.Columns {
-			c := t.Column(cn)
-			if c == nil {
-				return nil, false
-			}
-			args = append(args, Arg{
-				Name: b.Inflect(inflect.KindFieldName, inflect.Input{Table: t.Name, Column: cn}),
-				Type: b.gqlInputTypeForColumn(c) + "!",
-			})
-		}
-		return args, true
-	}
-
-	// Upsert per key target: INSERT ... ON CONFLICT (target) DO UPDATE. Needs
-	// both INSERT and UPDATE privileges, and the create input to exist.
-	if t.Insertable() && t.Updatable() {
-		inputName := b.Inflect(inflect.KindCreateInput, inflect.Input{Schema: t.Schema, Table: t.Name})
-		if _, ok := b.Inputs[inputName]; ok {
-			seen := map[string]bool{}
-			for _, con := range t.RowKeys() {
-				// A conflict target must be settable through the create input;
-				// identity ALWAYS and generated key columns rule the target out.
-				usable := true
-				for _, cn := range con.Columns {
-					c := t.Column(cn)
-					if c == nil || c.GeneratedAlways() {
-						usable = false
-						break
-					}
-				}
-				if !usable {
-					continue
-				}
-				kind := inflect.KindUpsertByUniqueMutation
-				if con == t.PrimaryKey {
-					kind = inflect.KindUpsertMutation
-				}
-				name := b.Inflect(kind, inflect.Input{Schema: t.Schema, Table: t.Name, Columns: con.Columns})
-				if seen[name] {
-					continue
-				}
-				seen[name] = true
-				b.addRootField(b.Mutation, &Field{
-					Name:        name,
-					Type:        payload("upsert") + "!",
-					Description: "Inserts a " + typeName + ", updating the existing row on a (" + strings.Join(con.Columns, ", ") + ") conflict.",
-					Args:        []Arg{{Name: "input", Type: inputName + "!"}},
-					Meta: &FieldMeta{
-						Kind: KindUpsert, Table: t, KeyColumns: con.Columns,
-						Patch: b.Inflect(inflect.KindUpdateInput, inflect.Input{Schema: t.Schema, Table: t.Name}),
-					},
-				})
-			}
-		}
-	}
-
-	if t.Updatable() {
-		patchName := b.Inflect(inflect.KindUpdateInput, inflect.Input{Schema: t.Schema, Table: t.Name})
-		patch := &Input{Name: patchName}
-		for _, c := range t.Columns {
-			if c.GeneratedAlways() {
-				continue
-			}
-			patch.AddField(&InputField{
-				Name:   b.Inflect(inflect.KindFieldName, inflect.Input{Table: t.Name, Column: c.Name}),
-				Type:   b.gqlInputTypeForColumn(c),
-				Column: c.Name,
-			})
-		}
-		patch.AddField(&InputField{Name: "clientMutationId", Type: "String"})
-		b.Inputs[patchName] = patch
-		seen := map[string]bool{}
-		for i, con := range targets {
-			kind := inflect.KindUpdateByUniqueMutation
-			if i == 0 && t.PrimaryKey != nil {
-				kind = inflect.KindUpdateMutation
-			}
-			name := b.Inflect(kind, inflect.Input{Schema: t.Schema, Table: t.Name, Columns: con.Columns})
-			if seen[name] {
-				continue
-			}
-			seen[name] = true
-			args, ok := keyArgs(con)
-			if !ok {
-				continue
-			}
-			args = append(args, Arg{Name: "patch", Type: patchName + "!"})
-			b.addRootField(b.Mutation, &Field{
-				Name: name,
-				Type: payload("update") + "!",
-				Args: args,
-				Meta: &FieldMeta{Kind: KindUpdate, Table: t, KeyColumns: con.Columns},
-			})
-		}
-		// Filtered bulk update; only generated when the table has a filter type
-		// (a bulk write without a WHERE surface would be a foot-gun).
-		if filterName != "" {
-			b.addRootField(b.Mutation, &Field{
-				Name:        b.Inflect(inflect.KindUpdateManyMutation, inflect.Input{Schema: t.Schema, Table: t.Name}),
-				Type:        payloadMany("updateMany") + "!",
-				Description: "Updates every " + typeName + " matching the filter.",
-				Args: []Arg{
-					{Name: "filter", Type: filterName + "!"},
-					{Name: "patch", Type: patchName + "!"},
-					{Name: "clientMutationId", Type: "String"},
-				},
-				Meta: &FieldMeta{Kind: KindUpdateMany, Table: t},
-			})
-		}
-	}
-
-	if t.Deletable() {
-		seen := map[string]bool{}
-		for i, con := range targets {
-			kind := inflect.KindDeleteByUniqueMutation
-			if i == 0 && t.PrimaryKey != nil {
-				kind = inflect.KindDeleteMutation
-			}
-			name := b.Inflect(kind, inflect.Input{Schema: t.Schema, Table: t.Name, Columns: con.Columns})
-			if seen[name] {
-				continue
-			}
-			seen[name] = true
-			args, ok := keyArgs(con)
-			if !ok {
-				continue
-			}
-			args = append(args, Arg{Name: "clientMutationId", Type: "String"})
-			b.addRootField(b.Mutation, &Field{
-				Name: name,
-				Type: payload("delete") + "!",
-				Args: args,
-				Meta: &FieldMeta{Kind: KindDelete, Table: t, KeyColumns: con.Columns},
-			})
-		}
-		if filterName != "" {
-			b.addRootField(b.Mutation, &Field{
-				Name:        b.Inflect(inflect.KindDeleteManyMutation, inflect.Input{Schema: t.Schema, Table: t.Name}),
-				Type:        payloadMany("deleteMany") + "!",
-				Description: "Deletes every " + typeName + " matching the filter.",
-				Args: []Arg{
-					{Name: "filter", Type: filterName + "!"},
-					{Name: "clientMutationId", Type: "String"},
-				},
-				Meta: &FieldMeta{Kind: KindDeleteMany, Table: t},
-			})
-		}
-	}
-}
-
 func (b *Builder) addFunctions() {
 	if !b.Options.Functions {
 		return
@@ -1914,7 +1684,7 @@ func (b *Builder) unexposedRowArg(f *introspect.Function) string {
 }
 
 // rowInput returns the input type of function arguments typed as t's row
-// type, generating it on first use: <Type>Input with one nullable field per
+// type, generating it on first use: <Type>RowInput with one nullable field per
 // column, bound like a composite input (the argument is populated from it
 // with jsonb_populate_record, absent fields NULL). Generated and identity
 // columns are included: the argument is a value handed to the function,
@@ -1925,7 +1695,7 @@ func (b *Builder) rowInput(t *introspect.Table) string {
 	if name, ok := b.RowInputForTable[key]; ok {
 		return name
 	}
-	name := b.uniqueTypeName(b.TypeForTable[key] + "Input")
+	name := b.uniqueTypeName(b.TypeForTable[key] + "RowInput")
 	in := &Input{Name: name, Description: "The " + b.TypeForTable[key] + " row passed to a function."}
 	for _, c := range t.Columns {
 		in.AddField(&InputField{
@@ -2056,12 +1826,14 @@ func (b *Builder) addLiveFields() {
 }
 
 // Build renders SDL, validates it, and returns the executable schema + meta.
-// It fails with every relation-name conflict found while generating the
-// schema (a relation field named like another field of its type).
+// It fails with every naming conflict found while generating the schema (a
+// relation field named like another field of its type, a table mutation
+// name collision).
 func (b *Builder) Build() (*Built, error) {
 	if err := errors.Join(b.errs...); err != nil {
 		return nil, err
 	}
+	b.pruneMutations()
 	if len(b.Mutation.Fields) == 0 {
 		delete(b.Objects, "Mutation")
 	}

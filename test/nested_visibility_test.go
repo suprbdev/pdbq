@@ -27,7 +27,7 @@ func TestNestedMutationVisibility(t *testing.T) {
 
 	t.Run("forward create", func(t *testing.T) {
 		res := post(t, hs.URL, fmt.Sprintf(`mutation {
-			createComment(input: {body: "First!", postByPostId: {create: {title: "Fwd", userByAuthorId: {create: {email: %q}}}}}) {
+			createComment(input: {comment: {body: "First!", postByPostId: {create: {title: "Fwd", userByAuthorId: {create: {email: %q}}}}}}) {
 				comment {
 					body
 					postByPostId {
@@ -50,10 +50,10 @@ func TestNestedMutationVisibility(t *testing.T) {
 	var userID int
 	t.Run("backward create", func(t *testing.T) {
 		res := post(t, hs.URL, fmt.Sprintf(`mutation {
-			createUser(input: {email: %q, postsByAuthorId: {create: [
+			createUser(input: {user: {email: %q, postsByAuthorId: {create: [
 				{title: "Kid A", commentsByPostId: {create: [{body: "ga"}]}}
 				{title: "Kid B"}
-			]}}) {
+			]}}}) {
 				user {
 					id
 					all: postsByAuthorId(orderBy: TITLE_ASC) {
@@ -93,7 +93,7 @@ func TestNestedMutationVisibility(t *testing.T) {
 			t.Skip("backward create failed")
 		}
 		res := post(t, hs.URL, fmt.Sprintf(`mutation {
-			createPost(input: {title: "Kid C", userByAuthorId: {connectById: {id: %d}}, commentsByPostId: {create: [{body: "gc"}]}}) {
+			createPost(input: {post: {title: "Kid C", userByAuthorId: {connectById: {id: %d}}, commentsByPostId: {create: [{body: "gc"}]}}}) {
 				post {
 					title
 					userByAuthorId { postsByAuthorId(orderBy: TITLE_ASC) { totalCount nodes { title } } }
@@ -167,7 +167,7 @@ func TestNestedMutationVisibilityRLS(t *testing.T) {
 
 	t.Run("connected parent lists readable rows only", func(t *testing.T) {
 		res := asGrace(t, fmt.Sprintf(`mutation {
-			createNvItem(input: {body: "grace-new", ownerId: 2, nvListByListId: {connectById: {id: %d}}}) {
+			createNvItem(input: {nvItem: {body: "grace-new", ownerId: 2, nvListByListId: {connectById: {id: %d}}}}) {
 				nvItem { nvListByListId { name nvItemsByListId { totalCount nodes { body } } } }
 			}
 		}`, listID))
@@ -180,7 +180,7 @@ func TestNestedMutationVisibilityRLS(t *testing.T) {
 
 	t.Run("created parent and children", func(t *testing.T) {
 		res := asGrace(t, `mutation {
-			createNvItem(input: {body: "in-fresh", ownerId: 2, nvListByListId: {create: {ownerId: 2, name: "fresh"}}}) {
+			createNvItem(input: {nvItem: {body: "in-fresh", ownerId: 2, nvListByListId: {create: {ownerId: 2, name: "fresh"}}}}) {
 				nvItem { nvListByListId { name nvItemsByListId { totalCount nodes { body } } } }
 			}
 		}`)
@@ -191,7 +191,7 @@ func TestNestedMutationVisibilityRLS(t *testing.T) {
 		}
 
 		res = asGrace(t, `mutation {
-			createNvList(input: {ownerId: 2, name: "kids", nvItemsByListId: {create: [{body: "kid", ownerId: 2}]}}) {
+			createNvList(input: {nvList: {ownerId: 2, name: "kids", nvItemsByListId: {create: [{body: "kid", ownerId: 2}]}}}) {
 				nvList { name nvItemsByListId { totalCount nodes { body nvListByListId { name } } } }
 			}
 		}`)
@@ -204,7 +204,7 @@ func TestNestedMutationVisibilityRLS(t *testing.T) {
 
 	t.Run("unreadable nested row fails the statement", func(t *testing.T) {
 		res := asGrace(t, `mutation {
-			createNvList(input: {ownerId: 2, name: "leak", nvItemsByListId: {create: [{body: "for-ada", ownerId: 1}]}}) {
+			createNvList(input: {nvList: {ownerId: 2, name: "leak", nvItemsByListId: {create: [{body: "for-ada", ownerId: 1}]}}}) {
 				nvList { nvItemsByListId { nodes { body } } }
 			}
 		}`)

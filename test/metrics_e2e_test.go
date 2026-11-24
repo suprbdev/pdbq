@@ -67,7 +67,7 @@ func TestMetricsScrape(t *testing.T) {
 	for range 2 {
 		requireNoErrors(t, post(t, hs.URL, `{userByEmail(email: "ada@example.com") {id}}`, nil))
 	}
-	if res := post(t, hs.URL, `mutation {createUser(input: {email: "ada@example.com", mood: OK}) {user {id}}}`, nil); len(res.Errors) == 0 {
+	if res := post(t, hs.URL, `mutation {createUser(input: {user: {email: "ada@example.com", mood: OK}}) {user {id}}}`, nil); len(res.Errors) == 0 {
 		t.Fatal("duplicate email must fail")
 	}
 	if res := post(t, hs.URL, `{allUsers(first: 100) {nodes {id email fullName}}}`, nil); len(res.Errors) == 0 || !strings.Contains(res.Errors[0].Message, "cost") {

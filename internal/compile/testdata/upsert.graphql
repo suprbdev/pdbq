@@ -1,9 +1,9 @@
 mutation {
-  upsertUserByEmail(input: {email: "a@b.c", fullName: "Ada", clientMutationId: "cm-1"}) {
+  upsertUserByEmail(input: {clientMutationId: "cm-1", user: {email: "a@b.c", fullName: "Ada"}}) {
     user { id email fullName }
     clientMutationId
   }
-  onlyKey: upsertUserByEmail(input: {email: "a@b.c"}) {
+  onlyKey: upsertUserByEmail(input: {user: {email: "a@b.c"}}) {
     user { id }
   }
 }

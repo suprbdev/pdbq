@@ -121,9 +121,10 @@ These shipped features are outside the 1.0 compatibility promise: they may chang
 
 ## Mutations
 
-- [x] `create<Type>(input:)` per insertable table
-- [x] `update<Type>ByPk(patch:)` per updatable table with PK
-- [x] `delete<Type>ByPk` per deletable table with PK
+- [x] `create<Type>(input: {clientMutationId, <type>: <Type>Input!})` per insertable table
+- [x] `update<Type>By<Key>(input: {clientMutationId, <key>, <type>Patch: <Type>Patch!})` per updatable table, for the primary key and each unique constraint
+- [x] `delete<Type>By<Key>(input: {clientMutationId, <key>})` per deletable table, for the primary key and each unique constraint
+- [x] PostGraphile v4 mutation shapes: one `input` argument per table mutation, its type named after the field (`CreateUserInput`, `UpdateUserByIdInput`), `clientMutationId` only there; row values `<Type>Input` / `<Type>Patch`; a table mutation name, input or payload type collision is a build error — see [Mutations](mutations.md#table-mutations)
 - [x] Payload types with the mutated row selectable (relations included, compiled against the DML CTE)
 - [x] PostGraphile payload fields: `query` on every payload, plus the row's forward relations and `<row>Edge(orderBy:)` (cursor = the row's nodeId) on single-row payloads, compiled into the mutation's statement — see [Mutations](mutations.md)
 - [x] Payload relations and `query` fields reading the mutated table see it as it stands after the statement (created and updated rows included, deleted rows excluded) via a visibility CTE, emitted only when the payload reads the table that way
@@ -133,7 +134,7 @@ These shipped features are outside the 1.0 compatibility promise: they may chang
 - [x] Nested mutations via built-in plugin (postgraphile-plugin-nested-mutations shapes): `connectBy<Key>`/`connectByNodeId`, `create`, `updateBy<Key>`/`updateByNodeId`, `deleteBy<Key>`/`deleteByNodeId`, `disconnectBy<Key>`/`disconnectByNodeId` on forward and backward relations, on create and update mutations; multi-CTE single statement, bounded depth
 - [x] Update/delete by unique constraints (`updateUserByEmail`, `deleteUserByEmail`, mirroring the lookup surface)
 - [x] Upsert (`ON CONFLICT`) — `upsert<Type>By<Unique>(input:)` per non-generated key target; provided non-key columns update from `EXCLUDED`
-- [x] Bulk mutations (`createUsers(input: [...])`, `updateUsers(filter:, patch:)`, `deleteUsers(filter:)`; payload = mutated rows + `affectedCount`)
+- [x] Bulk mutations (`createManyUsers(input: {users: [...]})`, `updateManyUsers(input: {filter, userPatch})`, `deleteManyUsers(input: {filter})`; payload = mutated rows + `affectedCount`; named apart from the single-row mutations, so uncountable table names work)
 - [x] `clientMutationId` passthrough (Relay classic)
 - [x] `deleted<Type>NodeId` on delete payloads (PostGraphile v4 name, computed from the deleted row in the same statement; absent when the table has no `nodeId`)
 
@@ -154,7 +155,7 @@ These shipped features are outside the 1.0 compatibility promise: they may chang
 - [x] EXECUTE-privilege gating
 - [x] Computed columns (stable/immutable functions whose first argument is a row type → fields on that type; extra args become field args; volatile ones are custom mutations)
 - [x] Set-returning computed columns (`SETOF <scalar>`/`SETOF <table>` row-type functions → list fields with full selection support)
-- [x] Functions with table-valued arguments (a row type in any position, arrays of rows or composites → `<Type>Input`; a volatile function with a leading row argument is a custom mutation) and polymorphic types (resolved by the `@anyelement` / `@anycompatible` smart comments; otherwise skipped with one log line) — see [Mutations](mutations.md#function-arguments)
+- [x] Functions with table-valued arguments (a row type in any position, arrays of rows → `<Type>RowInput`, composites → `<Type>Input`; a volatile function with a leading row argument is a custom mutation) and polymorphic types (resolved by the `@anyelement` / `@anycompatible` smart comments; otherwise skipped with one log line) — see [Mutations](mutations.md#function-arguments)
 - [x] Custom mutations with PostGraphile payloads: the result field named after its type (`post`, `posts`, `integer`, the `OUT` parameter's name, none for `void`; `@resultFieldName` overrides), `clientMutationId`, `query`, and for a returned table row its forward relations and `<row>Edge`; a payload that reads tables (relations, `query`, computed columns) is read by a second statement after the call, in the same transaction, so it sees the function's writes; one statement otherwise — see [Mutations](mutations.md)
 
 ## RLS & auth

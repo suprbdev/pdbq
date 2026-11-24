@@ -50,7 +50,7 @@ SELECT json_build_object('post', json_build_object('id', __t_1."id"), 'query', j
 FROM __mut AS __t_1
 -- args: [3,3]
 
--- field: updatePosts
+-- field: updateManyPosts
 WITH __mut AS (
   UPDATE "public"."posts"
   SET "published" = $1

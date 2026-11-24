@@ -19,7 +19,7 @@ SELECT json_build_object('document', json_build_object('id', __t_1."id")) AS dat
 FROM __mut AS __t_1
 -- args: [[],[],[],[],null,null,"()","Hello"]
 
--- field: updateDocuments
+-- field: updateManyDocuments
 WITH __mut AS (
   UPDATE "public"."documents"
   SET "path" = $1::"ext".ltree

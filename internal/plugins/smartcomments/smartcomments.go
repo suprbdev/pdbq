@@ -117,7 +117,7 @@ func (p *Plugin) Inflect(kind inflect.Kind, in inflect.Input, next inflect.Next)
 	case inflect.KindTypeName, inflect.KindAllRowsField, inflect.KindFilterTypeName,
 		inflect.KindConditionTypeName,
 		inflect.KindOrderByTypeName, inflect.KindDistinctOnTypeName, inflect.KindCreateMutation, inflect.KindCreateInput,
-		inflect.KindUpdateInput, inflect.KindPayloadTypeName, inflect.KindPayloadDeletedNodeID,
+		inflect.KindPatchInput, inflect.KindPayloadTypeName, inflect.KindPayloadDeletedNodeID,
 		inflect.KindCreateManyMutation, inflect.KindUpdateManyMutation, inflect.KindDeleteManyMutation:
 		in.Table = p.Index().RenamedTable(in.Schema, in.Table)
 	case inflect.KindRowByPKField, inflect.KindRowByUniqueField,
@@ -198,14 +198,14 @@ func (p *Plugin) applyTableOmits(b *schema.Builder, t *introspect.Table) {
 		})
 	}
 	if omit.Table(t, omit.Filter) {
-		removeInputType(b, b.Inflect(inflect.KindFilterTypeName, in))
-		removeInputType(b, b.Inflect(inflect.KindConditionTypeName, in))
+		b.RemoveInputType(b.Inflect(inflect.KindFilterTypeName, in))
+		b.RemoveInputType(b.Inflect(inflect.KindConditionTypeName, in))
 	}
 	if omit.Table(t, omit.Order) {
-		removeEnumType(b, b.Inflect(inflect.KindOrderByTypeName, in))
+		b.RemoveEnumType(b.Inflect(inflect.KindOrderByTypeName, in))
 	}
 	if omit.Table(t, omit.Filter) || omit.Table(t, omit.Order) {
-		removeEnumType(b, b.Inflect(inflect.KindDistinctOnTypeName, in))
+		b.RemoveEnumType(b.Inflect(inflect.KindDistinctOnTypeName, in))
 	}
 }
 
@@ -224,7 +224,7 @@ func (p *Plugin) applyColumnTags(b *schema.Builder, t *introspect.Table) {
 	obj := b.Objects[b.TypeForTable[tableKey(t.Schema, t.Name)]]
 	rowObj := b.Objects[b.TypeForComposite[tableKey(t.Schema, t.Name)]]
 	createIn := b.Inputs[b.Inflect(inflect.KindCreateInput, in)]
-	updateIn := b.Inputs[b.Inflect(inflect.KindUpdateInput, in)]
+	updateIn := b.Inputs[b.Inflect(inflect.KindPatchInput, in)]
 	filterIn := b.Inputs[b.Inflect(inflect.KindFilterTypeName, in)]
 	conditionIn := b.Inputs[b.Inflect(inflect.KindConditionTypeName, in)]
 	rowIn := b.Inputs[b.RowInputForTable[tableKey(t.Schema, t.Name)]]
@@ -286,14 +286,14 @@ func (p *Plugin) applyColumnTags(b *schema.Builder, t *introspect.Table) {
 	// every column would leave an empty input type — invalid SDL. Drop it,
 	// and likewise enums left without values.
 	if conditionIn != nil && len(conditionIn.Fields) == 0 {
-		removeInputType(b, conditionIn.Name)
+		b.RemoveInputType(conditionIn.Name)
 	}
 	if rowIn != nil && len(rowIn.Fields) == 0 {
-		removeInputType(b, rowIn.Name)
+		b.RemoveInputType(rowIn.Name)
 	}
 	for _, en := range []*schema.Enum{orderEnum, distinctEnum} {
 		if en != nil && len(en.Values) == 0 {
-			removeEnumType(b, en.Name)
+			b.RemoveEnumType(en.Name)
 		}
 	}
 }
@@ -330,7 +330,7 @@ func (p *Plugin) applyCompositeTags(b *schema.Builder) {
 		if in != nil && len(in.Fields) == 0 {
 			p.log.Warn("smart_comments: every attribute of the composite is omitted from input; columns of the type are not writable",
 				"type", key)
-			removeInputType(b, in.Name)
+			b.RemoveInputType(in.Name)
 		}
 	}
 }
@@ -402,65 +402,6 @@ func removeFields(b *schema.Builder, match func(*schema.Field) bool) {
 		}
 		obj.Fields = kept
 	}
-}
-
-// removeInputType deletes an input type and every argument and input field
-// referencing it.
-func removeInputType(b *schema.Builder, name string) {
-	if _, ok := b.Inputs[name]; !ok {
-		return
-	}
-	delete(b.Inputs, name)
-	removeReferences(b, name)
-}
-
-// removeEnumType deletes an enum type and every argument and input field
-// referencing it.
-func removeEnumType(b *schema.Builder, name string) {
-	if _, ok := b.Enums[name]; !ok {
-		return
-	}
-	delete(b.Enums, name)
-	removeReferences(b, name)
-}
-
-// removeReferences strips the arguments and input fields whose base type
-// (list/non-null unwrapped) is the given type name. A field that required
-// the argument (a bulk update or delete's filter) is removed instead: it
-// would otherwise run without the restriction the argument carried.
-func removeReferences(b *schema.Builder, name string) {
-	for _, obj := range b.Objects {
-		fields := obj.Fields[:0]
-		for _, f := range obj.Fields {
-			args := f.Args[:0]
-			required := false
-			for _, a := range f.Args {
-				if baseType(a.Type) != name {
-					args = append(args, a)
-				} else if strings.HasSuffix(a.Type, "!") {
-					required = true
-				}
-			}
-			f.Args = args
-			if !required {
-				fields = append(fields, f)
-			}
-		}
-		obj.Fields = fields
-	}
-	for _, in := range b.Inputs {
-		kept := in.Fields[:0]
-		for _, f := range in.Fields {
-			if baseType(f.Type) != name {
-				kept = append(kept, f)
-			}
-		}
-		in.Fields = kept
-	}
-}
-
-func baseType(t string) string {
-	return strings.Trim(t, "[]!")
 }
 
 // removeInputColumn drops the input field bound to the pg column.

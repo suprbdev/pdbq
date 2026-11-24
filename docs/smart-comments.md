@@ -46,7 +46,7 @@ Tags may repeat where noted. Disable everything with
 |---|---|
 | `@omit` | Hide the column everywhere: every action below. The column may still back foreign keys (relations join through it). |
 | `@omit read` | Hide its value: the output field, PostGIS derived accessors and raster fields, full-text rank fields, similarity and distance fields, contrib value fields (`<field>Nlevel`, `<field>Value`, …), aggregates and group-by keys, distinctOn, distance / rank / similarity orderings, and every key including the column (see [What `@omit read` hides](#what-omit-read-hides)). It also implies `@omit filter`, `@omit order` and `@omit aggregates`: the column is left out of filters, conditions, orderBy and distinctOn too. |
-| `@omit create` / `update` | Leave it out of the create input / update patch, nested-mutation inputs included; an upsert never overwrites a column left out of the patch. |
+| `@omit create` / `update` | Leave it out of the row values (`<Type>Input`) / patch (`<Type>Patch`), nested-mutation inputs included; an upsert never overwrites a column left out of the patch. |
 | `@omit filter` | No filter or condition field, distinctOn value, `having` or relation-aggregate filter. |
 | `@omit order` | No orderBy values (relational and aggregate ones included), distinctOn or group-by value. |
 | `@name <new_name>` | Rename the field (and its filter field, orderBy and distinctOn values, input fields, lookup arguments). |

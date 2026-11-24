@@ -70,23 +70,23 @@ func TestNestedMutationOperations(t *testing.T) {
 	red, blue := teamID(t, "red"), teamID(t, "blue")
 
 	t.Run("forward connect by unique key on create", func(t *testing.T) {
-		res := post(t, hs.URL, `mutation { createNoMember(input: {name: "fwd-key", noTeamByTeamId: {connectBySlug: {slug: "red"}}}) {
+		res := post(t, hs.URL, `mutation { createNoMember(input: {noMember: {name: "fwd-key", noTeamByTeamId: {connectBySlug: {slug: "red"}}}}) {
 			noMember { name noTeamByTeamId { slug noMembersByTeamId(filter: {name: {equalTo: "fwd-key"}}) { totalCount } } } } }`, nil)
 		expect(t, res, "createNoMember", `{"noMember": {"name": "fwd-key", "noTeamByTeamId": {"slug": "red", "noMembersByTeamId": {"totalCount": 1}}}}`)
 	})
 
 	t.Run("forward connect by nodeId on create", func(t *testing.T) {
-		res := post(t, hs.URL, `mutation($id: ID!) { createNoMember(input: {name: "fwd-node", noTeamByTeamId: {connectByNodeId: {nodeId: $id}}}) {
+		res := post(t, hs.URL, `mutation($id: ID!) { createNoMember(input: {noMember: {name: "fwd-node", noTeamByTeamId: {connectByNodeId: {nodeId: $id}}}}) {
 			noMember { noTeamByTeamId { slug } } } }`, map[string]any{"id": nodeID("NoTeam", blue)})
 		expect(t, res, "createNoMember", `{"noMember": {"noTeamByTeamId": {"slug": "blue"}}}`)
 
-		res = post(t, hs.URL, `mutation($id: ID!) { createNoMember(input: {name: "fwd-bad-node", noTeamByTeamId: {connectByNodeId: {nodeId: $id}}}) {
+		res = post(t, hs.URL, `mutation($id: ID!) { createNoMember(input: {noMember: {name: "fwd-bad-node", noTeamByTeamId: {connectByNodeId: {nodeId: $id}}}}) {
 			noMember { id } } }`, map[string]any{"id": nodeID("NoMember", blue)})
 		expectError(t, res, "nodeId does not identify a NoTeam")
 	})
 
 	t.Run("forward connect of a missing row rolls back", func(t *testing.T) {
-		res := post(t, hs.URL, `mutation { createNoMember(input: {name: "fwd-missing", noTeamByTeamId: {connectBySlug: {slug: "nope"}}}) { noMember { id } } }`, nil)
+		res := post(t, hs.URL, `mutation { createNoMember(input: {noMember: {name: "fwd-missing", noTeamByTeamId: {connectBySlug: {slug: "nope"}}}}) { noMember { id } } }`, nil)
 		expectError(t, res, "noTeamByTeamId.connectBySlug matched 0 rows")
 		if n := scalar(t, `SELECT count(*) FROM no_members WHERE name = 'fwd-missing'`); n != int64(0) {
 			t.Errorf("rolled-back member persisted: %v", n)
@@ -95,19 +95,19 @@ func TestNestedMutationOperations(t *testing.T) {
 
 	t.Run("forward create and update by key on update", func(t *testing.T) {
 		m := member(t, "fwd-upd", nil)
-		res := post(t, hs.URL, fmt.Sprintf(`mutation { updateNoMemberById(id: %d, patch: {noTeamByTeamId: {create: {slug: "green", name: "Green"}}}) {
+		res := post(t, hs.URL, fmt.Sprintf(`mutation { updateNoMemberById(input: {id: %d, noMemberPatch: {noTeamByTeamId: {create: {slug: "green", name: "Green"}}}}) {
 			noMember { noTeamByTeamId { slug noMembersByTeamId { nodes { name } } } } } }`, m), nil)
 		expect(t, res, "updateNoMemberById", `{"noMember": {"noTeamByTeamId": {"slug": "green", "noMembersByTeamId": {"nodes": [{"name": "fwd-upd"}]}}}}`)
 
-		res = post(t, hs.URL, fmt.Sprintf(`mutation { updateNoMemberById(id: %d, patch: {name: "fwd-upd2", noTeamByTeamId: {connectById: {id: %d}}}) {
+		res = post(t, hs.URL, fmt.Sprintf(`mutation { updateNoMemberById(input: {id: %d, noMemberPatch: {name: "fwd-upd2", noTeamByTeamId: {connectById: {id: %d}}}}) {
 			noMember { name noTeamByTeamId { slug } } } }`, m, blue), nil)
 		expect(t, res, "updateNoMemberById", `{"noMember": {"name": "fwd-upd2", "noTeamByTeamId": {"slug": "blue"}}}`)
 
-		res = post(t, hs.URL, fmt.Sprintf(`mutation($id: ID!) { updateNoMemberById(id: %d, patch: {noTeamByTeamId: {updateByNodeId: {nodeId: $id, noTeamPatch: {name: "Blue!"}}}}) {
+		res = post(t, hs.URL, fmt.Sprintf(`mutation($id: ID!) { updateNoMemberById(input: {id: %d, noMemberPatch: {noTeamByTeamId: {updateByNodeId: {nodeId: $id, noTeamPatch: {name: "Blue!"}}}}}) {
 			noMember { noTeamByTeamId { slug name } } } }`, m), map[string]any{"id": nodeID("NoTeam", blue)})
 		expect(t, res, "updateNoMemberById", `{"noMember": {"noTeamByTeamId": {"slug": "blue", "name": "Blue!"}}}`)
 
-		res = post(t, hs.URL, fmt.Sprintf(`mutation { updateNoMemberById(id: %d, patch: {noTeamByTeamId: {updateById: {id: %d, noTeamPatch: {name: "Red!"}}}}) {
+		res = post(t, hs.URL, fmt.Sprintf(`mutation { updateNoMemberById(input: {id: %d, noMemberPatch: {noTeamByTeamId: {updateById: {id: %d, noTeamPatch: {name: "Red!"}}}}}) {
 			noMember { id } } }`, m, red), nil)
 		expectError(t, res, "noTeamByTeamId.updateById matched 0 rows")
 		if name := scalar(t, `SELECT name FROM no_teams WHERE id = $1`, red); name != "Red" {
@@ -117,29 +117,29 @@ func TestNestedMutationOperations(t *testing.T) {
 
 	t.Run("forward disconnect by key and nodeId", func(t *testing.T) {
 		m := member(t, "fwd-disc", red)
-		res := post(t, hs.URL, fmt.Sprintf(`mutation { updateNoMemberById(id: %d, patch: {noTeamByTeamId: {disconnectBySlug: {slug: "blue"}}}) {
+		res := post(t, hs.URL, fmt.Sprintf(`mutation { updateNoMemberById(input: {id: %d, noMemberPatch: {noTeamByTeamId: {disconnectBySlug: {slug: "blue"}}}}) {
 			noMember { teamId } } }`, m), nil)
 		expect(t, res, "updateNoMemberById", fmt.Sprintf(`{"noMember": {"teamId": %d}}`, red))
 
-		res = post(t, hs.URL, fmt.Sprintf(`mutation($id: ID!) { updateNoMemberById(id: %d, patch: {noTeamByTeamId: {disconnectByNodeId: {nodeId: $id}}}) {
+		res = post(t, hs.URL, fmt.Sprintf(`mutation($id: ID!) { updateNoMemberById(input: {id: %d, noMemberPatch: {noTeamByTeamId: {disconnectByNodeId: {nodeId: $id}}}}) {
 			noMember { teamId noTeamByTeamId { slug } } } }`, m), map[string]any{"id": nodeID("NoTeam", red)})
 		expect(t, res, "updateNoMemberById", `{"noMember": {"teamId": null, "noTeamByTeamId": null}}`)
 
-		res = post(t, hs.URL, `mutation { createNoMember(input: {name: "fwd-disc-create", noTeamByTeamId: {disconnectById: {id: 1}}}) { noMember { id } } }`, nil)
+		res = post(t, hs.URL, `mutation { createNoMember(input: {noMember: {name: "fwd-disc-create", noTeamByTeamId: {disconnectById: {id: 1}}}}) { noMember { id } } }`, nil)
 		expectError(t, res, `Field "disconnectById" is not defined`)
 	})
 
 	t.Run("forward delete with disconnect", func(t *testing.T) {
 		tmp := int(scalar(t, `INSERT INTO no_teams (slug, name) VALUES ('tmp', 'Tmp') RETURNING id`).(int32))
 		m := member(t, "fwd-del", tmp)
-		res := post(t, hs.URL, fmt.Sprintf(`mutation { updateNoMemberById(id: %d, patch: {noTeamByTeamId: {deleteById: {id: %d}, disconnectById: {id: %d}}}) {
+		res := post(t, hs.URL, fmt.Sprintf(`mutation { updateNoMemberById(input: {id: %d, noMemberPatch: {noTeamByTeamId: {deleteById: {id: %d}, disconnectById: {id: %d}}}}) {
 			noMember { teamId } } }`, m, tmp, tmp), nil)
 		expect(t, res, "updateNoMemberById", `{"noMember": {"teamId": null}}`)
 		if n := scalar(t, `SELECT count(*) FROM no_teams WHERE id = $1`, tmp); n != int64(0) {
 			t.Errorf("deleted team persisted")
 		}
 
-		res = post(t, hs.URL, fmt.Sprintf(`mutation { updateNoMemberById(id: %d, patch: {noTeamByTeamId: {connectById: {id: %d}, create: {slug: "x", name: "X"}}}) {
+		res = post(t, hs.URL, fmt.Sprintf(`mutation { updateNoMemberById(input: {id: %d, noMemberPatch: {noTeamByTeamId: {connectById: {id: %d}, create: {slug: "x", name: "X"}}}}) {
 			noMember { teamId } } }`, m, red), nil)
 		expectError(t, res, "specify at most one of create, connect or disconnect")
 	})
@@ -154,13 +154,13 @@ func TestNestedMutationOperations(t *testing.T) {
 		leaveNode := member(t, "b-leave-node", team)
 		gone := member(t, "b-gone", team)
 		goneNode := member(t, "b-gone-node", team)
-		res := post(t, hs.URL, fmt.Sprintf(`mutation($jn: ID!, $rn: ID!, $ln: ID!, $gn: ID!) { updateNoTeamById(id: %d, patch: {name: "Bwd!", noMembersByTeamId: {
+		res := post(t, hs.URL, fmt.Sprintf(`mutation($jn: ID!, $rn: ID!, $ln: ID!, $gn: ID!) { updateNoTeamById(input: {id: %d, noTeamPatch: {name: "Bwd!", noMembersByTeamId: {
 				connectById: [{id: %d}], connectByNodeId: [{nodeId: $jn}],
 				create: [{name: "b-new"}],
 				updateById: [{id: %d, noMemberPatch: {name: "b-renamed"}}], updateByNodeId: [{nodeId: $rn, noMemberPatch: {name: "b-renamed-node"}}],
 				disconnectById: [{id: %d}], disconnectByNodeId: [{nodeId: $ln}],
 				deleteById: [{id: %d}], deleteByNodeId: [{nodeId: $gn}]
-			}}) {
+			}}}) {
 			noTeam { name noMembersByTeamId(orderBy: NAME_ASC) { totalCount nodes { name noTeamByTeamId { name } } } } } }`,
 			team, join, rename, leave, gone),
 			map[string]any{"jn": nodeID("NoMember", joinNode), "rn": nodeID("NoMember", renameNode), "ln": nodeID("NoMember", leaveNode), "gn": nodeID("NoMember", goneNode)})
@@ -178,7 +178,7 @@ func TestNestedMutationOperations(t *testing.T) {
 
 	t.Run("backward update and delete only reach the row's children", func(t *testing.T) {
 		other := member(t, "b-other", red)
-		res := post(t, hs.URL, fmt.Sprintf(`mutation { updateNoTeamById(id: %d, patch: {name: "Blue", noMembersByTeamId: {deleteById: [{id: %d}]}}) { noTeam { id } } }`, blue, other), nil)
+		res := post(t, hs.URL, fmt.Sprintf(`mutation { updateNoTeamById(input: {id: %d, noTeamPatch: {name: "Blue", noMembersByTeamId: {deleteById: [{id: %d}]}}}) { noTeam { id } } }`, blue, other), nil)
 		expectError(t, res, "noMembersByTeamId.deleteById[0] matched 0 rows")
 		if n := scalar(t, `SELECT count(*) FROM no_members WHERE id = $1`, other); n != int64(1) {
 			t.Errorf("member of another team deleted")
@@ -186,13 +186,13 @@ func TestNestedMutationOperations(t *testing.T) {
 		if name := scalar(t, `SELECT name FROM no_teams WHERE id = $1`, blue); name != "Blue!" {
 			t.Errorf("rolled-back team rename persisted: %v", name)
 		}
-		res = post(t, hs.URL, fmt.Sprintf(`mutation { updateNoTeamById(id: %d, patch: {noMembersByTeamId: {updateById: [{id: %d, noMemberPatch: {name: "stolen"}}]}}) { noTeam { id } } }`, blue, other), nil)
+		res = post(t, hs.URL, fmt.Sprintf(`mutation { updateNoTeamById(input: {id: %d, noTeamPatch: {noMembersByTeamId: {updateById: [{id: %d, noMemberPatch: {name: "stolen"}}]}}}) { noTeam { id } } }`, blue, other), nil)
 		expectError(t, res, "noMembersByTeamId.updateById[0] matched 0 rows")
 	})
 
 	t.Run("backward connect and create on create", func(t *testing.T) {
 		loose := member(t, "c-loose", nil)
-		res := post(t, hs.URL, fmt.Sprintf(`mutation { createNoTeam(input: {slug: "fresh", name: "Fresh", noMembersByTeamId: {connectById: {id: %d}, create: [{name: "c-kid", noTasksByMemberId: {create: [{title: "t1"}]}}]}}) {
+		res := post(t, hs.URL, fmt.Sprintf(`mutation { createNoTeam(input: {noTeam: {slug: "fresh", name: "Fresh", noMembersByTeamId: {connectById: {id: %d}, create: [{name: "c-kid", noTasksByMemberId: {create: [{title: "t1"}]}}]}}}) {
 			noTeam { noMembersByTeamId(orderBy: NAME_ASC) { nodes { name noTasksByMemberId { nodes { title } } } } } } }`, loose), nil)
 		expect(t, res, "createNoTeam", `{"noTeam": {"noMembersByTeamId": {"nodes": [
 			{"name": "c-kid", "noTasksByMemberId": {"nodes": [{"title": "t1"}]}},
@@ -200,12 +200,12 @@ func TestNestedMutationOperations(t *testing.T) {
 	})
 
 	t.Run("disconnect is absent for a NOT NULL foreign key", func(t *testing.T) {
-		res := post(t, hs.URL, `mutation { updateNoMemberById(id: 1, patch: {noTasksByMemberId: {disconnectById: [{id: 1}]}}) { noMember { id } } }`, nil)
+		res := post(t, hs.URL, `mutation { updateNoMemberById(input: {id: 1, noMemberPatch: {noTasksByMemberId: {disconnectById: [{id: 1}]}}}) { noMember { id } } }`, nil)
 		expectError(t, res, `Field "disconnectById" is not defined`)
 	})
 
 	t.Run("a missing main row rolls back the forward operations", func(t *testing.T) {
-		res := post(t, hs.URL, fmt.Sprintf(`mutation { updateNoMemberById(id: 999999, patch: {noTeamByTeamId: {updateById: {id: %d, noTeamPatch: {name: "ghost"}}}}) { noMember { id } } }`, red), nil)
+		res := post(t, hs.URL, fmt.Sprintf(`mutation { updateNoMemberById(input: {id: 999999, noMemberPatch: {noTeamByTeamId: {updateById: {id: %d, noTeamPatch: {name: "ghost"}}}}}) { noMember { id } } }`, red), nil)
 		if len(res.Errors) == 0 {
 			t.Fatal("want an error")
 		}
@@ -216,8 +216,8 @@ func TestNestedMutationOperations(t *testing.T) {
 
 	t.Run("a failing field rolls back the whole operation", func(t *testing.T) {
 		res := post(t, hs.URL, `mutation {
-			a: createNoMember(input: {name: "multi-a", noTeamByTeamId: {connectBySlug: {slug: "red"}}}) { noMember { id } }
-			b: createNoMember(input: {name: "multi-b", noTeamByTeamId: {connectBySlug: {slug: "nope"}}}) { noMember { id } }
+			a: createNoMember(input: {noMember: {name: "multi-a", noTeamByTeamId: {connectBySlug: {slug: "red"}}}}) { noMember { id } }
+			b: createNoMember(input: {noMember: {name: "multi-b", noTeamByTeamId: {connectBySlug: {slug: "nope"}}}}) { noMember { id } }
 		}`, nil)
 		expectError(t, res, "noTeamByTeamId.connectBySlug matched 0 rows")
 		if n := scalar(t, `SELECT count(*) FROM no_members WHERE name LIKE 'multi-%'`); n != int64(0) {
@@ -291,7 +291,7 @@ func TestNestedMutationOperationsRLS(t *testing.T) {
 	}
 
 	t.Run("own rows", func(t *testing.T) {
-		res := asGrace(t, fmt.Sprintf(`mutation { updateNrListById(id: %d, patch: {nrItemsByListId: {updateById: [{id: %d, nrItemPatch: {body: "grace2"}}], create: [{body: "grace3", ownerId: 2}]}}) {
+		res := asGrace(t, fmt.Sprintf(`mutation { updateNrListById(input: {id: %d, nrListPatch: {nrItemsByListId: {updateById: [{id: %d, nrItemPatch: {body: "grace2"}}], create: [{body: "grace3", ownerId: 2}]}}}) {
 			nrList { nrItemsByListId(orderBy: BODY_ASC) { nodes { body } } } } }`, listID, graceItem))
 		requireNoErrors(t, res)
 		want := normalizeStr(t, `{"nrList": {"nrItemsByListId": {"nodes": [{"body": "ada"}, {"body": "grace2"}, {"body": "grace3"}]}}}`)
@@ -301,7 +301,7 @@ func TestNestedMutationOperationsRLS(t *testing.T) {
 	})
 
 	t.Run("column grants: forward operations", func(t *testing.T) {
-		res := asGrace(t, fmt.Sprintf(`mutation { createNrItem(input: {body: "grace4", ownerId: 2, nrListByListId: {connectById: {id: %d}}}) {
+		res := asGrace(t, fmt.Sprintf(`mutation { createNrItem(input: {nrItem: {body: "grace4", ownerId: 2, nrListByListId: {connectById: {id: %d}}}}) {
 			nrItem { body nrListByListId { nrItemsByListId(filter: {body: {startsWith: "grace4"}}) { totalCount } } } } }`, listID))
 		requireNoErrors(t, res)
 		want := normalizeStr(t, `{"nrItem": {"body": "grace4", "nrListByListId": {"nrItemsByListId": {"totalCount": 1}}}}`)
@@ -315,7 +315,7 @@ func TestNestedMutationOperationsRLS(t *testing.T) {
 		if err := conn.QueryRow(ctx, `SELECT l.id, i.id FROM nr_locked l, nr_locked_items i`).Scan(&locked, &loose); err != nil {
 			t.Fatal(err)
 		}
-		res := asGrace(t, fmt.Sprintf(`mutation { updateNrLockedById(id: %d, patch: {nrLockedItemsByLockedId: {connectById: [{id: %d}]}}) { nrLocked { id } } }`, locked, loose))
+		res := asGrace(t, fmt.Sprintf(`mutation { updateNrLockedById(input: {id: %d, nrLockedPatch: {nrLockedItemsByLockedId: {connectById: [{id: %d}]}}}) { nrLocked { id } } }`, locked, loose))
 		if len(res.Errors) == 0 || !strings.Contains(res.Errors[0].Message, "permission denied") {
 			t.Fatalf("want permission denied, got %+v", res.Errors)
 		}
@@ -334,7 +334,7 @@ func TestNestedMutationOperationsRLS(t *testing.T) {
 		{"disconnect", fmt.Sprintf(`disconnectById: [{id: %d}]`, adaItem), ""},
 	} {
 		t.Run("another owner's row: "+tc.name, func(t *testing.T) {
-			res := asGrace(t, fmt.Sprintf(`mutation { updateNrListById(id: %d, patch: {name: "renamed", nrItemsByListId: {%s}}) {
+			res := asGrace(t, fmt.Sprintf(`mutation { updateNrListById(input: {id: %d, nrListPatch: {name: "renamed", nrItemsByListId: {%s}}}) {
 				nrList { name nrItemsByListId { totalCount } } } }`, listID, tc.op))
 			var body string
 			var listed any

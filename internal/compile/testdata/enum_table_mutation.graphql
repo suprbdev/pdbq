@@ -1,5 +1,5 @@
 mutation {
-  createEvent(input: { name: "PGConf", typeCode: CONFERENCE }) {
+  createEvent(input: {event: { name: "PGConf", typeCode: CONFERENCE }}) {
     event {
       id
       name

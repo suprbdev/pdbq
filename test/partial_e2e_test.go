@@ -77,7 +77,7 @@ func TestPartialMutations(t *testing.T) {
 	sweepUsers(t, pattern)
 	email := func(p string) string { return fmt.Sprintf("%s-%d@partial.example", p, run) }
 	create := func(alias, em string) string {
-		return fmt.Sprintf(`%s: createUser(input: {email: %q}) { user { id email } }`, alias, em)
+		return fmt.Sprintf(`%s: createUser(input: {user: {email: %q}}) { user { id email } }`, alias, em)
 	}
 	query := func(fields ...string) string { return "mutation { " + strings.Join(fields, "\n") + " }" }
 
@@ -98,7 +98,7 @@ func TestPartialMutations(t *testing.T) {
 	t.Run("not found and compile-time failures are field errors", func(t *testing.T) {
 		hs := testServer(t, func(c *config.Config) { c.TX.Partial.Enabled = true })
 		res := postPartial(t, hs.URL, query(
-			`gone: updateUserByEmail(email: "nobody-`+fmt.Sprint(run)+`@partial.example", patch: {fullName: "x"}) { user { id } }`,
+			`gone: updateUserByEmail(input: {email: "nobody-`+fmt.Sprint(run)+`@partial.example", userPatch: {fullName: "x"}}) { user { id } }`,
 			create("a", email("nf")),
 		), true, nil)
 		if len(res.Errors) != 1 || string(res.Data["gone"]) != "null" || string(res.Data["a"]) == "null" {
@@ -192,7 +192,7 @@ func TestPartialMutations(t *testing.T) {
 			_, _ = conn.Exec(context.Background(), `DELETE FROM posts WHERE title LIKE $1`, title+"%")
 		})
 		post := func(alias string, author int, suffix string) string {
-			return fmt.Sprintf(`%s: createPost(input: {authorId: %d, title: %q}) { post { id } }`, alias, author, title+suffix)
+			return fmt.Sprintf(`%s: createPost(input: {post: {authorId: %d, title: %q}}) { post { id } }`, alias, author, title+suffix)
 		}
 		res := postPartial(t, hs.URL, query(post("mine", 1, "-a"), post("theirs", 2, "-b"), post("mine2", 1, "-c")), true, map[string]string{
 			"X-Pdbq-Claim-Role":    "app_user",
@@ -213,7 +213,7 @@ func TestPartialMutations(t *testing.T) {
 			t.Fatal(err)
 		}
 		update := func(alias string) string {
-			return fmt.Sprintf(`%s: updatePostById(id: %d, patch: {title: "hijack"}) { post { id } }`, alias, other)
+			return fmt.Sprintf(`%s: updatePostById(input: {id: %d, postPatch: {title: "hijack"}}) { post { id } }`, alias, other)
 		}
 		res = postPartial(t, hs.URL, query(post("x", 1, "-d"), update("c"), update("d")), true, map[string]string{
 			"X-Pdbq-Claim-Role":    "app_user",

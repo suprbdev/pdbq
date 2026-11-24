@@ -14,7 +14,7 @@ import (
 )
 
 const readOnlyMutation = `mutation {
-  createUser(input: {email: "a@b.c"}) { user { id } }
+  createUser(input: {user: {email: "a@b.c"}}) { user { id } }
 }`
 
 // newReadOnlyExecutor builds an executor over the fixture schema with a nil

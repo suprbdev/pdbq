@@ -129,8 +129,8 @@ func TestOmitEnforcement(t *testing.T) {
 
 	t.Run("lookups by a hidden unique key (#65)", func(t *testing.T) {
 		requireRejected(t, url, `{ hit: accountByApiToken(apiToken: "tok-acme-SECRET") { id name } }`, "accountByApiToken")
-		requireRejected(t, url, `mutation { updateAccountByApiToken(apiToken: "tok-acme-SECRET", patch: {name: "x"}) { account { id } } }`, "updateAccountByApiToken")
-		requireRejected(t, url, `mutation { upsertAccountByApiToken(input: {name: "x"}) { account { id } } }`, "upsertAccountByApiToken")
+		requireRejected(t, url, `mutation { updateAccountByApiToken(input: {apiToken: "tok-acme-SECRET", accountPatch: {name: "x"}}) { account { id } } }`, "updateAccountByApiToken")
+		requireRejected(t, url, `mutation { upsertAccountByApiToken(input: {account: {name: "x"}}) { account { id } } }`, "upsertAccountByApiToken")
 		for _, absent := range []string{"ByApiToken", "apiToken"} {
 			if strings.Contains(sdl, absent) {
 				t.Errorf("SDL exposes %s", absent)
@@ -139,13 +139,13 @@ func TestOmitEnforcement(t *testing.T) {
 	})
 
 	t.Run("upsert keeps columns tagged @omit update (#66)", func(t *testing.T) {
-		requireRejected(t, url, `mutation { updateContractById(id: 1, patch: {signedBy: "mallory"}) { contract { id } } }`, "signedBy")
-		res := post(t, url, `mutation { upsertContractByCode(input: {code: "c1", signedBy: "mallory", amount: 200}) { contract { id signedBy amount } } }`, nil)
+		requireRejected(t, url, `mutation { updateContractById(input: {id: 1, contractPatch: {signedBy: "mallory"}}) { contract { id } } }`, "signedBy")
+		res := post(t, url, `mutation { upsertContractByCode(input: {contract: {code: "c1", signedBy: "mallory", amount: 200}}) { contract { id signedBy amount } } }`, nil)
 		requireNoErrors(t, res)
 		if got := normalize(t, res.Data["upsertContractByCode"]); got != `{"contract":{"amount":200,"id":1,"signedBy":"alice"}}` {
 			t.Fatalf("upsert = %s", got)
 		}
-		res = post(t, url, `mutation { upsertContractByCode(input: {code: "c2", signedBy: "bob"}) { contract { code signedBy } } }`, nil)
+		res = post(t, url, `mutation { upsertContractByCode(input: {contract: {code: "c2", signedBy: "bob"}}) { contract { code signedBy } } }`, nil)
 		requireNoErrors(t, res)
 		if got := normalize(t, res.Data["upsertContractByCode"]); got != `{"contract":{"code":"c2","signedBy":"bob"}}` {
 			t.Fatalf("upsert insert = %s", got)
@@ -154,10 +154,10 @@ func TestOmitEnforcement(t *testing.T) {
 
 	t.Run("nested mutations (#67)", func(t *testing.T) {
 		requireRejected(t, url,
-			`mutation { createTokRef(input: {note: "leak", accountByAccountToken: {connectById: {id: 2}}}) { tokRef { accountToken } } }`,
+			`mutation { createTokRef(input: {tokRef: {note: "leak", accountByAccountToken: {connectById: {id: 2}}}}) { tokRef { accountToken } } }`,
 			"accountByAccountToken")
 		requireRejected(t, url,
-			`mutation { updateAccountById(id: 1, patch: {approvalsByAccountId: {create: [{note: "x"}]}}) { account { id } } }`,
+			`mutation { updateAccountById(input: {id: 1, accountPatch: {approvalsByAccountId: {create: [{note: "x"}]}}}) { account { id } } }`,
 			"approvalsByAccountId")
 		requireRejected(t, url,
 			`{ allAccounts(filter: {approvalsByAccountId: {some: {note: {startsWith: "f"}}}}) { nodes { id } } }`,

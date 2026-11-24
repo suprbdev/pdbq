@@ -53,7 +53,7 @@ func (r *txRun) runTx(_ context.Context, _ pgexec.TxBeginner, opts pgexec.TxOpti
 	return nil
 }
 
-const partialQuery = `mutation { a: createUser(input: {email: "a@b.c"}) { user { id } } b: createUser(input: {email: "b@b.c"}) { user { id } } c: createUser(input: {email: "c@b.c"}) { user { id } } }`
+const partialQuery = `mutation { a: createUser(input: {user: {email: "a@b.c"}}) { user { id } } b: createUser(input: {user: {email: "b@b.c"}}) { user { id } } c: createUser(input: {user: {email: "c@b.c"}}) { user { id } } }`
 
 func newPartialExecutor(t *testing.T, opts Options, r *txRun) *Executor {
 	t.Helper()
@@ -157,7 +157,7 @@ func TestPartialMutationsOptIn(t *testing.T) {
 		e := newBatchExecutor(t, Options{PartialMutations: true}, f)
 		r := &txRun{tx: &spTx{}}
 		e.runTx = r.runTx
-		res := e.Execute(context.Background(), Request{Query: `mutation { a: createUser(input: {email: "a@b.c"}) { user { id } } }`})
+		res := e.Execute(context.Background(), Request{Query: `mutation { a: createUser(input: {user: {email: "a@b.c"}}) { user { id } } }`})
 		if len(res.Errors) != 0 || r.calls != 0 || len(f.calls) != 1 {
 			t.Fatalf("response = %s, runTx calls = %d, batches = %d", resultJSON(t, res), r.calls, len(f.calls))
 		}
@@ -177,7 +177,7 @@ func TestPartialMutationsOptIn(t *testing.T) {
 		if len(res.Errors) != 1 || !strings.Contains(res.Errors[0].Message, "exceed transactions.partial.max_items (1)") || r.calls != 0 {
 			t.Fatalf("response = %s, runTx calls = %d", resultJSON(t, res), r.calls)
 		}
-		e.Execute(context.Background(), Request{Query: `mutation { a: createUser(input: {email: "a@b.c"}) { user { id } } }`, PartialMutations: true})
+		e.Execute(context.Background(), Request{Query: `mutation { a: createUser(input: {user: {email: "a@b.c"}}) { user { id } } }`, PartialMutations: true})
 		if r.calls != 1 {
 			t.Fatalf("one field: runTx calls = %d, want 1", r.calls)
 		}

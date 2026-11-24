@@ -1,11 +1,11 @@
 # cube inputs bind as one text parameter cast to cube, earth inputs through
 # ll_to_earth from latitude and longitude.
 mutation {
-  createLocation(input: {pos: [1, 2, 3], box: "(0, 0), (1, 1)", spot: {lat: 51.5, lon: -0.12}}) {
+  createLocation(input: {location: {pos: [1, 2, 3], box: "(0, 0), (1, 1)", spot: {lat: 51.5, lon: -0.12}}}) {
     location { id pos box spot { lat lon } }
   }
-  updateLocationById(id: 1, patch: {spot: null, box: [[0, 0], [2, 2]], home: {lat: -33.9, lon: 151.2}}) {
+  updateLocationById(input: {id: 1, locationPatch: {spot: null, box: [[0, 0], [2, 2]], home: {lat: -33.9, lon: 151.2}}}) {
     location { box home { lon } }
   }
-  badCube: createLocation(input: {pos: []}) { location { id } }
+  badCube: createLocation(input: {location: {pos: []}}) { location { id } }
 }

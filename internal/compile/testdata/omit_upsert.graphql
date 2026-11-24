@@ -1,8 +1,8 @@
 mutation {
-  upsertUserByEmail(input: {email: "a@b.c", fullName: "Ada", balance: "5"}) {
+  upsertUserByEmail(input: {user: {email: "a@b.c", fullName: "Ada", balance: "5"}}) {
     user { id email fullName }
   }
-  onlyCreatable: upsertUserByEmail(input: {email: "a@b.c", fullName: "Ada"}) {
+  onlyCreatable: upsertUserByEmail(input: {user: {email: "a@b.c", fullName: "Ada"}}) {
     user { id }
   }
 }

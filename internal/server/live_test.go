@@ -58,7 +58,7 @@ func TestLiveFields(t *testing.T) {
 		{"listen", `subscription { listen(topic: "x") { relatedNodeId } }`, false, nil},
 		{"live query", `query @live { allUsers { totalCount } allPosts { totalCount } }`, true, []string{"allUsers", "allPosts"}},
 		{"plain query", `{ allUsers { totalCount } }`, false, nil},
-		{"mutation", `mutation { createUser(input: {email: "x"}) { clientMutationId } }`, false, nil},
+		{"mutation", `mutation { createUser(input: {user: {email: "x"}}) { clientMutationId } }`, false, nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, op, err := ex.Prepare(context.Background(), exec.Request{Query: tc.query})

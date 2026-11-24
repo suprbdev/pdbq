@@ -137,10 +137,10 @@ func FuzzFilter(f *testing.F) {
 		) { nodes { id pos spot { lat lon } posL2Distance boxL1Distance spotEarthDistance homeEarthDistance hereEarthDistanceMiles } }
 	}`
 	const cubeMutation = `mutation ($cu: Cube!, $lat: Float!, $lon: Float!) {
-		createLocation(input: {pos: $cu, box: $cu, spot: {lat: $lat, lon: $lon}}) { location { id pos spot { lon } } }
+		createLocation(input: {location: {pos: $cu, box: $cu, spot: {lat: $lat, lon: $lon}}}) { location { id pos spot { lon } } }
 	}`
 	const mutationQuery = `mutation ($e: String, $n: Int!, $vec: [Float!], $cfg: String) {
-		createEmbedding(input: {embedding: $vec, half: $vec, sparse: $cfg}) { embedding { id embedding } }
+		createEmbedding(input: {embedding: {embedding: $vec, half: $vec, sparse: $cfg}}) { embedding { id embedding } }
 		publishPost(input: {postId: $n, clientMutationId: $e}) {
 			clientMutationId
 			post { title userByAuthorId { email } }

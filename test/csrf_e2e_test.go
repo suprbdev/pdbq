@@ -13,7 +13,7 @@ import (
 func TestCSRFRequestsDoNotMutate(t *testing.T) {
 	hs := testServer(t, nil)
 	const title = "csrf probe"
-	mutation := fmt.Sprintf(`mutation { createPost(input: {authorId: 1, title: %q}) { post { id } } }`, title)
+	mutation := fmt.Sprintf(`mutation { createPost(input: {post: {authorId: 1, title: %q}}) { post { id } } }`, title)
 	body, _ := json.Marshal(map[string]any{"query": mutation})
 
 	send := func(t *testing.T, method, rawURL, contentType string, payload string) (int, string) {

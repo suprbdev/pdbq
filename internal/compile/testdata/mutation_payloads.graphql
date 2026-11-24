@@ -1,7 +1,7 @@
 # PostGraphile payload fields on table mutations: query, the row's forward
 # relations and its edge, all read in the mutation's own statement.
 mutation {
-  createPost(input: {authorId: 1, title: "Hi", clientMutationId: "cm-1"}) {
+  createPost(input: {clientMutationId: "cm-1", post: {authorId: 1, title: "Hi"}}) {
     clientMutationId
     userByAuthorId {
       email
@@ -24,7 +24,7 @@ mutation {
       }
     }
   }
-  deletePostById(id: 3) {
+  deletePostById(input: {id: 3}) {
     post {
       id
     }
@@ -34,7 +34,7 @@ mutation {
       }
     }
   }
-  updatePosts(filter: {authorId: {equalTo: 1}}, patch: {published: true}) {
+  updateManyPosts(input: {filter: {authorId: {equalTo: 1}}, postPatch: {published: true}}) {
     affectedCount
     query {
       allPosts(first: 10, filter: {authorId: {equalTo: 1}}) {

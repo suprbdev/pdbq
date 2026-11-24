@@ -100,7 +100,7 @@ func TestDomainScalars(t *testing.T) {
 	if a := sdlType(built.SDL, "type Address "); !strings.Contains(a, "contact: Email") {
 		t.Errorf("composite attribute should take the domain scalar:\n%s", a)
 	}
-	if in := sdlType(built.SDL, "input UserCreateInput "); !strings.Contains(in, "workEmail: Email") || !strings.Contains(in, "aliases: [Email!]") {
+	if in := sdlType(built.SDL, "input UserInput "); !strings.Contains(in, "workEmail: Email") || !strings.Contains(in, "aliases: [Email!]") {
 		t.Errorf("create input should take the domain scalar:\n%s", in)
 	}
 }

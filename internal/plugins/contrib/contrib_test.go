@@ -92,8 +92,8 @@ func TestTypeMapping(t *testing.T) {
 		}
 	}
 	for input, want := range map[string]string{"span": "IntRangeInput", "avail": "[IntRangeInput!]", "attrs": "KeyValueHash"} {
-		if got := fieldType(t, b, "DocumentCreateInput", input); got != want {
-			t.Errorf("DocumentCreateInput.%s = %q, want %q", input, got, want)
+		if got := fieldType(t, b, "DocumentInput", input); got != want {
+			t.Errorf("DocumentInput.%s = %q, want %q", input, got, want)
 		}
 	}
 	if f := b.Objects["IntRange"].Field("isEmpty"); f == nil || f.Type != "Boolean!" {

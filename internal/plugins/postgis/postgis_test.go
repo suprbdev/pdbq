@@ -390,7 +390,7 @@ func TestTypedGeometryFieldTypes(t *testing.T) {
 	if got := obj.Field("locationCentroid").Type; got != "GeoJSON" {
 		t.Errorf("derived accessors stay GeoJSON, got %q", got)
 	}
-	if got := b.Inputs["PlaceCreateInput"].Field("location").Type; got != "GeoJSON" {
+	if got := b.Inputs["PlaceInput"].Field("location").Type; got != "GeoJSON" {
 		t.Errorf("input stays GeoJSON, got %q", got)
 	}
 	built, err := b.Build()
