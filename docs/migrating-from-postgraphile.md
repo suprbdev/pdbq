@@ -7,11 +7,11 @@ behaviors differ. This guide is for people moving an existing PostGraphile v4
 or v5 deployment. It lists what maps directly, what differs and what is
 missing, then gives a migration order.
 
-> **The 1.0 names are being finalized.** Naming, mutation shapes, error codes
-> and operator names are still being settled before 1.0. This guide describes
-> pdbq as it is on `main` today; check [upgrading.md](upgrading.md) for what
-> changed between releases and re-run `pdbq schema print` against the version
-> you deploy.
+> **Re-check against the version you deploy.** This guide describes pdbq
+> 1.0. Configuration keys, the CLI, the HTTP and GraphQL surface and error
+> codes are covered by the [1.0 compatibility promise](compatibility.md);
+> check [upgrading.md](upgrading.md) for what changed from 0.x and re-run
+> `pdbq schema print` against the version you deploy.
 
 Two facts shape everything else: pdbq compiles each GraphQL root field to
 **one SQL statement** (there are no resolvers to wrap or extend), and it is a
@@ -202,7 +202,10 @@ Differences to plan for:
 - **Introspection runs as the connection role**, and only tables it can reach
   are generated (like `ignoreRBAC: false`). Make the login role a member of the
   request roles with `INHERIT`, as in
-  [Secure setup](quickstart.md#secure-setup). Alternatively dump a schema cache
+  [Secure setup](quickstart.md#secure-setup). On PostgreSQL 16 and later the
+  inherit flag is recorded per membership when the role is granted, so
+  `ALTER ROLE ... INHERIT` does not change existing grants: re-run
+  `GRANT <request role> TO <login role> WITH INHERIT TRUE`. Alternatively dump a schema cache
   as a privileged role and boot from it ([caching.md](caching.md)).
 - `roles.allowed` pins which roles a token may name; set it in production.
 - Details are in [rls.md](rls.md).

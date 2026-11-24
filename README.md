@@ -102,6 +102,7 @@ $ go install github.com/suprbdev/pdbq/cmd/pdbq@latest
 ## Quickstart
 
 ```console
+$ git clone https://github.com/suprbdev/pdbq && cd pdbq
 $ docker compose up          # Postgres + fixture + pdbq
 $ open http://localhost:8080 # GraphiQL (port mapping via compose.override.yaml, see docs/quickstart.md)
 ```
