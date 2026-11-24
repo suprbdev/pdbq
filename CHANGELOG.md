@@ -12,6 +12,8 @@ becomes the release notes of the next tag.
 
 ## [Unreleased]
 
+## [0.30.0] - 2026-11-24
+
 ### Added
 
 - SECURITY.md, CONTRIBUTING.md, CHANGELOG.md and a versioning, deprecation and
