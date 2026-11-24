@@ -12,6 +12,8 @@ becomes the release notes of the next tag.
 
 ## [Unreleased]
 
+## [0.31.0] - 2026-11-24
+
 ### Added
 
 - `persisted_queries.max_bytes` (default 8 MiB) and
