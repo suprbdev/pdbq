@@ -19,6 +19,7 @@ import (
 
 	"github.com/suprbdev/pdbcore/cache"
 	"github.com/suprbdev/pdbcore/confx"
+	"github.com/suprbdev/pdbcore/confx/cliflags"
 	pgcontrib "github.com/suprbdev/pdbcore/contrib"
 	"github.com/suprbdev/pdbcore/pgexec"
 	"github.com/suprbdev/pdbq"
@@ -128,14 +129,14 @@ func loadConfig(cmd *cobra.Command) (config.Config, error) {
 // changedConfigFlags returns the config flags the user set on cmd. Config
 // flags are named after dotted koanf paths; command-local flags (--config,
 // --output, --var, ...) have no dot and stay out of the config.
-func changedConfigFlags(cmd *cobra.Command) *flag.FlagSet {
+func changedConfigFlags(cmd *cobra.Command) map[string]any {
 	var local []string
 	cmd.Flags().VisitAll(func(f *flag.Flag) {
 		if !strings.Contains(f.Name, ".") {
 			local = append(local, f.Name)
 		}
 	})
-	return confx.ChangedFlags(cmd.Flags(), local...)
+	return cliflags.Changed(cmd.Flags(), local...)
 }
 
 // loadCLIConfig loads the config of a command that runs without an HTTP

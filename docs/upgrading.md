@@ -418,3 +418,32 @@ values they send; databases rename deprecated behavior tokens.
 | `@behavior -filter` / `-order` | `@behavior -filterBy` / `-orderBy` (PostGraphile V5) | the old tokens still work with a build-time deprecation warning |
 | `@filterable` (alias `@sortable`) on foreign keys and computed columns under `relations_opt_in` / `computed_opt_in` admitted both filters and orderings | `@filterable` admits the filter surface, `@sortable` the orderBy surface | tag both to keep both; on columns either tag still admits both past `filters.indexed_only` |
 | unknown `@omit` actions and `@behavior` tokens were ignored silently | ignored with a build-time warning naming the object and the token | `@omit reed` no longer goes unnoticed |
+
+### Config messages and embedding API (pdbcore API hygiene)
+
+- **Removed keys say so.** `transactions.mutations` and
+  `plugins.settings.nested_mutations.force_transactions` (and their
+  `PDBQ_*` variables) are reported as
+  `unknown key transactions.mutations: removed: mutations always run in a transaction`
+  instead of a bare "unknown key".
+- **Doubled underscores after a section are errors.** `PDBQ_ROLES__ALLOWED`
+  (and the like) used to be ignored silently, so the setting kept its
+  default; it is now `unknown environment variable PDBQ_ROLES__ALLOWED
+  (roles_allowed): did you mean PDBQ_ROLES_ALLOWED?`.
+- **New checks:** `database.connect_timeout` must be positive (`0` waited
+  forever), `database.max_conns` and `database.statement_timeout` must not
+  be negative, `auth.jwt.jwks_cache_ttl` must be positive with
+  `auth.jwt.jwks_url` (`0` silently meant one hour), and
+  `watch.poll_interval` must be positive with `watch.enabled` (`0` crashed
+  the polling fallback).
+- **`transactions.isolation` errors name the accepted values:**
+  `transactions.isolation: "x" is not 'read_committed', 'repeatable_read' or 'serializable'`
+  (was `"x" invalid`).
+- **Embedding.** `pdbq.LoadConfig(path, flags)` takes the command-line
+  values as `map[string]any` (koanf path to value) instead of a
+  `*pflag.FlagSet`; build it from a pflag set with
+  `cliflags.Changed(fs, except...)` from
+  `github.com/suprbdev/pdbcore/confx/cliflags`.
+- The smart-comment checks (unknown `@omit` actions, unknown and deprecated
+  `@behavior` tokens) now come from pdbcore and are shared with pdbr; the
+  warnings are unchanged.

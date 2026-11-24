@@ -86,9 +86,9 @@ func (s *stmt) typedGeometrySQL(expr string, t geotype.Type, sel ast.SelectionSe
 // object (x, y, points, geojson, ...) carries the same precision.
 func (s *stmt) typedGeometryDigitsSQL(expr, digits string, t geotype.Type, sel ast.SelectionSet, depth int) (string, error) {
 	ctx := geoCtx{dims: quoteLiteral(t.Dims.Suffix())}
-	geojson := postgis.OutputJSONSQL(geoValue + ".g")
+	geojson := postgis.OutputSQL(geoValue+".g", postgis.Output{JSON: true})
 	if digits != "" {
-		geojson = postgis.OutputJSONPrecisionSQL(geoValue+".g", digits)
+		geojson = postgis.OutputSQL(geoValue+".g", postgis.Output{JSON: true, Precision: digits})
 	}
 	cols := fmt.Sprintf("%s AS j, ST_SRID(%s.g) AS srid", geojson, geoValue)
 	if t.AnyDims {

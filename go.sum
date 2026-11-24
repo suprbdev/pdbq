@@ -74,6 +74,12 @@ github.com/stretchr/testify v1.12.1 h1:EuwCh5fleGS7H32xRwO3wRGT7DxrDhLAT6FF8MpWD
 github.com/stretchr/testify v1.12.1/go.mod h1:MDEgiDPPsNp5cuIrHPPCyornHKgEVbtFUmoNlxoYthg=
 github.com/suprbdev/pdbcore v0.18.0 h1:3sptk5S+ffSLIQmvTVd74rL6NjUHQ2zql91lHnFkH1Q=
 github.com/suprbdev/pdbcore v0.18.0/go.mod h1:FNV4SnduAkZoFDBZ7PRGXcSjELkHjA9mURORywAVHlc=
+github.com/suprbdev/pdbcore v0.18.1-0.20261124012452-443c4e9123ea h1:7BT/z5n6aE6LG2U8NwOkH2b61TDN5ZJc1Yqvl78ynaM=
+github.com/suprbdev/pdbcore v0.18.1-0.20261124012452-443c4e9123ea/go.mod h1:loM9g7/i1GhIY4CRmHeAiMucJ57nxTgxN0YNHc7tW7w=
+github.com/suprbdev/pdbcore v0.18.1-0.20261124013258-9c84aa0fcff0 h1:KRvj2ThdDY7nzbugOtHLlFVdvEak0stN2PI5DBK6iCo=
+github.com/suprbdev/pdbcore v0.18.1-0.20261124013258-9c84aa0fcff0/go.mod h1:loM9g7/i1GhIY4CRmHeAiMucJ57nxTgxN0YNHc7tW7w=
+github.com/suprbdev/pdbcore v0.18.1-0.20261124013441-e61102627a9e h1:BJJcWkIRPEmovsfcI9urnl1jIcXFq1I8I/gYsO+tpw4=
+github.com/suprbdev/pdbcore v0.18.1-0.20261124013441-e61102627a9e/go.mod h1:loM9g7/i1GhIY4CRmHeAiMucJ57nxTgxN0YNHc7tW7w=
 github.com/vektah/gqlparser/v2 v2.5.36 h1:CN9mKVHgMkc+XftdOWIhb4HEL8wKSYkFAqhf8booa7s=
 github.com/vektah/gqlparser/v2 v2.5.36/go.mod h1:cAJ9qwVgPaUkWv6Gn8vn0mqOE0Ui5Pn56wNy5396XWo=
 go.uber.org/goleak v1.3.0 h1:2K3zAYmnTNqV73imy9J1T3WC+gmCePx2hEGkimedGto=

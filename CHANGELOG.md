@@ -41,6 +41,20 @@ becomes the release notes of the next tag.
   a database error in one query root field no longer fails the later fields
   with `pg:25P02` or adds a pathless `internal` error logged at `ERROR`: the
   query runs again with each root field in its own savepoint.
+- Removed config keys (`transactions.mutations`,
+  `plugins.settings.nested_mutations.force_transactions`) are reported with
+  the reason they were removed, and `transactions.isolation` errors name
+  the accepted values ([upgrading](docs/upgrading.md#config-messages-and-embedding-api-pdbcore-api-hygiene)).
+- `PDBQ_*` variables that double the underscore right after a section
+  (`PDBQ_ROLES__ALLOWED`) are errors with a did-you-mean hint instead of
+  being ignored; `database.connect_timeout`, `database.max_conns`,
+  `database.statement_timeout`, `auth.jwt.jwks_cache_ttl` (with a JWKS URL)
+  and `watch.poll_interval` (with the watch on) are validated.
+- `pdbq.LoadConfig` takes command-line values as `map[string]any` instead of
+  a `*pflag.FlagSet`.
+- The `@omit` / `@behavior` checks use pdbcore's shared smart-tag
+  vocabulary, so pdbq and pdbr warn about the same comments.
+- pdbcore with the API hygiene changes.
 
 ## [0.30.0] - 2026-11-24
 

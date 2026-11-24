@@ -388,7 +388,10 @@ func (a *App) BuildContractSchema(ctx context.Context, cat *introspect.Catalog, 
 	if err != nil {
 		return nil, err
 	}
-	view, sum := ct.Spec().View(cat)
+	view, sum, err := ct.Spec().View(cat)
+	if err != nil {
+		return nil, err
+	}
 	a.Log.Debug("contract view", "contract", name, "hidden_tables", sum.Tables, "hidden_columns", sum.Columns,
 		"hidden_functions", sum.Functions, "hidden_foreign_keys", sum.ForeignKeys)
 	built, err := a.BuildSchema(ctx, view)
@@ -411,7 +414,10 @@ func (a *App) executor(built *schema.Built, instruments *exec.Metrics) *exec.Exe
 	for _, h := range a.Registry.RequestHooks(disabled) {
 		hooks = append(hooks, h)
 	}
-	iso := pgexec.ParseIsolation(a.Config.TX.Isolation)
+	iso, err := pgexec.ParseIsolation(a.Config.TX.Isolation)
+	if err != nil {
+		a.Log.Error("invalid transactions.isolation; transactions use the server's default isolation", "err", err)
+	}
 	return exec.New(a.pool, built, compileFn, hooks, exec.Options{
 		MaxDepth:                   a.Config.Limits.MaxDepth,
 		MaxCost:                    a.Config.Limits.MaxCost,

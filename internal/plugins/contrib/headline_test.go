@@ -88,7 +88,10 @@ func TestHeadlineOmitAndContracts(t *testing.T) {
 	cat = contribfixture.Catalog()
 	cat.Table("public", "documents").Column("title").Comment = "@behavior -contract:public"
 	cat.Table("public", "documents").Column("keywords").Comment = "@behavior -contract:public"
-	view, _ := contract.Contract{Name: "public"}.View(cat)
+	view, _, err := contract.Contract{Name: "public"}.View(cat)
+	if err != nil {
+		t.Fatal(err)
+	}
 	b = buildWith(t, view, nil, true, true)
 	if b.Objects["Document"].Field("keywordsHeadline") != nil {
 		t.Error("a column hidden by the contract kept its headline")

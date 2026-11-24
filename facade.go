@@ -8,8 +8,6 @@ import (
 	"fmt"
 	"net/http"
 
-	flag "github.com/spf13/pflag"
-
 	"github.com/suprbdev/pdbcore/confx"
 	"github.com/suprbdev/pdbcore/introspect"
 	"github.com/suprbdev/pdbcore/watch"
@@ -59,8 +57,9 @@ type (
 func DefaultConfig() Config { return config.DefaultConfig() }
 
 // LoadConfig builds the effective config: defaults < YAML < PDBQ_* env <
-// flags (nil flags is fine).
-func LoadConfig(path string, flags *flag.FlagSet) (Config, error) {
+// flags, given as koanf path to value (nil is fine; cliflags.Changed in
+// github.com/suprbdev/pdbcore/confx/cliflags reads them from a pflag set).
+func LoadConfig(path string, flags map[string]any) (Config, error) {
 	return config.Load(path, flags)
 }
 
@@ -311,7 +310,7 @@ func (a *App) installLive(ctx context.Context, t *live.Tracker) {
 // calling rebuild with every changed catalog.
 func (a *App) startWatch(ctx context.Context, catHash string, rebuild func(context.Context, *introspect.Catalog)) {
 	wctx, cancel := context.WithCancel(ctx)
-	w := &watch.Watcher{
+	w, err := watch.New(watch.Config{
 		Pool:         a.pool,
 		Schemas:      a.Config.Schema.Schemas,
 		Channel:      a.Config.Watch.Channel,
@@ -319,7 +318,12 @@ func (a *App) startWatch(ctx context.Context, catHash string, rebuild func(conte
 		InitialHash:  catHash,
 		PollInterval: a.Config.Watch.PollInterval,
 		Log:          a.Log,
-		OnChange:     func(cat *introspect.Catalog) { rebuild(wctx, cat) },
+		OnChange:     rebuild,
+	})
+	if err != nil {
+		cancel()
+		a.Log.Error("watch: not started", "err", err)
+		return
 	}
 	done := make(chan struct{})
 	go func() {
