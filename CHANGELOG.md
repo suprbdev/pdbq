@@ -12,6 +12,8 @@ becomes the release notes of the next tag.
 
 ## [Unreleased]
 
+## [1.0.0-rc.2] - 2026-11-24
+
 ### Fixed
 
 - A request body over `limits.max_body_bytes` is answered `413 body_too_large`
