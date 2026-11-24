@@ -13,6 +13,7 @@ import (
 
 	"github.com/suprbdev/pdbcore/auth"
 	"github.com/suprbdev/pdbcore/confx"
+	"github.com/suprbdev/pdbcore/confx/cliflags"
 	pgcontrib "github.com/suprbdev/pdbcore/contrib"
 	"github.com/suprbdev/pdbq/internal/live"
 	"github.com/suprbdev/pdbq/internal/plugins/advancedfilters"
@@ -362,6 +363,14 @@ var RemovedKeys = map[string]string{
 	"plugins.settings.nested_mutations.force_transactions": "nested mutations always run in a transaction",
 }
 
+// ExplainFlagError adds the moved-to or removed hint to the error of an
+// unknown flag that names an old config key (--rls.enabled), as loading the
+// key from a file or PDBQ_* variable does.
+func ExplainFlagError(err error) error {
+	cfg := DefaultConfig()
+	return cliflags.Explain(err, &cfg, confx.WithMoved(MovedKeys), confx.WithRemoved(RemovedKeys))
+}
+
 // Load builds the effective config: defaults, then optional YAML file, then
 // PDBQ_* env vars, then flags (highest precedence: koanf path to value,
 // see confx.WithFlags), and validates it. Pass only the flags the user set
@@ -500,6 +509,16 @@ var reservedPaths = map[string]bool{"/graphql": true, "/healthz": true, "/readyz
 
 // DisabledPlugins returns the disabled-plugin set for registry filtering.
 func (c *Config) DisabledPlugins() map[string]bool { return c.Plugins.DisabledSet() }
+
+// PluginEnabled reports whether the named plugin takes part in the schema:
+// it is not listed in plugins.disabled and, for simple_names, which is inert
+// until plugins.settings.simple_names.enabled is set, that setting is on.
+func (c *Config) PluginEnabled(name string) bool {
+	if c.DisabledPlugins()[name] {
+		return false
+	}
+	return name != simplenames.Name || c.Plugins.Settings.SimpleNames.Enabled
+}
 
 func validateIncremental(in Incremental, maxConns int32) []string {
 	var errs []string

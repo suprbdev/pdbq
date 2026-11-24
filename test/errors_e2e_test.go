@@ -196,6 +196,7 @@ func TestErrorCodesE2E(t *testing.T) {
 		{"unsupported_media_type", plain, rawRequest(http.MethodPost, "/graphql", "text/plain", gqlQuery(`{ __typename }`)), 415, "unsupported_media_type", ""},
 		{"not_acceptable", plain, rawPost(gqlQuery(`{ __typename }`), "Accept", "multipart/mixed;deferSpec=1999"), 406, "not_acceptable", ""},
 		{"body_too_large", plain, rawPost(gqlQuery(`{ __typename }` + strings.Repeat(" ", 5000))), 413, "body_too_large", ""},
+		{"body_too_large not JSON", plain, rawPost(strings.Repeat("x", 5000)), 413, "body_too_large", ""},
 		{"persisted_query_not_supported", plain, rawPost(hashOnly), 200, "persisted_query_not_supported", "PersistedQueryNotSupported"},
 		{"persisted_query_not_found", apq, rawPost(hashOnly), 200, "persisted_query_not_found", "PersistedQueryNotFound"},
 		{"persisted_query_required", locked, post200(`{ __typename }`), 400, "persisted_query_required", ""},

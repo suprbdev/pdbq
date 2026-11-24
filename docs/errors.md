@@ -79,7 +79,7 @@ WebSocket close codes, not GraphQL errors (`4400`, `4401`, `4403`, `4406`,
 | `method_not_allowed` | 405 + `Allow` | a mutation or subscription over `GET` / `HEAD`; a method no route of that path serves |
 | `unsupported_media_type` | 415 | `POST` without `Content-Type: application/json` |
 | `not_acceptable` | 406 | `Accept: multipart/mixed` naming only a `deferSpec` / `incrementalSpec` pdbq does not serve |
-| `body_too_large` | 413 | request body larger than `limits.max_body_bytes` |
+| `body_too_large` | 413 | request body larger than `limits.max_body_bytes` (checked before the body is parsed, so a non-JSON body gets it too), or a GET query string longer than it |
 | `persisted_query_not_found` | 200 | a hash-only request whose hash is not registered; message `PersistedQueryNotFound`, so Apollo clients resend with the query |
 | `persisted_query_not_supported` | 200 for a hash-only request; 400 for a registration | a hash-only request while persisted queries are off (message `PersistedQueryNotSupported`, so Apollo clients stop sending hashes); a query sent with its hash to register it while `persisted_queries.apq` is off |
 | `persisted_query_required` | 400 | `persisted_queries.only` and the request has no `persistedQuery` extension |

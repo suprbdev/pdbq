@@ -57,6 +57,9 @@ func TestHTTPErrorCodes(t *testing.T) {
 	}{
 		{"malformed body", plain, jsonRequest(`{`), http.StatusBadRequest, errcode.InvalidRequest, ""},
 		{"too large", plain, jsonRequest(`{"query":"` + strings.Repeat(" ", 300) + `"}`), http.StatusRequestEntityTooLarge, errcode.BodyTooLarge, ""},
+		{"too large not JSON", plain, jsonRequest(strings.Repeat("x", 300)), http.StatusRequestEntityTooLarge, errcode.BodyTooLarge, ""},
+		{"too large malformed JSON", plain, jsonRequest(`{` + strings.Repeat(" ", 300)), http.StatusRequestEntityTooLarge, errcode.BodyTooLarge, ""},
+		{"too large query string", plain, httptest.NewRequest("GET", "/graphql?query="+strings.Repeat("a", 300), nil), http.StatusRequestEntityTooLarge, errcode.BodyTooLarge, ""},
 		{"missing query", plain, jsonRequest(`{}`), http.StatusBadRequest, errcode.InvalidRequest, "missing query"},
 		{"media type", plain, httptest.NewRequest("POST", "/graphql", strings.NewReader(`{}`)), http.StatusUnsupportedMediaType, errcode.UnsupportedMediaType, ""},
 		{"malformed variables", plain, httptest.NewRequest("GET", "/graphql?query=%7B__typename%7D&variables=%7B", nil), http.StatusBadRequest, errcode.InvalidRequest, ""},

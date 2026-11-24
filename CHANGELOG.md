@@ -12,6 +12,19 @@ becomes the release notes of the next tag.
 
 ## [Unreleased]
 
+### Fixed
+
+- A request body over `limits.max_body_bytes` is answered `413 body_too_large`
+  whether or not it is valid JSON (it was `400 invalid_request` for a body
+  that fails to parse); a GET query string over the limit gets the same
+  answer.
+- `pdbq plugins list` reports the effective state: `simple_names` shows
+  `disabled` until `plugins.settings.simple_names.enabled` is `true`.
+- A removed or moved 0.x flag (`--rls.enabled`, `--server.max_cost`,
+  kebab-case plugin flags) names its replacement or the reason it was removed,
+  as the config keys and environment variables do, instead of a bare
+  `unknown flag`.
+
 ### Documentation
 
 - Fix the quickstart's Secure setup (the query is `allTodos`, the `anonymous`

@@ -4,10 +4,12 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"mime"
 	"net/http"
@@ -332,6 +334,10 @@ func (s *Server) handleGraphQL(w http.ResponseWriter, r *http.Request) {
 	var req gqlHTTPRequest
 	switch r.Method {
 	case http.MethodGet, http.MethodHead:
+		if limit := s.cfg.Limits.MaxBodyBytes; int64(len(r.URL.RawQuery)) > limit {
+			writeError(w, http.StatusRequestEntityTooLarge, errcode.BodyTooLarge, fmt.Sprintf("request query string exceeds %d bytes", limit))
+			return
+		}
 		req.Query = r.URL.Query().Get("query")
 		req.OperationName = r.URL.Query().Get("operationName")
 		if vars := r.URL.Query().Get("variables"); vars != "" {
@@ -349,11 +355,16 @@ func (s *Server) handleGraphQL(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		body := http.MaxBytesReader(w, r.Body, s.cfg.Limits.MaxBodyBytes)
-		if err := json.NewDecoder(body).Decode(&req); err != nil {
+		raw, err := io.ReadAll(body)
+		if err != nil {
 			if mbe := (*http.MaxBytesError)(nil); errors.As(err, &mbe) {
 				writeError(w, http.StatusRequestEntityTooLarge, errcode.BodyTooLarge, fmt.Sprintf("request body exceeds %d bytes", mbe.Limit))
 				return
 			}
+			writeError(w, http.StatusBadRequest, errcode.InvalidRequest, "malformed request body")
+			return
+		}
+		if err := json.NewDecoder(bytes.NewReader(raw)).Decode(&req); err != nil {
 			writeError(w, http.StatusBadRequest, errcode.InvalidRequest, "malformed request body")
 			return
 		}

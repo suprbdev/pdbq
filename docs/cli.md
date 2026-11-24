@@ -130,10 +130,14 @@ Run `pdbq completion <shell> --help` for per-shell install notes.
 ```console
 $ pdbq plugins list
 smart_comments       priority=50   enabled  hooks: catalog, inflection, schema
-simple_names         priority=100  enabled  hooks: catalog, inflection
+simple_names         priority=100  disabled hooks: catalog, inflection
 advanced_filters     priority=150  enabled  hooks: schema
 postgis              priority=160  enabled  hooks: schema
 contrib              priority=170  enabled  hooks: schema
 aggregates           priority=180  enabled  hooks: schema
 nested_mutations     priority=200  enabled  hooks: schema, compile
 ```
+
+The status is the effective state: `disabled` for a plugin named in
+`plugins.disabled`, and for `simple_names` until
+`plugins.settings.simple_names.enabled` is `true`.
