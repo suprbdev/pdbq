@@ -118,11 +118,11 @@ gate has the same name in pdbr; see [Aggregates](aggregates.md#settings).
 | `advanced_filters.relations` | `true` | relation filters (forward, reverse `some`/`none`/`every`, `<rel>Exists`) |
 | `advanced_filters.computed` | `true` | filtering and ordering by computed columns |
 | `advanced_filters.relation_order` | `true` | relational orderBy values (`REL__COLUMN_ASC`) |
-| `advanced_filters.relations_opt_in` | `false` | only `@filterable` foreign keys get relation surface |
-| `advanced_filters.computed_opt_in` | `false` | only `@filterable` computed columns get filter/order surface |
-| `postgis.filters` | `true` | `GeometryFilterOps`, `RasterFilterOps` |
+| `advanced_filters.relations_opt_in` | `false` | only `@filterable` foreign keys get relation filters, only `@sortable` ones relational orderBy values |
+| `advanced_filters.computed_opt_in` | `false` | only `@filterable` computed columns get filter fields, only `@sortable` ones orderBy values |
+| `postgis.filters` | `true` | `GeoJSONFilter`, `RasterFilter` |
 | `postgis.derived` | `true` | derived and raster accessors |
-| `postgis.ordering` | `true` | distance ordering, `<field>Distance`, `near:` |
+| `postgis.ordering` | `true` | distance ordering, `<field>Distance`, their `near:` references |
 | `postgis.projection` | `true` | `buffer:`, `simplify:`, `transform:`, `precision:` |
 | `postgis.typed_geometry` | `false` | typed geometry objects instead of `GeoJSON` |
 | `contrib.filters` | `true` | contrib filter operators and rank fields ([Contrib](contrib.md#settings)) |
@@ -169,14 +169,14 @@ pattern: the plugin implements only `SchemaHook`, yet changes compiled SQL.
   the parent's filter directly (`PostFilter.userByAuthorId: UserFilter`), a reverse
   FK takes a `{some|none|every}` wrapper (`UserFilter.postsByAuthorId:
   PostToManyFilter`), and each direction gets a Boolean existence variant
-  (`PostFilter.userByAuthorIdExists: Boolean`, `UserFilter.postsByAuthorIdExist:
+  (`PostFilter.userByAuthorIdExists: Boolean`, `UserFilter.postsByAuthorIdExists:
   Boolean`) compiling to a bare `(NOT) EXISTS` — adds one-level relational
   orderBy values (`USER_BY_AUTHOR_ID__EMAIL_ASC` on posts,
   `POSTS_BY_AUTHOR_ID__TITLE_DESC` on users; reverse relations aggregate with
   `MIN`/`MAX`) — and exposes eligible
   computed columns (single
   row-argument stable functions) as filter fields and orderBy enum values
-  (`postCount: BigIntFilterOps`, `POST_COUNT_DESC`).
+  (`postCount: BigIntFilter`, `POST_COUNT_DESC`).
 - Each added field carries a binding (`InputField.Relation`,
   `InputField.Computed`, `EnumValue.Computed`, `EnumValue.Relation`) that
   `Builder.Build()` copies
@@ -201,9 +201,9 @@ columns *do* respect `filters.indexed_only`, exactly like the related table's
 own orderBy enum.
 
 The built-in `postgis` plugin (priority 160) follows exactly this shape for
-PostGIS columns: it adds `GeometryFilterOps` fields, derived accessors,
+PostGIS columns: it adds `GeoJSONFilter` fields, derived accessors,
 projection arguments and distance-ordering enum values plus their bindings
-(and the raster accessors, pixel value, statistics and `RasterFilterOps`),
+(and the raster accessors, pixel value, statistics and `RasterFilter`),
 and the core compiler reads the bindings without a `CompileHook`. See
 [PostGIS](postgis.md). The `contrib` plugin (priority 170) does the same for
 full-text, pg_trgm, unaccent, hstore, ltree, range, inet, pgvector, cube

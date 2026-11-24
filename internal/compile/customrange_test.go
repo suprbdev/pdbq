@@ -78,14 +78,14 @@ func TestCustomRangeTypes(t *testing.T) {
 	}
 	filter := built.Schema.Types["ReadingFilter"]
 	for field, want := range map[string]string{
-		"temp": "FloatRangeFilterOps", "temps": "FloatMultirangeFilterOps", "slot": "IntRangeFilterOps",
+		"temp": "FloatRangeFilter", "temps": "FloatMultirangeFilter", "slot": "IntRangeFilter",
 	} {
 		if f := filter.Fields.ForName(field); f == nil || f.Type.String() != want {
 			t.Errorf("ReadingFilter.%s = %v, want %s", field, f, want)
 		}
 	}
-	if ops := built.Schema.Types["FloatRangeFilterOps"]; ops == nil || ops.Fields.ForName("containsElement").Type.String() != "Float" {
-		t.Errorf("FloatRangeFilterOps.containsElement missing or not Float: %+v", ops)
+	if ops := built.Schema.Types["FloatRangeFilter"]; ops == nil || ops.Fields.ForName("containsElement").Type.String() != "Float" {
+		t.Errorf("FloatRangeFilter.containsElement missing or not Float: %+v", ops)
 	}
 
 	for name, tc := range map[string]struct {

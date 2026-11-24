@@ -141,7 +141,7 @@ aggregates:
   enabled: false
   # groupedAggregates, <Type>GroupBy and <Type>HavingInput.
   grouped: true
-  # <REL>_COUNT_* and <REL>_<AGGREGATE>_<COLUMN>_* orderBy values.
+  # <REL>__COUNT_* and <REL>__<AGGREGATE>_<COLUMN>_* orderBy values.
   order: true
   # The aggregates field of to-many relation filters.
   filters: true
@@ -239,19 +239,19 @@ plugins:
       enabled: false
     # advanced_filters plugin: relation filters, relational ordering and computed-column filtering and ordering.
     advanced_filters:
-      # Relation filters (forward, reverse some/none/every and the <rel>Exists/<rel>Exist variants).
+      # Relation filters (forward, reverse some/none/every and the <rel>Exists variants).
       relations: true
       # Filtering and ordering by computed columns (single row-argument stable functions; needs schema.functions). Computed filters are not index-backed, so they bypass filters.indexed_only.
       computed: true
       # One-level relational orderBy values (REL__COLUMN_ASC/_DESC); off as well when relations is off.
       relation_order: true
-      # Only foreign keys tagged @filterable (alias @sortable) get relation filters and orderings.
+      # Only foreign keys tagged @filterable get relation filters, and only those tagged @sortable relational orderBy values.
       relations_opt_in: false
-      # Only computed-column functions tagged @filterable (alias @sortable) get filter and orderBy surface.
+      # Only computed-column functions tagged @filterable get filter fields, and only those tagged @sortable orderBy values.
       computed_opt_in: false
     # postgis plugin: spatial filters, accessors, projection arguments and distance ordering.
     postgis:
-      # GeometryFilterOps on spatial columns and RasterFilterOps on raster columns.
+      # GeoJSONFilter on spatial columns and RasterFilter on raster columns.
       filters: true
       # Derived accessors (<field>Area, <field>Centroid, ...) and the raster accessors, pixel value and statistics.
       derived: true
@@ -263,9 +263,9 @@ plugins:
       typed_geometry: false
     # contrib plugin: full-text, pg_trgm, hstore, ltree, range, inet, pgvector, cube and earthdistance surfaces.
     contrib:
-      # Vocabulary operators, StringTrgmFilterOps, the unaccent, fuzzystrmatch and intarray inputs, the distance-threshold inputs, the value filters (<field>Nlevel, <field>Value, <field>Icount) and the <field>Rank fields (and so rank ordering).
+      # Vocabulary operators, StringTrgmFilter, the unaccent, fuzzystrmatch and intarray inputs, the distance-threshold inputs, the value filters (<field>Nlevel, <field>Value, <field>Icount) and the <field>Rank fields (and so rank ordering).
       filters: true
-      # Rank, similarity, Levenshtein, nlevel, icount, value, vector, cube and earth distance orderBy values, the similarity and distance fields and the similarTo:, nearVector:, nearPoint: and hstoreKey: arguments.
+      # Rank, similarity, Levenshtein, nlevel, icount, value, vector, cube and earth distance orderBy values, the similarity and distance fields and their references in the near: argument.
       ordering: true
     # nested_mutations plugin: nested connect/create/update/delete/disconnect inputs on create and update mutations.
     nested_mutations:

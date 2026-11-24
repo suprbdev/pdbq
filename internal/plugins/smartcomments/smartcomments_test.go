@@ -116,7 +116,7 @@ func TestOmitColumn(t *testing.T) {
 	sdl := built.SDL
 	rejectSDL(t, sdl, "settings: JSON")
 	// email still readable/creatable/filterable, not updatable.
-	wantSDL(t, sdl, "email: String!", "email: StringFilterOps", "EMAIL_ASC")
+	wantSDL(t, sdl, "email: String!", "email: StringFilter", "EMAIL_ASC")
 	typ := sdlBlock(t, sdl, "input UserPatch {")
 	if strings.Contains(typ, "email") {
 		t.Errorf("UserPatch must not contain email:\n%s", typ)
@@ -150,8 +150,8 @@ func TestNameColumn(t *testing.T) {
 		c.Table("public", "users").Column("mood").Comment = "@name vibe"
 	})
 	sdl := built.SDL
-	wantSDL(t, sdl, "vibe: Mood", "vibe: MoodFilterOps", "VIBE_ASC", "VIBE_DESC")
-	rejectSDL(t, sdl, "mood: MoodFilterOps", "MOOD_ASC")
+	wantSDL(t, sdl, "vibe: Mood", "vibe: MoodFilter", "VIBE_ASC", "VIBE_DESC")
+	rejectSDL(t, sdl, "mood: MoodFilter", "MOOD_ASC")
 	if strings.Contains(sdlBlock(t, sdl, "type User implements Node {"), "mood:") {
 		t.Error("type User must not keep the old column name")
 	}
@@ -257,7 +257,7 @@ func TestOmitUniqueConstraint(t *testing.T) {
 	})
 	rejectSDL(t, built.SDL, "userByEmail(")
 	// Filterability persists via the backing unique index.
-	wantSDL(t, built.SDL, "email: StringFilterOps")
+	wantSDL(t, built.SDL, "email: StringFilter")
 }
 
 func TestFilterableColumn(t *testing.T) {
@@ -267,8 +267,8 @@ func TestFilterableColumn(t *testing.T) {
 		u.Column("created_at").Comment = "@sortable\n@omit filter"
 	})
 	sdl := built.SDL
-	wantSDL(t, sdl, "fullName: StringFilterOps", "FULL_NAME_ASC", "CREATED_AT_DESC")
-	rejectSDL(t, sdl, "createdAt: DatetimeFilterOps")
+	wantSDL(t, sdl, "fullName: StringFilter", "FULL_NAME_ASC", "CREATED_AT_DESC")
+	rejectSDL(t, sdl, "createdAt: DatetimeFilter")
 }
 
 func TestAdvancedFilterOmits(t *testing.T) {
@@ -282,22 +282,29 @@ func TestAdvancedFilterOmits(t *testing.T) {
 	}, advancedfilters.New(advancedfilters.DefaultSettings()))
 	sdl := built.SDL
 	// Selection fields stay; only the filter surface goes.
-	wantSDL(t, sdl, "userByAuthorId: User", "postsByAuthorId(", "postCount: BigIntFilterOps")
+	wantSDL(t, sdl, "userByAuthorId: User", "postsByAuthorId(", "postCount: BigIntFilter")
 	rejectSDL(t, sdl, "userByAuthorId: UserFilter", "postsByAuthorId: PostToManyFilter", "POST_COUNT_ASC")
 }
 
 func TestAdvancedFilterOptIn(t *testing.T) {
-	built := build(t, func(c *introspect.Catalog) {
-		for _, f := range c.Functions {
-			if f.Name == "users_post_count" {
-				f.Comment = "@filterable"
+	optIn := func(tags string) string {
+		return build(t, func(c *introspect.Catalog) {
+			for _, f := range c.Functions {
+				if f.Name == "users_post_count" {
+					f.Comment = tags
+				}
 			}
-		}
-	}, advancedfilters.New(advancedfilters.Settings{Relations: true, Computed: true, RelationOrder: true, RelationsOptIn: true, ComputedOptIn: true}))
-	sdl := built.SDL
-	// Only the tagged computed column gets filter surface; untagged FKs none.
-	wantSDL(t, sdl, "postCount: BigIntFilterOps", "POST_COUNT_ASC")
+		}, advancedfilters.New(advancedfilters.Settings{Relations: true, Computed: true, RelationOrder: true, RelationsOptIn: true, ComputedOptIn: true})).SDL
+	}
+	sdl := optIn("@filterable\n@sortable")
+	wantSDL(t, sdl, "postCount: BigIntFilter", "POST_COUNT_ASC")
 	rejectSDL(t, sdl, "userByAuthorId: UserFilter", "PostToManyFilter")
+	sdl = optIn("@filterable")
+	wantSDL(t, sdl, "postCount: BigIntFilter")
+	rejectSDL(t, sdl, "POST_COUNT_ASC")
+	sdl = optIn("@sortable")
+	wantSDL(t, sdl, "POST_COUNT_ASC")
+	rejectSDL(t, sdl, "postCount: BigIntFilter")
 }
 
 func TestComposesWithOtherBuiltins(t *testing.T) {

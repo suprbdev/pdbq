@@ -56,13 +56,13 @@ const (
 	// a KindFullTextRank field ranks against, null without one.
 	KindFullTextHeadline FieldKind = "fulltext_headline"
 	// KindScore is a selectable score of Meta.Column measured against the
-	// reference the enclosing list field takes for it (Meta.Score): the
-	// <field>Distance of a spatial column from near: (postgis plugin), the
-	// <field>Similarity family of a text column against similarTo: and the
-	// <field><Metric> distances of a vector, bit or cube column from
-	// nearVector: and of an earth or point column from nearPoint: (contrib
-	// plugin). Null without the reference, and for rows not read through
-	// such a list.
+	// reference the enclosing list field's near: argument holds for it
+	// (Meta.Score): the <field>Distance of a spatial column (postgis
+	// plugin), the <field>Similarity family and Levenshtein distance of a
+	// text column and the <field><Metric> distances of a vector, bit, cube,
+	// earth or point column (contrib plugin). Null for rows not read
+	// through a list taking near:; read through one without the reference,
+	// it is an error.
 	KindScore FieldKind = "score"
 	// KindContribAccessor is an operand-free contrib accessor of
 	// Meta.Column (contrib plugin): <field>Nlevel and <field>Parent of an
@@ -212,15 +212,12 @@ type ContribValue struct {
 	// Arg is the argument holding an Expr's text operand: the field's own
 	// argument on a KindContribDerived field ("key", "path"; empty for
 	// subpath, which takes offset and length), the list field argument
-	// holding it per column on an orderBy value ("hstoreKey").
+	// holding it per column on an orderBy value ([NearArg], hstore value).
 	Arg string
 }
 
 // Score binds a [KindScore] field.
 type Score struct {
-	// Arg is the list field argument holding the reference: "near",
-	// "similarTo", "nearVector" or "nearPoint".
-	Arg string
 	// Expr is the pdbcore contrib expression measured ("similarity",
 	// "cosineDistance", ...); empty for the spatial distance.
 	Expr string
@@ -430,7 +427,7 @@ type FilterRelation struct {
 	Table *introspect.Table
 	// FilterType is Table's <Type>Filter input name.
 	FilterType string
-	// Exists marks the Boolean existence variant (<rel>Exists / <rel>Exist):
+	// Exists marks the Boolean existence variant (<rel>Exists):
 	// the field takes true/false instead of a filter, compiling to a bare
 	// (NOT) EXISTS over the relation join.
 	Exists bool
@@ -496,30 +493,26 @@ type EnumValue struct {
 	// Relation backs orderBy enum values sorting by a related table's column
 	// (advanced_filters); Column stays empty for these.
 	Relation *OrderRelation
-	// Distance marks orderBy enum values sorting by spatial distance from
-	// the reference geometry in the field's near: argument (postgis plugin).
-	// Column names the spatial column being measured from.
+	// Distance marks orderBy enum values sorting by spatial distance of
+	// Column from its reference geometry in the field's near: argument
+	// (postgis plugin).
 	Distance bool
 	// Rank marks orderBy enum values sorting by full-text rank of Column
 	// against the field's matches* filter on it (contrib plugin).
 	Rank bool
 	// Similarity marks orderBy enum values sorting by a pg_trgm distance
-	// expression ("distance", "wordDistance", "strictWordDistance") of
-	// Column from the field's similarTo: reference (contrib plugin).
+	// expression ("distance", "wordDistance", "strictWordDistance") or the
+	// fuzzystrmatch Levenshtein distance of Column from its reference text
+	// in the field's near: argument (contrib plugin).
 	Similarity string
 	// Vector marks orderBy enum values sorting by a distance expression
 	// ("l2Distance", "cosineDistance", "earthDistance", ...) of Column from
-	// the field's per-column reference in the Reference argument (contrib
-	// plugin).
+	// its reference in the field's near: argument (contrib plugin).
 	Vector string
-	// Reference names the list argument holding Vector's reference:
-	// "nearVector" (pgvector and cube distances) or "nearPoint"
-	// (earthdistance distances).
-	Reference string
 	// Contrib marks orderBy enum values sorting by a contrib value of
 	// Column (contrib plugin): an accessor (nlevel, icount) or a derived
 	// expression whose operand the list field's Contrib.Arg argument
-	// holds per column (hstore value against hstoreKey:).
+	// holds per column (hstore value against its key in near:).
 	Contrib *ContribValue
 	// PGValue backs catalog enum values.
 	PGValue string

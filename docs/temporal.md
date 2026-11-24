@@ -83,7 +83,7 @@ and the period pair by overlap (`&&`):
   holding every child whose period overlaps the parent's.
 - **advanced_filters**: the forward relation takes the `{some|none|every}`
   wrapper (`roomBookingsByRoomIdAndValidAt: {some: {guest: {equalTo:
-  "Grace"}}}`) and a `<rel>Exist` Boolean, and its relational `orderBy`
+  "Grace"}}}`) and a `<rel>Exists` Boolean, and its relational `orderBy`
   values aggregate (`MIN`/`MAX`) like reverse relations.
 - **nested_mutations**: the forward relation gets an extra
   `connectBy<EqualityColumns>` taking the equality columns only

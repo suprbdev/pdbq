@@ -357,10 +357,10 @@ func TestContrib(t *testing.T) {
 
 	t.Run("similarity ordering", func(t *testing.T) {
 		res := post(t, url, `{
-			best: allDocuments(similarTo: {label: "postgis"}, orderBy: [LABEL_SIMILARITY_DESC]) { nodes { id } }
-			worst: allDocuments(similarTo: {label: "postgis"}, orderBy: [LABEL_SIMILARITY_ASC]) { nodes { id } }
-			word: allDocuments(similarTo: {label: "mong"}, orderBy: [LABEL_WORD_SIMILARITY_DESC], first: 1) { nodes { id } }
-			strict: allDocuments(similarTo: {label: "postgre"}, orderBy: [LABEL_STRICT_WORD_SIMILARITY_DESC, ID_DESC], first: 1) { nodes { id } }
+			best: allDocuments(near: {label: "postgis"}, orderBy: [LABEL_SIMILARITY_DESC]) { nodes { id } }
+			worst: allDocuments(near: {label: "postgis"}, orderBy: [LABEL_SIMILARITY_ASC]) { nodes { id } }
+			word: allDocuments(near: {label: "mong"}, orderBy: [LABEL_WORD_SIMILARITY_DESC], first: 1) { nodes { id } }
+			strict: allDocuments(near: {label: "postgre"}, orderBy: [LABEL_STRICT_WORD_SIMILARITY_DESC, ID_DESC], first: 1) { nodes { id } }
 		}`, nil)
 		requireNoErrors(t, res)
 		if got := docIDs(t, res.Data["best"]); !slices.Equal(got, []int{2, 1, 3}) {
@@ -376,7 +376,7 @@ func TestContrib(t *testing.T) {
 			t.Errorf("strict: %v", got)
 		}
 		res = post(t, url, `{allDocuments(orderBy: [LABEL_SIMILARITY_DESC]) { nodes { id } }}`, nil)
-		if len(res.Errors) == 0 || !strings.Contains(res.Errors[0].Message, "requires a similarTo") {
+		if len(res.Errors) == 0 || !strings.Contains(res.Errors[0].Message, "orderBy LABEL_SIMILARITY_DESC requires near: {label: …}") {
 			t.Errorf("similarity ordering without a reference: %+v", res.Errors)
 		}
 	})
@@ -656,7 +656,7 @@ func TestContrib(t *testing.T) {
 	t.Run("schema", func(t *testing.T) {
 		res := post(t, url, `{__type(name: "DocumentFilter") { inputFields { name type { name } } }}`, nil)
 		requireNoErrors(t, res)
-		for _, want := range []string{`"FullTextFilterOps"`, `"KeyValueHashFilterOps"`, `"StringTrgmFilterOps"`, `"IntMultirangeFilterOps"`, `"CidrAddressFilterOps"`} {
+		for _, want := range []string{`"FullTextFilter"`, `"KeyValueHashFilter"`, `"StringTrgmFilter"`, `"IntMultirangeFilter"`, `"CidrAddressFilter"`} {
 			if !strings.Contains(string(res.Data["__type"]), want) {
 				t.Errorf("DocumentFilter lacks %s: %s", want, res.Data["__type"])
 			}

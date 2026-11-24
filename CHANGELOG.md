@@ -51,6 +51,20 @@ becomes the release notes of the next tag.
   `deleteManyUsers`, so uncountable table names no longer collide, and a
   table mutation name or type collision is a schema build error. See
   [docs/upgrading.md](docs/upgrading.md#mutation-shapes).
+- **Breaking:** filter, orderBy and reference-argument names are unified.
+  Scalar operator inputs are `*Filter` (`StringFilter`, `GeoJSONFilter`,
+  was `*FilterOps`); `having` takes `and`/`or`/`not` and
+  `HavingBigIntFilter`/`HavingBigFloatFilter`; existence filters are
+  `<relation>Exists` in both directions; aggregate relation orderings use
+  `__` (`POSTS_BY_AUTHOR_ID__COUNT_DESC`); every per-column reference is a
+  field of one `near: <Type>NearInput` argument (replacing
+  `near: {geometry}`, `nearVector:`, `nearPoint:`, `similarTo:` and
+  `hstoreKey:`), and a distance or similarity ordering or score without its
+  reference is an error. The `@behavior` tokens `-filterBy`/`-orderBy` are
+  honoured (`-filter`/`-order` log a deprecation warning), `@filterable` and
+  `@sortable` are separate under `advanced_filters`' opt-in modes, and
+  unknown `@omit` actions and `@behavior` tokens log a build warning. See
+  [docs/upgrading.md](docs/upgrading.md#filter-orderby-and-smart-tag-names).
 - `go install github.com/suprbdev/pdbq/cmd/pdbq@vX.Y.Z` builds report the
   module version in `pdbq --version`.
 - `pdbq query` exits 2 on GraphQL errors only after closing the pool

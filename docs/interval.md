@@ -41,15 +41,15 @@ sub-microsecond digits are rounded by PostgreSQL.
 - Columns, `interval[]` columns (`[Interval!]` / `[IntervalInput!]`),
   composite attributes, create and patch inputs, `condition:`.
 - Function arguments, results and computed columns.
-- Filters: `IntervalFilterOps` has `equalTo`, `notEqualTo`, `in`, `notIn`,
+- Filters: `IntervalFilter` has `equalTo`, `notEqualTo`, `in`, `notIn`,
   `isNull`, `lessThan`, `lessThanOrEqualTo`, `greaterThan` and
   `greaterThanOrEqualTo` with `IntervalInput` operands, compared by
   PostgreSQL's interval ordering (`'1 month'` equals `'30 days'`).
-  `interval[]` columns use `IntervalListFilterOps`
+  `interval[]` columns use `IntervalListFilter`
   (`equalTo`, `notEqualTo`, `contains`, `containedBy`, `overlaps`, `isNull`).
 - orderBy on the column.
 - Aggregates: `sum`, `min` and `max` return `Interval`; aggregate filters
-  take `IntervalFilterOps`.
+  take `IntervalFilter`.
 
 Domains over `interval` keep the `Interval` type. If a table, type or
 enum is already named `Interval` or `IntervalInput`, the column falls back

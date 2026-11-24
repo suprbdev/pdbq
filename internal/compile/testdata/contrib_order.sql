@@ -36,7 +36,7 @@ GROUP BY ()
 -- args: ["postgres","postgres","postgres",5]
 
 -- field: allDocuments
--- error: compile: orderBy LABEL_SIMILARITY_DESC requires a similarTo: reference for the same column
+-- error: compile: orderBy LABEL_SIMILARITY_DESC requires near: {label: …}
 
 -- field: allDocuments
 SELECT json_build_object('nodes', coalesce(json_agg(__s_2.ndata ORDER BY __s_2.__rn ASC) FILTER (WHERE __s_2.__rn <= $6), '[]'::json)) AS data

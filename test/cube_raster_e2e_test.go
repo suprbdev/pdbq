@@ -184,7 +184,7 @@ func TestCubeEarthdistance(t *testing.T) {
 	})
 
 	t.Run("orderings and scores", func(t *testing.T) {
-		nodes := query(t, `(nearPoint: {spot: {lat: 51.5074, lon: -0.1278}, home: {lat: 48.8566, lon: 2.3522}}, orderBy: [SPOT_EARTH_DISTANCE_ASC],
+		nodes := query(t, `(near: {spot: {lat: 51.5074, lon: -0.1278}, home: {lat: 48.8566, lon: 2.3522}}, orderBy: [SPOT_EARTH_DISTANCE_ASC],
 			filter: {spot: {isNull: false}}) { nodes { id spotEarthDistance homeEarthDistance } }`)
 		if got := nodeIDs(nodes); !slices.Equal(got, []int{1, 2, 3, 4, 5}) {
 			t.Errorf("nearest to London: %v", got)
@@ -195,12 +195,12 @@ func TestCubeEarthdistance(t *testing.T) {
 		if d, _ := nodes[1]["homeEarthDistance"].(float64); !near(d, 0, 1e-3) {
 			t.Errorf("Paris from Paris = %v m", nodes[1]["homeEarthDistance"])
 		}
-		desc := nodeIDs(query(t, `(nearPoint: {spot: {lat: 51.5074, lon: -0.1278}}, orderBy: [SPOT_EARTH_DISTANCE_DESC]) { nodes { id } }`))
+		desc := nodeIDs(query(t, `(near: {spot: {lat: 51.5074, lon: -0.1278}}, orderBy: [SPOT_EARTH_DISTANCE_DESC]) { nodes { id } }`))
 		if !slices.Equal(desc, []int{5, 4, 3, 2, 1, 6}) {
 			t.Errorf("farthest from London (NULL last): %v", desc)
 		}
 
-		nodes = query(t, `(nearVector: {pos: [0, 0]}, orderBy: [POS_CHEBYSHEV_DISTANCE_ASC, ID_ASC], filter: {pos: {isNull: false}}) {
+		nodes = query(t, `(near: {pos: [0, 0]}, orderBy: [POS_CHEBYSHEV_DISTANCE_ASC, ID_ASC], filter: {pos: {isNull: false}}) {
 			nodes { id posL2Distance posL1Distance posChebyshevDistance } }`)
 		if got := nodeIDs(nodes); !slices.Equal(got, []int{1, 2, 3, 4, 5}) {
 			t.Errorf("cube chebyshev order: %v", got)
@@ -209,7 +209,7 @@ func TestCubeEarthdistance(t *testing.T) {
 			t.Errorf("Madrid cube distances = %v %v %v", l2, l1, ch)
 		}
 
-		nodes = query(t, `(nearPoint: {pt: {lat: 40.7128, lon: -74.006}}, orderBy: [PT_EARTH_DISTANCE_MILES_ASC], first: 2) { nodes { id ptEarthDistanceMiles } }`)
+		nodes = query(t, `(near: {pt: {lat: 40.7128, lon: -74.006}}, orderBy: [PT_EARTH_DISTANCE_MILES_ASC], first: 2) { nodes { id ptEarthDistanceMiles } }`)
 		if got := nodeIDs(nodes); !slices.Equal(got, []int{5, 1}) {
 			t.Errorf("nearest to New York: %v", got)
 		}
@@ -218,11 +218,12 @@ func TestCubeEarthdistance(t *testing.T) {
 		}
 
 		res := post(t, url, `{ allSites(orderBy: [SPOT_EARTH_DISTANCE_ASC]) { nodes { id } } }`, nil)
-		if len(res.Errors) == 0 || !strings.Contains(res.Errors[0].Message, "requires a nearPoint: reference") {
+		if len(res.Errors) == 0 || !strings.Contains(res.Errors[0].Message, "orderBy SPOT_EARTH_DISTANCE_ASC requires near: {spot: …}") {
 			t.Errorf("ordering without a reference: %+v", res.Errors)
 		}
-		if nodes := query(t, `(orderBy: [ID_ASC], first: 1) { nodes { spotEarthDistance posL2Distance } }`); nodes[0]["spotEarthDistance"] != nil || nodes[0]["posL2Distance"] != nil {
-			t.Errorf("scores without references = %v", nodes[0])
+		res = post(t, url, `{ allSites(orderBy: [ID_ASC], first: 1) { nodes { posL2Distance } } }`, nil)
+		if len(res.Errors) == 0 || !strings.Contains(res.Errors[0].Message, "field posL2Distance requires near: {pos: …}") {
+			t.Errorf("score without a reference: %+v", res.Errors)
 		}
 	})
 
@@ -230,7 +231,7 @@ func TestCubeEarthdistance(t *testing.T) {
 		var ids []int
 		after := ""
 		for range 5 {
-			args := `first: 2, nearPoint: {spot: {lat: 52.52, lon: 13.405}}, orderBy: [SPOT_EARTH_DISTANCE_ASC]`
+			args := `first: 2, near: {spot: {lat: 52.52, lon: 13.405}}, orderBy: [SPOT_EARTH_DISTANCE_ASC]`
 			if after != "" {
 				args += `, after: "` + after + `"`
 			}
@@ -265,8 +266,8 @@ func TestCubeEarthdistance(t *testing.T) {
 		requireNoErrors(t, res)
 		raw := string(res.Data["f"]) + string(res.Data["s"]) + string(res.Data["o"])
 		for _, want := range []string{
-			`"name":"pos","type":{"name":"CubeDistanceFilterOps"}`, `"name":"spot","type":{"name":"LatLonDistanceFilterOps"}`,
-			`"name":"pt","type":{"name":"PointDistanceFilterOps"}`, `"homeEarthDistance"`, `"SPOT_EARTH_DISTANCE_ASC"`,
+			`"name":"pos","type":{"name":"CubeDistanceFilter"}`, `"name":"spot","type":{"name":"LatLonDistanceFilter"}`,
+			`"name":"pt","type":{"name":"PointDistanceFilter"}`, `"homeEarthDistance"`, `"SPOT_EARTH_DISTANCE_ASC"`,
 		} {
 			if !strings.Contains(raw, want) {
 				t.Errorf("schema lacks %s", want)
@@ -306,8 +307,8 @@ func TestCubeEarthKNNIndex(t *testing.T) {
 	app := pdbq.New(cfg)
 	t.Cleanup(app.Close)
 	for q, index := range map[string]string{
-		`{ allSites(first: 5, nearPoint: {spot: {lat: 51.5, lon: -0.12}}, orderBy: [SPOT_EARTH_DISTANCE_ASC]) { nodes { id spotEarthDistance } } }`: "sites_spot_idx",
-		`{ allSites(first: 5, nearVector: {pos: [3, 4]}, orderBy: [POS_L2_DISTANCE_ASC]) { nodes { id } } }`:                                        "sites_pos_idx",
+		`{ allSites(first: 5, near: {spot: {lat: 51.5, lon: -0.12}}, orderBy: [SPOT_EARTH_DISTANCE_ASC]) { nodes { id spotEarthDistance } } }`: "sites_spot_idx",
+		`{ allSites(first: 5, near: {pos: [3, 4]}, orderBy: [POS_L2_DISTANCE_ASC]) { nodes { id } } }`:                                         "sites_pos_idx",
 	} {
 		stmts, err := app.CompileQuery(context.Background(), q, nil, "")
 		if err != nil || len(stmts) != 1 {
@@ -479,8 +480,8 @@ func TestCubeRasterContract(t *testing.T) {
 		`COMMENT ON COLUMN `+contractsSchema+`.customers.spot IS '@behavior -contract:public'`,
 		`COMMENT ON COLUMN `+contractsSchema+`.customers.rast IS '@behavior -contract:public'`,
 	)
-	surface := []string{"posL2Distance", "spotEarthDistance", "rastWidth", "rastSummaryStats", "CustomerNearPointInput",
-		"CustomerNearVectorInput", "POS_L2_DISTANCE_ASC", "SPOT_EARTH_DISTANCE_ASC", "spot: LatLon", "pos: Cube", "rast: RasterFilterOps"}
+	surface := []string{"posL2Distance", "spotEarthDistance", "rastWidth", "rastSummaryStats", "CustomerNearInput",
+		"POS_L2_DISTANCE_ASC", "SPOT_EARTH_DISTANCE_ASC", "spot: LatLon", "pos: Cube", "rast: RasterFilter"}
 	internal := getSDL(t, base)
 	for _, s := range surface {
 		if !strings.Contains(internal, s) {

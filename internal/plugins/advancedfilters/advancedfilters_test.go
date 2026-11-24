@@ -80,9 +80,9 @@ func TestSchemaSurface(t *testing.T) {
 		"userByAuthorId: UserFilter",        // forward relation on PostFilter
 		"userByAuthorIdExists: Boolean",     // forward existence variant
 		"postsByAuthorId: PostToManyFilter", // reverse relation on UserFilter
-		"postsByAuthorIdExist: Boolean",     // reverse existence variant
+		"postsByAuthorIdExists: Boolean",    // reverse existence variant
 		"some: PostFilter",                  // quantifier wrapper
-		"postCount: BigIntFilterOps",        // computed filter (int8 -> BigInt)
+		"postCount: BigIntFilter",           // computed filter (int8 -> BigInt)
 		"POST_COUNT_ASC",                    // computed ordering
 		"POST_COUNT_DESC",
 		"USER_BY_AUTHOR_ID__EMAIL_ASC",   // forward relational ordering
@@ -96,7 +96,7 @@ func TestSchemaSurface(t *testing.T) {
 	// full_name/body are not indexed, so indexed-only drops their relational
 	// order values like the tables' own.
 	for _, reject := range []string{
-		"excerpt: StringFilterOps", "EXCERPT_ASC",
+		"excerpt: StringFilter", "EXCERPT_ASC",
 		"USER_BY_AUTHOR_ID__FULL_NAME_ASC", "POSTS_BY_AUTHOR_ID__BODY_ASC",
 	} {
 		if strings.Contains(sdl, reject) {
@@ -110,7 +110,7 @@ func TestSettingsToggles(t *testing.T) {
 	if strings.Contains(built.SDL, "PostToManyFilter") {
 		t.Error("relations: false must drop relation filter fields")
 	}
-	if !strings.Contains(built.SDL, "postCount: BigIntFilterOps") {
+	if !strings.Contains(built.SDL, "postCount: BigIntFilter") {
 		t.Error("relations: false must keep computed filters")
 	}
 
@@ -148,7 +148,7 @@ func TestSmartCommentTags(t *testing.T) {
 
 	cat = testutil.FixtureCatalog()
 	built = setupCatalog(t, func(s *advancedfilters.Settings) { s.RelationsOptIn, s.ComputedOptIn = true, true }, cat)
-	for _, reject := range []string{"userByAuthorId: UserFilter", "postCount: BigIntFilterOps", "POST_COUNT_ASC"} {
+	for _, reject := range []string{"userByAuthorId: UserFilter", "postCount: BigIntFilter", "POST_COUNT_ASC"} {
 		if strings.Contains(built.SDL, reject) {
 			t.Errorf("opt-in mode must suppress untagged surface %q", reject)
 		}
@@ -210,7 +210,7 @@ func TestRelationExistenceFilter(t *testing.T) {
 		allUsers { nodes { id } }
 	}`)
 	stmt := compileRoot(t, built, `{
-		allUsers(filter: {postsByAuthorIdExist: true}) { nodes { id } }
+		allUsers(filter: {postsByAuthorIdExists: true}) { nodes { id } }
 	}`)
 	if !strings.Contains(stmt.SQL, `EXISTS (SELECT 1 FROM "public"."posts" AS`) {
 		t.Errorf("exist: true missing EXISTS:\n%s", stmt.SQL)
@@ -223,7 +223,7 @@ func TestRelationExistenceFilter(t *testing.T) {
 	}
 
 	stmt = compileRoot(t, built, `{
-		allUsers(filter: {postsByAuthorIdExist: false}) { nodes { id } }
+		allUsers(filter: {postsByAuthorIdExists: false}) { nodes { id } }
 	}`)
 	if !strings.Contains(stmt.SQL, `NOT EXISTS (SELECT 1 FROM "public"."posts" AS`) {
 		t.Errorf("exist: false missing NOT EXISTS:\n%s", stmt.SQL)

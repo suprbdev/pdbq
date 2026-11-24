@@ -54,38 +54,38 @@ func TestUnaccentSurface(t *testing.T) {
 
 	b := buildWith(t, withoutExtension(contribfixture.Catalog(), "fuzzystrmatch"), nil, true, true)
 	for _, field := range []string{"title", "label"} {
-		if got := fieldType(t, b, "DocumentFilter", field); got != "StringTrgmFilterOps" {
-			t.Errorf("indexed_only: DocumentFilter.%s = %s, want StringTrgmFilterOps", field, got)
+		if got := fieldType(t, b, "DocumentFilter", field); got != "StringTrgmFilter" {
+			t.Errorf("indexed_only: DocumentFilter.%s = %s, want StringTrgmFilter", field, got)
 		}
 	}
-	if b.Inputs["StringUnaccentFilterOps"] != nil || b.Inputs["StringTrgmUnaccentFilterOps"] != nil {
+	if b.Inputs["StringUnaccentFilter"] != nil || b.Inputs["StringTrgmUnaccentFilter"] != nil {
 		t.Error("indexed_only declared an unaccent input without an allowlisted column")
 	}
 
 	b, _ = buildAllowing(t, withoutExtension(contribfixture.Catalog(), "fuzzystrmatch"), map[string][]string{"public.documents": {"notes"}})
-	if got := fieldType(t, b, "DocumentFilter", "notes"); got != "StringTrgmUnaccentFilterOps" {
+	if got := fieldType(t, b, "DocumentFilter", "notes"); got != "StringTrgmUnaccentFilter" {
 		t.Errorf("allowlisted notes = %s", got)
 	}
-	if got := fieldType(t, b, "DocumentFilter", "title"); got != "StringTrgmFilterOps" {
-		t.Errorf("title = %s, want StringTrgmFilterOps", got)
+	if got := fieldType(t, b, "DocumentFilter", "title"); got != "StringTrgmFilter" {
+		t.Errorf("title = %s, want StringTrgmFilter", got)
 	}
 	for _, op := range append([]string{"equalTo", "startsWith", "similarTo", "strictWordSimilarTo"}, ops...) {
-		if fieldType(t, b, "StringTrgmUnaccentFilterOps", op) == "" {
-			t.Errorf("StringTrgmUnaccentFilterOps.%s missing", op)
+		if fieldType(t, b, "StringTrgmUnaccentFilter", op) == "" {
+			t.Errorf("StringTrgmUnaccentFilter.%s missing", op)
 		}
 	}
 
 	noTrgm := buildWith(t, withoutExtension(withoutExtension(contribfixture.Catalog(), "fuzzystrmatch"), "pg_trgm"), nil, false, true)
-	if got := fieldType(t, noTrgm, "DocumentFilter", "notes"); got != "StringUnaccentFilterOps" {
-		t.Errorf("notes without pg_trgm = %s, want StringUnaccentFilterOps", got)
+	if got := fieldType(t, noTrgm, "DocumentFilter", "notes"); got != "StringUnaccentFilter" {
+		t.Errorf("notes without pg_trgm = %s, want StringUnaccentFilter", got)
 	}
 	for _, op := range append([]string{"equalTo", "likeInsensitive"}, ops...) {
-		if fieldType(t, noTrgm, "StringUnaccentFilterOps", op) == "" {
-			t.Errorf("StringUnaccentFilterOps.%s missing", op)
+		if fieldType(t, noTrgm, "StringUnaccentFilter", op) == "" {
+			t.Errorf("StringUnaccentFilter.%s missing", op)
 		}
 	}
-	if fieldType(t, noTrgm, "StringUnaccentFilterOps", "similarTo") != "" {
-		t.Error("StringUnaccentFilterOps carries pg_trgm operators")
+	if fieldType(t, noTrgm, "StringUnaccentFilter", "similarTo") != "" {
+		t.Error("StringUnaccentFilter carries pg_trgm operators")
 	}
 
 	noUnaccent := buildWith(t, withoutExtension(withoutExtension(contribfixture.Catalog(), "fuzzystrmatch"), "unaccent"), nil, false, true)
@@ -103,12 +103,12 @@ func TestUnaccentInputNameTaken(t *testing.T) {
 	b := schema.New(withoutExtension(contribfixture.Catalog(), "fuzzystrmatch"), inflect.Next(inflect.Default), schema.Options{
 		Logger: slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil)),
 	})
-	b.Inputs["StringTrgmUnaccentFilterOps"] = &schema.Input{Name: "StringTrgmUnaccentFilterOps"}
+	b.Inputs["StringTrgmUnaccentFilter"] = &schema.Input{Name: "StringTrgmUnaccentFilter"}
 	if err := New(DefaultSettings()).TransformSchema(context.Background(), b); err != nil {
 		t.Fatal(err)
 	}
-	if got := fieldType(t, b, "DocumentFilter", "notes"); got != "StringTrgmFilterOps" {
-		t.Errorf("notes with the unaccent input name taken = %s, want StringTrgmFilterOps", got)
+	if got := fieldType(t, b, "DocumentFilter", "notes"); got != "StringTrgmFilter" {
+		t.Errorf("notes with the unaccent input name taken = %s, want StringTrgmFilter", got)
 	}
 }
 
@@ -136,11 +136,11 @@ func TestVectorTypeMapping(t *testing.T) {
 		t.Error("Float declared as a custom scalar")
 	}
 
-	if got := fieldType(t, b, "EmbeddingFilter", "embedding"); got != "VectorFilterOps" {
+	if got := fieldType(t, b, "EmbeddingFilter", "embedding"); got != "VectorFilter" {
 		t.Errorf("EmbeddingFilter.embedding = %s", got)
 	}
-	if fields := b.Inputs["VectorFilterOps"].Fields; len(fields) != 1 || fields[0].Name != "isNull" {
-		t.Errorf("VectorFilterOps fields: %+v", fields)
+	if fields := b.Inputs["VectorFilter"].Fields; len(fields) != 1 || fields[0].Name != "isNull" {
+		t.Errorf("VectorFilter fields: %+v", fields)
 	}
 	if c := b.Inputs["EmbeddingCondition"]; c != nil && c.Field("embedding") != nil {
 		t.Error("vector column in the condition input")
@@ -175,25 +175,27 @@ func TestVectorOrdering(t *testing.T) {
 	if got := enumValues(b, "EmbeddingsOrderBy", "SPARSE_"); len(got) != 0 {
 		t.Errorf("unindexed sparse orderings = %v", got)
 	}
-	if got := fieldType(t, b, "EmbeddingNearVectorInput", "embedding"); got != "[Float!]" {
-		t.Errorf("EmbeddingNearVectorInput.embedding = %s", got)
+	if got := fieldType(t, b, "EmbeddingNearInput", "embedding"); got != "[Float!]" {
+		t.Errorf("EmbeddingNearInput.embedding = %s", got)
 	}
-	if got := fieldType(t, b, "EmbeddingNearVectorInput", "sparse"); got != "String" {
-		t.Errorf("EmbeddingNearVectorInput.sparse (distance fields only) = %q", got)
+	if got := fieldType(t, b, "EmbeddingNearInput", "sparse"); got != "String" {
+		t.Errorf("EmbeddingNearInput.sparse (distance fields only) = %q", got)
 	}
-	if !hasArg(b.Query.Field("allEmbeddings"), "nearVector") {
-		t.Error("allEmbeddings lacks nearVector:")
+	if !hasArg(b.Query.Field("allEmbeddings"), "near") {
+		t.Error("allEmbeddings lacks near:")
 	}
-	if hasArg(b.Query.Field("allDocuments"), "nearVector") {
-		t.Error("nearVector: on a table without vector columns")
+	for _, f := range b.Inputs["DocumentNearInput"].Fields {
+		if f.Type != "String" {
+			t.Errorf("vector reference %s on a table without vector columns", f.Name)
+		}
 	}
 
 	allowed, _ := buildAllowing(t, contribfixture.Catalog(), map[string][]string{"public.embeddings": {"sparse"}})
 	if got := enumValues(allowed, "EmbeddingsOrderBy", "SPARSE_"); len(got) != 8 {
 		t.Errorf("allowlisted sparse orderings = %v", got)
 	}
-	if got := fieldType(t, allowed, "EmbeddingNearVectorInput", "sparse"); got != "String" {
-		t.Errorf("EmbeddingNearVectorInput.sparse = %s", got)
+	if got := fieldType(t, allowed, "EmbeddingNearInput", "sparse"); got != "String" {
+		t.Errorf("EmbeddingNearInput.sparse = %s", got)
 	}
 	all := buildWith(t, contribfixture.Catalog(), nil, false, true)
 	if got := enumValues(all, "EmbeddingsOrderBy", "HALF_"); len(got) != 8 {
@@ -212,7 +214,7 @@ func TestVectorOrdering(t *testing.T) {
 	}
 
 	noOrder := buildWith(t, contribfixture.Catalog(), func(s *Settings) { s.Ordering = false }, true, true)
-	if len(enumValues(noOrder, "EmbeddingsOrderBy", "EMBEDDING_")) != 0 || hasArg(noOrder.Query.Field("allEmbeddings"), "nearVector") {
+	if len(enumValues(noOrder, "EmbeddingsOrderBy", "EMBEDDING_")) != 0 || hasArg(noOrder.Query.Field("allEmbeddings"), "near") {
 		t.Error("ordering: false kept vector ordering")
 	}
 }
@@ -226,8 +228,8 @@ func TestVectorOrderingOmit(t *testing.T) {
 			t.Errorf("%s kept %v", tag, got)
 		}
 		read := tag == "@omit read"
-		if got := fieldType(t, b, "EmbeddingNearVectorInput", "embedding") != ""; got == read {
-			t.Errorf("%s: nearVector field present = %v", tag, got)
+		if got := fieldType(t, b, "EmbeddingNearInput", "embedding") != ""; got == read {
+			t.Errorf("%s: near: field present = %v", tag, got)
 		}
 		if got := b.Objects["Embedding"].Field("embeddingCosineDistance") != nil; got == read {
 			t.Errorf("%s: distance field present = %v", tag, got)
@@ -238,18 +240,18 @@ func TestVectorOrderingOmit(t *testing.T) {
 func TestVectorNearInputNameTaken(t *testing.T) {
 	cat := contribfixture.Catalog()
 	cat.Tables = append(cat.Tables, &introspect.Table{
-		Schema: "public", Name: "embedding_near_vector_input", Kind: introspect.RelTable,
+		Schema: "public", Name: "embedding_near_input", Kind: introspect.RelTable,
 		Privileges: introspect.Privileges{Select: true},
 		Columns:    []*introspect.Column{{Name: "id", Position: 1, PGType: "int4", TypeSchema: "pg_catalog"}},
 	})
 	b, logs := buildAllowing(t, cat, nil)
-	if b.Objects["EmbeddingNearVectorInput"] == nil {
+	if b.Objects["EmbeddingNearInput"] == nil {
 		t.Fatal("clashing table type missing")
 	}
-	if len(enumValues(b, "EmbeddingsOrderBy", "EMBEDDING_")) != 0 || hasArg(b.Query.Field("allEmbeddings"), "nearVector") {
+	if len(enumValues(b, "EmbeddingsOrderBy", "EMBEDDING_")) != 0 || hasArg(b.Query.Field("allEmbeddings"), "near") {
 		t.Error("vector ordering added although its input name is taken")
 	}
-	if !strings.Contains(logs, "EmbeddingNearVectorInput") {
+	if !strings.Contains(logs, "EmbeddingNearInput") {
 		t.Errorf("no warning: %s", logs)
 	}
 }

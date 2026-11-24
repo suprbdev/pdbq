@@ -159,6 +159,15 @@ type Builder struct {
 	mutationTypes map[string]bool
 	// errs holds the build errors Build returns (see fail).
 	errs []error
+	// filterTables maps each table filter input name to its "schema.table".
+	filterTables map[string]string
+	// operatorInputs holds the names claimed by ClaimOperatorInput.
+	operatorInputs map[string]bool
+	// nearInputs maps tables to their reference input (see NearInput), nil
+	// when its name was taken.
+	nearInputs map[*introspect.Table]*Input
+	// orderByFields caches FieldsByOrderBy for NearInput.
+	orderByFields map[string][]*Field
 }
 
 // Meta is the compiled lookup the executor/compiler use: type name -> field
@@ -223,25 +232,23 @@ type OrderSpec struct {
 	// Relation orders by a related table's column (advanced_filters); Column
 	// stays empty for these.
 	Relation *OrderRelation
-	// Distance orders by spatial distance from the field's near: geometry
-	// (postgis plugin); Column names the spatial column measured from.
+	// Distance orders by spatial distance of Column from its geometry in
+	// the field's near: argument (postgis plugin).
 	Distance bool
 	// Rank orders by the full-text rank of Column against the first
 	// matches* operator on it in the field's filter (contrib plugin).
 	Rank bool
 	// Similarity names the pg_trgm distance expression ("distance",
-	// "wordDistance", "strictWordDistance") ordering by similarity of
-	// Column to the field's similarTo: reference text (contrib plugin);
-	// Desc applies to the distance, so best matches first is ascending.
+	// "wordDistance", "strictWordDistance") or the fuzzystrmatch
+	// Levenshtein distance ordering by similarity of Column to its
+	// reference text in the field's near: argument (contrib plugin); Desc
+	// applies to the distance, so best matches first is ascending.
 	Similarity string
 	// Vector names the distance expression ("l2Distance", "cosineDistance",
 	// "chebyshevDistance", "earthDistance", ...) ordering by distance of
-	// Column from the field's per-column reference in the Reference
-	// argument (contrib plugin); nearest first is ascending.
+	// Column from its reference in the field's near: argument (contrib
+	// plugin); nearest first is ascending.
 	Vector string
-	// Reference names the list argument holding Vector's reference:
-	// "nearVector" (pgvector and cube) or "nearPoint" (earthdistance).
-	Reference string
 	// Contrib orders by a contrib value of Column (contrib plugin): an
 	// accessor, or a derived expression measured against the field's
 	// Contrib.Arg reference for Column.
@@ -283,6 +290,9 @@ func New(cat *introspect.Catalog, inflector inflect.Next, opts Options) *Builder
 		mutationSources:    map[string]string{},
 		typeSources:        map[string]string{},
 		mutationTypes:      map[string]bool{},
+		filterTables:       map[string]string{},
+		operatorInputs:     map[string]bool{},
+		nearInputs:         map[*introspect.Table]*Input{},
 	}
 	// The GeoJSON scalar is only declared when the database actually has a
 	// PostGIS column, so schemas without spatial data are byte-identical to
@@ -650,7 +660,7 @@ func (b *Builder) addIntervalTypes() {
 
 // EnsureLatLonTypes declares the LatLon object and LatLonInput input types
 // of earth locations unless an earth column already did, for SchemaHook
-// plugins taking locations elsewhere (the contrib plugin's nearPoint:
+// plugins taking locations elsewhere (the contrib plugin's near:
 // references of point columns). It reports false when another type took
 // one of the names.
 func (b *Builder) EnsureLatLonTypes() bool {
@@ -1018,13 +1028,13 @@ func (b *Builder) addFilter(t *introspect.Table) string {
 	in.AddField(&InputField{Name: "not", Type: name})
 	for _, c := range cols {
 		// Spatial columns get their operator set from the postgis plugin
-		// (GeometryFilterOps). Generating a scalar operator input here would
+		// (GeoJSONFilter). Generating a scalar operator input here would
 		// leave an unused type behind whenever the plugin is enabled, and an
 		// unusable one when it is not.
 		if postgis.IsSpatial(c.PGType) || postgis.IsRaster(c.PGType) {
 			continue
 		}
-		opInput := b.FilterOpsInputFor(c)
+		opInput := b.FilterInputFor(c)
 		in.AddField(&InputField{
 			Name:   b.Inflect(inflect.KindFieldName, inflect.Input{Table: t.Name, Column: c.Name}),
 			Type:   opInput,
@@ -1032,6 +1042,7 @@ func (b *Builder) addFilter(t *introspect.Table) string {
 		})
 	}
 	b.Inputs[name] = in
+	b.filterTables[name] = tableKey(t.Schema, t.Name)
 	return name
 }
 
@@ -1086,10 +1097,10 @@ func (b *Builder) GraphQLInputTypeFor(c *introspect.Column) string {
 	return b.gqlInputTypeForColumn(c)
 }
 
-// FilterOpsInputFor returns (creating if needed) the operator input type for
+// FilterInputFor returns (creating if needed) the operator input type for
 // a column-shaped value — exported for SchemaHook plugins adding filterable
 // fields (e.g. advanced_filters computed columns).
-func (b *Builder) FilterOpsInputFor(c *introspect.Column) string {
+func (b *Builder) FilterInputFor(c *introspect.Column) string {
 	if ci := b.ContribColumn(c); ci.Owned() && ci.OpsInput != "" {
 		return b.contribOpInput(ci)
 	}
@@ -1099,14 +1110,15 @@ func (b *Builder) FilterOpsInputFor(c *introspect.Column) string {
 }
 
 // opInputFor returns (creating if needed) the shared operator input type for
-// a scalar, e.g. StringFilterOps.
+// a scalar, e.g. StringFilter.
 func (b *Builder) opInputFor(gqlType, pgType string, isArray bool) string {
-	name := gqlType + "FilterOps"
+	name := gqlType + "Filter"
 	if isArray {
-		name = gqlType + "ListFilterOps"
+		name = gqlType + "ListFilter"
 	} else if pgType == "jsonb" || pgType == "json" {
-		name = "JSONFilterOps"
+		name = "JSONFilter"
 	}
+	b.ClaimOperatorInput(name)
 	if _, ok := b.Inputs[name]; ok {
 		return name
 	}
@@ -1119,10 +1131,11 @@ func (b *Builder) opInputFor(gqlType, pgType string, isArray bool) string {
 }
 
 // contribOpInput returns (creating if needed) the shared operator input of a
-// contrib type (FullTextFilterOps, KeyValueHashFilterOps, ...) holding its
+// contrib type (FullTextFilter, KeyValueHashFilter, ...) holding its
 // generic comparison operators; the contrib plugin adds the vocabulary
 // operators.
 func (b *Builder) contribOpInput(ci contribtype.Column) string {
+	b.ClaimOperatorInput(ci.OpsInput)
 	if _, ok := b.Inputs[ci.OpsInput]; ok {
 		return ci.OpsInput
 	}
@@ -1132,6 +1145,93 @@ func (b *Builder) contribOpInput(ci contribtype.Column) string {
 	}
 	b.Inputs[ci.OpsInput] = in
 	return ci.OpsInput
+}
+
+// ClaimOperatorInput records name as the name of a scalar operator input
+// type (StringFilter, GeoJSONFilter, HavingIntFilter, ...). Plugins call it
+// before declaring one, also when the name turns out to be taken: Build
+// fails when a table's <Type>Filter input has a claimed name, since the
+// two would share one GraphQL type.
+func (b *Builder) ClaimOperatorInput(name string) {
+	b.operatorInputs[name] = true
+}
+
+// NearArg is the list field argument holding the per-column references
+// that distance and similarity orderBy values and score fields measure
+// against (postgis and contrib plugins).
+const NearArg = "near"
+
+// NearInput returns table t's reference input, <Type>NearInput, declaring
+// it on first use, or nil when another type took the name (logged once).
+// Declaring it adds the near: argument to every field taking t's orderBy
+// enum (as FieldsByOrderBy found them on the first call). Plugins add one
+// field per reference-taking column, named after the column and bound to
+// it through InputField.Column; Build drops an input left without fields,
+// with its arguments.
+func (b *Builder) NearInput(t *introspect.Table) *Input {
+	if in, seen := b.nearInputs[t]; seen {
+		return in
+	}
+	key := tableKey(t.Schema, t.Name)
+	typeName := b.TypeForTable[key]
+	name := typeName + "NearInput"
+	_, obj := b.Objects[name]
+	_, input := b.Inputs[name]
+	_, enum := b.Enums[name]
+	if obj || input || enum {
+		b.log.Warn("type name already taken, near: argument skipped", "type", name, "table", key)
+		b.nearInputs[t] = nil
+		return nil
+	}
+	in := &Input{
+		Name: name,
+		Description: "Per-column references for the distance and similarity orderBy values and score fields of " +
+			typeName + ".",
+	}
+	b.Inputs[name] = in
+	b.nearInputs[t] = in
+	if b.orderByFields == nil {
+		b.orderByFields = b.FieldsByOrderBy()
+	}
+	enumName := b.Inflect(inflect.KindOrderByTypeName, inflect.Input{Schema: t.Schema, Table: t.Name})
+	for _, f := range b.orderByFields[enumName] {
+		if !slices.ContainsFunc(f.Args, func(a Arg) bool { return a.Name == NearArg }) {
+			f.Args = append(f.Args, Arg{Name: NearArg, Type: name})
+		}
+	}
+	return in
+}
+
+// pruneNearInputs removes the reference inputs left without fields and the
+// near: arguments typed by them.
+func (b *Builder) pruneNearInputs() {
+	empty := map[string]bool{}
+	for _, in := range b.nearInputs {
+		if in != nil && len(in.Fields) == 0 {
+			empty[in.Name] = true
+			delete(b.Inputs, in.Name)
+		}
+	}
+	if len(empty) == 0 {
+		return
+	}
+	for _, obj := range b.Objects {
+		for _, f := range obj.Fields {
+			f.Args = slices.DeleteFunc(f.Args, func(a Arg) bool { return a.Name == NearArg && empty[a.Type] })
+		}
+	}
+}
+
+// operatorInputCollision reports a table filter input sharing its name with
+// a scalar operator input, naming the first such pair in name order.
+func (b *Builder) operatorInputCollision() error {
+	for _, name := range sortedKeys(b.filterTables) {
+		if b.operatorInputs[name] {
+			return fmt.Errorf("schema: the filter input of table %s and a scalar operator input are both named %s; "+
+				"rename the table with an @name smart comment (or an inflection plugin)", b.filterTables[name], name)
+		}
+	}
+	return nil
 }
 
 // addDistinctOn creates the <Types>DistinctOn column enum backing the
@@ -1828,12 +1928,14 @@ func (b *Builder) addLiveFields() {
 // Build renders SDL, validates it, and returns the executable schema + meta.
 // It fails with every naming conflict found while generating the schema (a
 // relation field named like another field of its type, a table mutation
-// name collision).
+// name collision) and when a table filter input and a scalar operator input
+// share a name.
 func (b *Builder) Build() (*Built, error) {
-	if err := errors.Join(b.errs...); err != nil {
+	if err := errors.Join(append(b.errs, b.operatorInputCollision())...); err != nil {
 		return nil, err
 	}
 	b.pruneMutations()
+	b.pruneNearInputs()
 	if len(b.Mutation.Fields) == 0 {
 		delete(b.Objects, "Mutation")
 	}
@@ -1904,7 +2006,7 @@ func (b *Builder) Build() (*Built, error) {
 			if v.Column != "" || v.Computed != nil || v.Relation != nil {
 				ordered[v.Name] = OrderSpec{
 					Column: v.Column, Desc: v.Desc, Computed: v.Computed, Relation: v.Relation,
-					Distance: v.Distance, Rank: v.Rank, Similarity: v.Similarity, Vector: v.Vector, Reference: v.Reference,
+					Distance: v.Distance, Rank: v.Rank, Similarity: v.Similarity, Vector: v.Vector,
 					Contrib: v.Contrib,
 				}
 			}

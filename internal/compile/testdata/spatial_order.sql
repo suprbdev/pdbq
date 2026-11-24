@@ -21,13 +21,5 @@ GROUP BY ()
 -- args: ["SRID=4326;POINT(-0.12 51.5)",100]
 
 -- field: allPlaces
-SELECT json_build_object('nodes', coalesce(json_agg(__s_2.ndata ORDER BY __s_2.__rn ASC) FILTER (WHERE __s_2.__rn <= $1), '[]'::json)) AS data
-FROM (
-  SELECT json_build_object('id', __t_1."id") AS ndata, row_number() OVER (ORDER BY __t_1."id" ASC) AS __rn
-  FROM "public"."places" AS __t_1
-  ORDER BY __t_1."id" ASC
-  LIMIT 101
-) AS __s_2
-GROUP BY ()
--- args: [100]
+-- error: compile: orderBy LOCATION_DISTANCE_ASC requires near: {location: …}
 

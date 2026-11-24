@@ -171,6 +171,8 @@ For each table/view the connection role can `SELECT`:
 | primary key | `userById(id)`, `node(nodeId)` |
 | unique constraints | `userByEmail(email)` |
 | foreign keys | `post.userByAuthorId`, `user.postsByAuthorId` (child connection) |
+| indexed columns | `filter: UserFilter` (`email: StringFilter`, `postsByAuthorIdExists: Boolean`), `orderBy: [EMAIL_ASC, POSTS_BY_AUTHOR_ID__TITLE_DESC]` ([filtering](filtering.md)) |
+| spatial, vector, trigram columns | distance and similarity ordering against one `near: UserNearInput` argument (`near: {location: "POINT(0 0)"}`) |
 | `INSERT`/`UPDATE`/`DELETE` privileges | `createUser(input: {user})`, `updateUserById(input: {id, userPatch})`, `deleteUserById(input: {id})`, the bulk `createManyUsers` / `updateManyUsers` / `deleteManyUsers` |
 | enums | GraphQL enums (`HAPPY`, `SAD`, ...) |
 | composite types | object types with per-field selection (`address { street city }`), plus `AddressInput` on mutations; arrays too |

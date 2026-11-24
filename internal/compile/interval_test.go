@@ -85,7 +85,7 @@ func TestIntervalSchema(t *testing.T) {
 		"type Interval {", "input IntervalInput {",
 		"  seconds: Float\n", "  minutes: Int\n", "  years: Int\n", "  twice: Interval\n", "  timing: Timing\n",
 		"  span: Interval\n", "  spans: [Interval!]\n",
-		"  span: IntervalFilterOps\n", "  spans: IntervalListFilterOps\n",
+		"  span: IntervalFilter\n", "  spans: IntervalListFilter\n",
 		"  equalTo: IntervalInput\n", "  in: [IntervalInput!]\n", "  contains: [IntervalInput!]\n",
 		"doubleSpan(span: IntervalInput): Interval", "spanList(spans: [IntervalInput]): [Interval!]",
 	} {

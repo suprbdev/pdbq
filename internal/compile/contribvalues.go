@@ -103,8 +103,8 @@ func (s *stmt) contribDerivedSQL(meta *schema.FieldMeta, f *ast.Field, alias str
 }
 
 // contribFilterCond compiles a table-filter field comparing a contrib value
-// of a column of t: an accessor's IntFilterOps object, or an hstore value's
-// {key, ...StringFilterOps} object. The key is bound only when some
+// of a column of t: an accessor's IntFilter object, or an hstore value's
+// {key, ...StringFilter} object. The key is bound only when some
 // comparison uses it.
 func (s *stmt) contribFilterCond(t *introspect.Table, cv *schema.ContribValue, v any, alias string) (string, error) {
 	col := t.Column(cv.Column)
@@ -146,7 +146,7 @@ func (s *stmt) contribFilterCond(t *introspect.Table, cv *schema.ContribValue, v
 
 // contribOrderTerm resolves an orderBy value sorting by a contrib value of a
 // column: an accessor, or an expression whose operand the list field's
-// spec.Contrib.Arg argument holds for the column (hstoreKey:).
+// near: argument holds for the column (an hstore key).
 func (s *stmt) contribOrderTerm(t *introspect.Table, f *ast.Field, value string, spec schema.OrderSpec) (orderTerm, error) {
 	col := t.Column(spec.Column)
 	if col == nil {
@@ -164,13 +164,13 @@ func (s *stmt) contribOrderTerm(t *introspect.Table, f *ast.Field, value string,
 	if err != nil {
 		return orderTerm{}, err
 	}
-	ref := s.referenceValue(f, cv.Arg, spec.Column)
+	ref, field := s.nearValue(f, spec.Column)
 	if ref == nil {
-		return orderTerm{}, errUser("orderBy %s requires a %s: value for the same column", value, cv.Arg)
+		return orderTerm{}, errNoReference("orderBy "+value, field)
 	}
 	params, err := e.Params(ref)
 	if err != nil {
-		return orderTerm{}, errUser("%s: %s", cv.Arg, err.Error())
+		return orderTerm{}, errUser("near: %s", err.Error())
 	}
 	return orderTerm{col: spec.Column, expr: &e, exprArgs: s.params(params), desc: spec.Desc}, nil
 }

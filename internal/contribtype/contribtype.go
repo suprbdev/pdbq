@@ -11,33 +11,33 @@
 //
 // Type mapping (PostGraphile names where PostGraphile has one):
 //
-//	tsvector                -> FullText scalar (text form), FullTextFilterOps
-//	citext                  -> String, StringFilterOps (case-insensitive)
-//	hstore                  -> KeyValueHash scalar (JSON object), KeyValueHashFilterOps
-//	ltree                   -> String, LtreeFilterOps
-//	ltree[]                 -> [String!], LtreeListFilterOps
+//	tsvector                -> FullText scalar (text form), FullTextFilter
+//	citext                  -> String, StringFilter (case-insensitive)
+//	hstore                  -> KeyValueHash scalar (JSON object), KeyValueHashFilter
+//	ltree                   -> String, LtreeFilter
+//	ltree[]                 -> [String!], LtreeListFilter
 //	int4range ... daterange -> IntRange { start: IntRangeBound { value inclusive } end },
-//	                           input IntRangeInput, IntRangeFilterOps
-//	int4multirange ...      -> [IntRange!], input [IntRangeInput!], IntMultirangeFilterOps
+//	                           input IntRangeInput, IntRangeFilter
+//	int4multirange ...      -> [IntRange!], input [IntRangeInput!], IntMultirangeFilter
 //	CREATE TYPE ... AS RANGE -> as the built-in range over the same element
 //	                           (floatrange over float8 -> FloatRange); String
 //	                           when the subtype is not a pg_catalog type
 //	inet / cidr             -> InternetAddress / CidrAddress scalars,
-//	                           InternetAddressFilterOps / CidrAddressFilterOps
-//	vector / halfvec        -> [Float!] (input [Float!]), VectorFilterOps
-//	                           (VectorDistanceFilterOps with distance thresholds)
-//	sparsevec               -> String (pgvector's text form), VectorFilterOps
+//	                           InternetAddressFilter / CidrAddressFilter
+//	vector / halfvec        -> [Float!] (input [Float!]), VectorFilter
+//	                           (VectorDistanceFilter with distance thresholds)
+//	sparsevec               -> String (pgvector's text form), VectorFilter
 //	cube                    -> Cube scalar (JSON list of coordinates, or a pair
-//	                           of corner lists), CubeFilterOps
-//	                           (CubeDistanceFilterOps with distance thresholds)
+//	                           of corner lists), CubeFilter
+//	                           (CubeDistanceFilter with distance thresholds)
 //	earth (earthdistance)   -> LatLon { lat lon }, input LatLonInput,
-//	                           LatLonFilterOps (LatLonDistanceFilterOps with
+//	                           LatLonFilter (LatLonDistanceFilter with
 //	                           the radius filter)
 //	interval                -> Interval { seconds minutes hours days months years },
-//	                           input IntervalInput, IntervalFilterOps
-//	interval[]              -> [Interval!], input [IntervalInput!], IntervalListFilterOps
+//	                           input IntervalInput, IntervalFilter
+//	interval[]              -> [Interval!], input [IntervalInput!], IntervalListFilter
 //
-// Text columns keep String but take StringFilterOps variants adding pg_trgm,
+// Text columns keep String but take StringFilter variants adding pg_trgm,
 // unaccent and fuzzystrmatch operators ([StringOps]); int4[] columns with
 // intarray keep [Int!] and may take [IntListIntarrayOps]; point columns with
 // earthdistance keep their mapping and may take [PointDistanceOps].
@@ -130,22 +130,22 @@ const (
 var IntervalFields = []string{"seconds", "minutes", "hours", "days", "months", "years"}
 
 // StringTrgmOps is the operator input of text columns that also take the
-// pg_trgm operators: every StringFilterOps operator plus similarTo,
+// pg_trgm operators: every StringFilter operator plus similarTo,
 // wordSimilarTo and strictWordSimilarTo.
-const StringTrgmOps = "StringTrgmFilterOps"
+const StringTrgmOps = "StringTrgmFilter"
 
-// StringUnaccentOps and StringTrgmUnaccentOps are StringFilterOps and
+// StringUnaccentOps and StringTrgmUnaccentOps are StringFilter and
 // [StringTrgmOps] plus the unaccent operators (unaccentEqualTo,
 // unaccentLike, unaccentIncludes, unaccentStartsWith).
 const (
-	StringUnaccentOps     = "StringUnaccentFilterOps"
-	StringTrgmUnaccentOps = "StringTrgmUnaccentFilterOps"
+	StringUnaccentOps     = "StringUnaccentFilter"
+	StringTrgmUnaccentOps = "StringTrgmUnaccentFilter"
 )
 
 // StringOps names the operator input of a text column from the vocabularies
-// it takes on top of StringFilterOps: "String" + "Trgm" (pg_trgm) +
-// "Unaccent" + "Fuzzy" (fuzzystrmatch) + "FilterOps", e.g.
-// StringTrgmFuzzyFilterOps.
+// it takes on top of StringFilter: "String" + "Trgm" (pg_trgm) +
+// "Unaccent" + "Fuzzy" (fuzzystrmatch) + "Filter", e.g.
+// StringTrgmFuzzyFilter.
 func StringOps(trgm, unaccent, fuzzy bool) string {
 	name := "String"
 	if trgm {
@@ -157,16 +157,16 @@ func StringOps(trgm, unaccent, fuzzy bool) string {
 	if fuzzy {
 		name += "Fuzzy"
 	}
-	return name + "FilterOps"
+	return name + "Filter"
 }
 
 // TextDistanceInput is the operand of levenshteinDistanceLessThan: a
 // reference text and an exclusive edit-distance bound.
 const TextDistanceInput = "TextDistanceInput"
 
-// IntListIntarrayOps is IntListFilterOps plus intarray's matchesQueryInt,
+// IntListIntarrayOps is IntListFilter plus intarray's matchesQueryInt,
 // the operator input of int4[] columns the filter policy admits it on.
-const IntListIntarrayOps = "IntListIntarrayFilterOps"
+const IntListIntarrayOps = "IntListIntarrayFilter"
 
 // KeyValueHashValueFilter is the operand of a <field>Value table-filter
 // field: the key of an hstore column and the String comparisons its value
@@ -175,45 +175,37 @@ const KeyValueHashValueFilter = "KeyValueHashValueFilter"
 
 // VectorOps is the operator input of pgvector columns: isNull only, since
 // vectors have no meaningful scalar comparison.
-const VectorOps = "VectorFilterOps"
+const VectorOps = "VectorFilter"
 
 // Distance-threshold filter inputs (contrib plugin): VectorOps plus the
 // <distance>LessThan operators for vector and halfvec columns
 // (VectorDistanceOps, operand VectorDistanceInput) and sparsevec columns
-// (SparseVectorDistanceOps, SparseVectorDistanceInput), and StringFilterOps
+// (SparseVectorDistanceOps, SparseVectorDistanceInput), and StringFilter
 // plus hammingDistanceLessThan / jaccardDistanceLessThan for bit columns
 // (BitDistanceOps, BitDistanceInput). No index serves these operators.
 const (
-	VectorDistanceOps         = "VectorDistanceFilterOps"
+	VectorDistanceOps         = "VectorDistanceFilter"
 	VectorDistanceInput       = "VectorDistanceInput"
-	SparseVectorDistanceOps   = "SparseVectorDistanceFilterOps"
+	SparseVectorDistanceOps   = "SparseVectorDistanceFilter"
 	SparseVectorDistanceInput = "SparseVectorDistanceInput"
-	BitDistanceOps            = "BitDistanceFilterOps"
+	BitDistanceOps            = "BitDistanceFilter"
 	BitDistanceInput          = "BitDistanceInput"
 )
 
 // Distance-threshold filter inputs of the cube and earthdistance
-// vocabularies: CubeFilterOps plus the <distance>LessThan operators of cube
+// vocabularies: CubeFilter plus the <distance>LessThan operators of cube
 // columns (CubeDistanceOps, operand CubeDistanceInput {cube, distance}),
-// LatLonFilterOps plus earthDistanceLessThan on earth columns
+// LatLonFilter plus earthDistanceLessThan on earth columns
 // (LatLonDistanceOps, operand LatLonDistanceInput {lat, lon, distance}), and
-// the point column's StringFilterOps plus earthDistanceMilesLessThan
+// the point column's StringFilter plus earthDistanceMilesLessThan
 // (PointDistanceOps, operand LatLonDistanceInput). A GiST index serves the
 // cube and earth thresholds; no index serves the point one.
 const (
-	CubeDistanceOps     = "CubeDistanceFilterOps"
+	CubeDistanceOps     = "CubeDistanceFilter"
 	CubeDistanceInput   = "CubeDistanceInput"
-	LatLonDistanceOps   = "LatLonDistanceFilterOps"
+	LatLonDistanceOps   = "LatLonDistanceFilter"
 	LatLonDistanceInput = "LatLonDistanceInput"
-	PointDistanceOps    = "PointDistanceFilterOps"
-)
-
-// Reference arguments of the distance orderings and scores: nearVector:
-// holds a reference vector or cube per column, nearPoint: a reference
-// location per earth or point column.
-const (
-	NearVectorArg = "nearVector"
-	NearPointArg  = "nearPoint"
+	PointDistanceOps    = "PointDistanceFilter"
 )
 
 // Column is the GraphQL view of one column (or composite attribute, or
@@ -235,7 +227,7 @@ type Column struct {
 	// object name for Range and Multirange.
 	Input string
 	// OpsInput is the operator input type filtering the column; empty for
-	// Citext, which shares StringFilterOps.
+	// Citext, which shares StringFilter.
 	OpsInput string
 	// Elem is a range's element pg type ("int4", "timestamptz").
 	Elem string
@@ -260,30 +252,30 @@ func For(cat *introspect.Catalog, col *introspect.Column) Column {
 		out.Own = v
 		switch v.Name {
 		case contrib.VocabFullText:
-			out.Kind, out.Scalar, out.OpsInput = FullText, ScalarFullText, "FullTextFilterOps"
+			out.Kind, out.Scalar, out.OpsInput = FullText, ScalarFullText, "FullTextFilter"
 		case contrib.VocabCitext:
 			out.Kind, out.Scalar = Citext, "String"
 		case contrib.VocabHstore:
-			out.Kind, out.Scalar, out.OpsInput = Hstore, ScalarKeyValueHash, "KeyValueHashFilterOps"
+			out.Kind, out.Scalar, out.OpsInput = Hstore, ScalarKeyValueHash, "KeyValueHashFilter"
 		case contrib.VocabLtree:
-			out.Kind, out.Scalar, out.OpsInput = Ltree, "String", "LtreeFilterOps"
+			out.Kind, out.Scalar, out.OpsInput = Ltree, "String", "LtreeFilter"
 		case contrib.VocabLtreeArray:
-			out.Kind, out.Scalar, out.OpsInput = LtreeArray, "String", "LtreeListFilterOps"
+			out.Kind, out.Scalar, out.OpsInput = LtreeArray, "String", "LtreeListFilter"
 		case contrib.VocabInet:
 			out.Kind, out.Scalar = Inet, ScalarInternetAddress
 			if v.Type == "cidr" {
 				out.Scalar = ScalarCidrAddress
 			}
-			out.OpsInput = out.Scalar + "FilterOps"
+			out.OpsInput = out.Scalar + "Filter"
 		case contrib.VocabVector:
 			out.Kind, out.Scalar, out.OpsInput = Vector, "Float", VectorOps
 			if v.Type == "sparsevec" {
 				out.Scalar = "String"
 			}
 		case contrib.VocabCube:
-			out.Kind, out.Scalar, out.OpsInput = Cube, ScalarCube, "CubeFilterOps"
+			out.Kind, out.Scalar, out.OpsInput = Cube, ScalarCube, "CubeFilter"
 		case contrib.VocabEarth:
-			out.Kind, out.Scalar, out.OpsInput = Earth, LatLonType, "LatLonFilterOps"
+			out.Kind, out.Scalar, out.OpsInput = Earth, LatLonType, "LatLonFilter"
 		case contrib.VocabRange, contrib.VocabMultirange:
 			if r := catalogRange(cat, col, v); r != nil && r.SubtypeSchema != "pg_catalog" {
 				out.Own = contrib.Vocabulary{}
@@ -293,9 +285,9 @@ func For(cat *introspect.Catalog, col *introspect.Column) Column {
 			out.Elem = start.Type
 			out.ElemScalar = elemScalar(start.Type)
 			out.Scalar = out.ElemScalar + "Range"
-			out.Kind, out.OpsInput = Range, out.Scalar+"FilterOps"
+			out.Kind, out.OpsInput = Range, out.Scalar+"Filter"
 			if v.Name == contrib.VocabMultirange {
-				out.Kind, out.OpsInput = Multirange, out.ElemScalar+"MultirangeFilterOps"
+				out.Kind, out.OpsInput = Multirange, out.ElemScalar+"MultirangeFilter"
 			}
 		default:
 			out.Own = contrib.Vocabulary{}
@@ -327,9 +319,9 @@ func isInterval(col *introspect.Column) bool {
 }
 
 func intervalColumn(col *introspect.Column) Column {
-	opsInput := IntervalType + "FilterOps"
+	opsInput := IntervalType + "Filter"
 	if col.IsArray {
-		opsInput = IntervalType + "ListFilterOps"
+		opsInput = IntervalType + "ListFilter"
 	}
 	return Column{
 		Kind: Interval, Scalar: IntervalType, Input: IntervalInput,
@@ -481,8 +473,8 @@ func (c Column) Distances() (contrib.Vocabulary, bool) {
 	return c.vocab(contrib.VocabEarthPoint)
 }
 
-// DistanceInput returns the GraphQL type of the column's reference (the
-// nearVector: or nearPoint: field, the reference of distance-threshold
+// DistanceInput returns the GraphQL type of the column's reference (its
+// field of the near: argument, the reference of distance-threshold
 // operands): a list of floats for vector and halfvec, the text form for
 // sparsevec and bit, Cube for cube columns and LatLonInput for earth and
 // point columns.
@@ -492,23 +484,13 @@ func (c Column) DistanceInput() string {
 		return "[" + c.Scalar + "!]"
 	case c.Kind == Cube:
 		return ScalarCube
-	case c.ReferenceArg() == NearPointArg:
+	case c.Kind == Earth:
+		return LatLonInput
+	}
+	if _, ok := c.vocab(contrib.VocabEarthPoint); ok {
 		return LatLonInput
 	}
 	return "String"
-}
-
-// ReferenceArg names the list argument holding the column's distance
-// reference: [NearPointArg] for earth and point columns, [NearVectorArg]
-// for the other columns with [Column.Distances].
-func (c Column) ReferenceArg() string {
-	if c.Kind == Earth {
-		return NearPointArg
-	}
-	if _, ok := c.vocab(contrib.VocabEarthPoint); ok {
-		return NearPointArg
-	}
-	return NearVectorArg
 }
 
 // IsDistanceOp reports whether o is a distance threshold against a
@@ -546,7 +528,7 @@ func (c Column) vocab(name string) (contrib.Vocabulary, bool) {
 	return contrib.Vocabulary{}, false
 }
 
-// FilterOps returns the vocabulary operators the contrib plugin exposes on
+// Filter returns the vocabulary operators the contrib plugin exposes on
 // the column's own operator input (OpsInput): the owning vocabulary's
 // operators. Text vocabularies (pg_trgm, unaccent) are exposed through
 // [StringTrgmOps], [StringUnaccentOps] and [StringTrgmUnaccentOps] instead,

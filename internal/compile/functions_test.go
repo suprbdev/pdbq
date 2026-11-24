@@ -98,3 +98,27 @@ func TestMutationInputErrorsAreInvalidArgument(t *testing.T) {
 		})
 	}
 }
+
+func TestMissingReferenceIsInvalidArgument(t *testing.T) {
+	cases := map[string]struct {
+		query, want string
+	}{
+		"orderBy": {`{ allPlaces(orderBy: [LOCATION_DISTANCE_ASC]) { nodes { id } } }`, "orderBy LOCATION_DISTANCE_ASC requires near: {location: …}"},
+		"score":   {`{ allPlaces(first: 1) { nodes { id locationDistance } } }`, "field locationDistance requires near: {location: …}"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			_, err := compileOne(t, tc.query, 100)
+			var uerr *compile.UserError
+			if !errors.As(err, &uerr) {
+				t.Fatalf("err = %v, want a *compile.UserError", err)
+			}
+			if uerr.Code() != errcode.InvalidArgument {
+				t.Errorf("code = %s, want %s", uerr.Code(), errcode.InvalidArgument)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("err = %q, want it to mention %q", err, tc.want)
+			}
+		})
+	}
+}

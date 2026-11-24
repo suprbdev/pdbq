@@ -176,10 +176,10 @@ func aggregateExpr(a *schema.Aggregate, alias string) string {
 }
 
 // havingCond compiles a <Type>HavingInput value into a boolean expression
-// over the aggregates of the group at alias: AND/OR lists combine nested
-// having inputs (an empty one matches every group, so it makes an OR
-// true), every other field is an aggregate group of column operator
-// objects.
+// over the aggregates of the group at alias: and/or lists combine nested
+// having inputs (an empty one matches every group, so it makes an or
+// true), not negates one, and every other field is an aggregate group of
+// column operator objects.
 func (s *stmt) havingCond(typeName string, v any, alias string) (string, error) {
 	m, ok := v.(map[string]any)
 	if !ok {
@@ -192,7 +192,7 @@ func (s *stmt) havingCond(typeName string, v any, alias string) (string, error) 
 			continue
 		}
 		switch key {
-		case "AND", "OR":
+		case "and", "or":
 			items, ok := val.([]any)
 			if !ok {
 				return "", errUser("having %s must be a list", key)
@@ -208,12 +208,20 @@ func (s *stmt) havingCond(typeName string, v any, alias string) (string, error) 
 					subs = append(subs, sub)
 				}
 			}
-			if key == "OR" && len(subs) < len(items) {
+			if key == "or" && len(subs) < len(items) {
 				s.args = s.args[:mark]
 				continue
 			}
 			if len(subs) > 0 {
-				conds = append(conds, "("+strings.Join(subs, " "+key+" ")+")")
+				conds = append(conds, "("+strings.Join(subs, " "+strings.ToUpper(key)+" ")+")")
+			}
+		case "not":
+			sub, err := s.havingCond(typeName, val, alias)
+			if err != nil {
+				return "", err
+			}
+			if sub != "" {
+				conds = append(conds, "NOT ("+sub+")")
 			}
 		default:
 			sub, err := s.aggregateGroupConds(s.inputFieldType(typeName, key), val, alias)

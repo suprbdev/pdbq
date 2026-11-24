@@ -93,7 +93,7 @@ with `errors.detail: strict`).
 
 ## Filtering
 
-Every spatial column takes a `GeometryFilterOps` operand set. Operators marked
+Every spatial column takes a `GeoJSONFilter` operand set. Operators marked
 **index** can be answered by a GiST index; the rest are exact but scan more
 rows, so pair them with a bounding-box operator when the table is large.
 
@@ -295,33 +295,40 @@ other arguments cost nothing extra.
 ## Distance ordering
 
 Each spatial column adds `<COLUMN>_DISTANCE_ASC` / `_DESC` to the table's
-`orderBy` enum, plus a `near:` argument supplying the reference geometry.
+`orderBy` enum and a field to the table's `<Type>NearInput`, the type of the
+`near:` argument of every list taking that `orderBy`: one reference
+geometry per spatial column, named after the column (GeoJSON or WKT; the
+argument is shared with the [contrib references](contrib.md#references-the-near-argument)).
 Ordering compiles to the KNN operator `<->`, which a GiST index answers
 directly — this is the fast "nearest N" path:
 
 ```graphql
 {
   allPlaces(
-    near: {geometry: "SRID=4326;POINT(-0.1281 51.5080)"}
+    near: {location: "SRID=4326;POINT(-0.1281 51.5080)"}
     orderBy: [LOCATION_DISTANCE_ASC]
     first: 10
   ) { nodes { name } }
 }
 ```
 
-`near:` is required for these values. Without it the distance term is dropped
-(falling back to the primary-key order) rather than inventing a reference
-point and returning a result that looks sorted but is not.
+The column's geometry in `near:` is required for these values: without it the
+query is an error (`orderBy LOCATION_DISTANCE_ASC requires near: {location:
+…}`) rather than a result that looks sorted but is not.
 
 ### Selecting the distance
 
 Each readable spatial column also gets a `<field>Distance: Float` field: the
-distance of the row's geometry from the `near:` geometry of the list it was
-read through, so "places near me, with the distance" is one query:
+distance of the row's geometry from the column's `near:` geometry in the
+list it was read through, so "places near me, with the distance" is one query:
 
 ```graphql
 {
-  allPlaces(near: {geometry: "SRID=4326;POINT(-0.1281 51.5080)"}, orderBy: [LOCATION_DISTANCE_ASC], first: 10) {
+  allPlaces(
+    near: {location: "SRID=4326;POINT(-0.1281 51.5080)", area: "SRID=4326;POINT(-0.1281 51.5080)"}
+    orderBy: [LOCATION_DISTANCE_ASC]
+    first: 10
+  ) {
     nodes {
       name
       locationDistance                     # SRID units (degrees for 4326)
@@ -340,9 +347,11 @@ Geometry columns take `useSpheroid: true` to measure in metres instead
 SRID such as 4326). Like the `useSpheroid` flag of `dwithin`, the argument
 picks the SQL form, so it is part of the query shape.
 
-The field is `null` when the list has no `near:` argument and for rows not
-read through a list that takes one (single-row lookups, forward relations,
-mutation payloads); backward relation connections take `near:` themselves.
+Selecting the field through a list whose `near:` holds no geometry for the
+column is an error (`field locationDistance requires near: {location: …}`);
+rows not read through a list that takes `near:` (single-row lookups,
+forward relations, mutation payloads) read `null`. Backward relation
+connections take `near:` themselves.
 It is a projection of the returned rows, so it does not need a GiST index
 and is offered whether or not distance ordering is (`@omit order` and
 `filters.indexed_only` leave it alone); `@omit read` removes it, and
@@ -524,7 +533,7 @@ max: Float}`, `null` for a NULL raster or a missing band; it reads every
 pixel of the band. The point, the band and every other value are bind
 parameters, and a band below 1 is a client error.
 
-The filter is `RasterFilterOps { isNull, intersects: GeoJSON }`:
+The filter is `RasterFilter { isNull, intersects: GeoJSON }`:
 `intersects` is `ST_Intersects(rast, geometry)`, which tests the raster's
 convex hull. **The geometry must be in the raster's SRID**: it is not
 reprojected, so give it as EWKT (`SRID=3857;POLYGON(...)`) unless the raster
@@ -581,7 +590,7 @@ keeps working.
 plugins:
   settings:
     postgis:
-      filters: true      # GeometryFilterOps on spatial columns, RasterFilterOps
+      filters: true      # GeoJSONFilter on spatial columns, RasterFilter
       derived: true      # <field>Area, <field>Centroid, ..., raster accessors
       ordering: true     # <COLUMN>_DISTANCE_ASC/_DESC, <field>Distance + near:
       projection: true   # transform:/simplify: field arguments

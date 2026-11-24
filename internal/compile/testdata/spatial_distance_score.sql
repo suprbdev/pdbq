@@ -21,15 +21,7 @@ GROUP BY ()
 -- args: ["{\"coordinates\":[-0.12,51.5],\"type\":\"Point\"}",100]
 
 -- field: allPlaces
-SELECT json_build_object('nodes', coalesce(json_agg(__s_2.ndata ORDER BY __s_2.__rn ASC) FILTER (WHERE __s_2.__rn <= $1), '[]'::json)) AS data
-FROM (
-  SELECT json_build_object('locationDistance', NULL::float8) AS ndata, row_number() OVER (ORDER BY __t_1."id" ASC) AS __rn
-  FROM "public"."places" AS __t_1
-  ORDER BY __t_1."id" ASC
-  LIMIT 2
-) AS __s_2
-GROUP BY ()
--- args: [1]
+-- error: compile: field locationDistance requires near: {location: …}
 
 -- field: allPlaces
 SELECT json_build_object('edges', coalesce(json_agg(json_build_object('node', __s_2.edata) ORDER BY __s_2.__rn ASC) FILTER (WHERE __s_2.__rn <= $2), '[]'::json)) AS data

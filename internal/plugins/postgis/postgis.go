@@ -6,7 +6,7 @@
 // on top of that:
 //
 //   - spatial filters: every geometry/geography column gets a
-//     GeometryFilterOps operand set covering bounding-box operators
+//     GeoJSONFilter operand set covering bounding-box operators
 //     (bboxIntersects/&&, bboxContains/~, bboxContainedBy/@, the directional
 //     bboxLeftOf/<< ... bboxOverlapsOrAbove/|&>, bboxEquals/~=,
 //     bboxIntersectsND/&&&), the DE-9IM predicates (intersects, contains,
@@ -46,7 +46,7 @@
 //     <field>PixelHeight, <field>Envelope as GeoJSON), the pixel value
 //     <field>Value(point:, band:) (ST_Value), per-band
 //     <field>SummaryStats(band:) (ST_SummaryStats) with the derived
-//     setting, and a RasterFilterOps { isNull intersects } filter field with
+//     setting, and a RasterFilter { isNull intersects } filter field with
 //     the filters setting.
 //
 //   - typed geometry (opt-in, typed_geometry: true): spatial column fields
@@ -109,7 +109,7 @@ const Name = "postgis"
 
 // Settings is the plugins.settings.postgis section.
 type Settings struct {
-	Filters       bool `koanf:"filters" doc:"GeometryFilterOps on spatial columns and RasterFilterOps on raster columns."`
+	Filters       bool `koanf:"filters" doc:"GeoJSONFilter on spatial columns and RasterFilter on raster columns."`
 	Derived       bool `koanf:"derived" doc:"Derived accessors (<field>Area, <field>Centroid, ...) and the raster accessors, pixel value and statistics."`
 	Ordering      bool `koanf:"ordering" doc:"Distance ordering (<COLUMN>_DISTANCE_ASC/_DESC), the <field>Distance fields and the near: argument."`
 	Projection    bool `koanf:"projection" doc:"The transform:, simplify:, precision: and buffer: projection arguments of spatial column fields."`
@@ -149,7 +149,6 @@ func (p *Plugin) TransformSchema(_ context.Context, b *schema.Builder) error {
 	if spatial {
 		p.addSharedInputs(b)
 	}
-	orderBy := b.FieldsByOrderBy()
 	rb := &rasterBuild{p: p, b: b}
 	for _, t := range b.Catalog.Tables {
 		if rc := rasterColumns(t); len(rc) > 0 {
@@ -169,7 +168,7 @@ func (p *Plugin) TransformSchema(_ context.Context, b *schema.Builder) error {
 			p.addProjectionArgs(b, t, cols)
 		}
 		if p.ordering {
-			p.addDistanceOrdering(b, t, cols, orderBy)
+			p.addDistanceOrdering(b, t, cols)
 		}
 	}
 	if p.typedGeometry {
@@ -224,7 +223,6 @@ func rasterColumns(t *introspect.Table) []*introspect.Column {
 const (
 	bboxInput    = "BBoxInput"
 	dwithinInput = "DWithinInput"
-	nearInput    = "NearInput"
 )
 
 // addSharedInputs declares the operand types every spatial column reuses.
@@ -257,21 +255,12 @@ func (p *Plugin) addSharedInputs(b *schema.Builder) {
 			},
 		}
 	}
-	if _, ok := b.Inputs[nearInput]; !ok {
-		b.Inputs[nearInput] = &schema.Input{
-			Name:        nearInput,
-			Description: "Reference geometry for distance ordering (<COLUMN>_DISTANCE_ASC/_DESC) and the <field>Distance fields.",
-			Fields: []*schema.InputField{
-				{Name: "geometry", Type: postgis.TypeName + "!", Description: "Reference geometry, as GeoJSON or WKT."},
-			},
-		}
-	}
 }
 
 // opsInputName is the shared operator input for spatial columns. Geometry and
 // geography share one type: the operator set is identical and the unit
 // difference is a property of the column, not of the input.
-const opsInputName = "GeometryFilterOps"
+const opsInputName = "GeoJSONFilter"
 
 // addSpatialFilters gives each spatial column a filter field bound to the
 // shared spatial operator input.
@@ -312,8 +301,9 @@ func filterableSet(b *schema.Builder, t *introspect.Table) map[string]bool {
 	return out
 }
 
-// ensureOpsInput declares GeometryFilterOps once per schema.
+// ensureOpsInput declares GeoJSONFilter once per schema.
 func (p *Plugin) ensureOpsInput(b *schema.Builder) {
+	b.ClaimOperatorInput(opsInputName)
 	if _, ok := b.Inputs[opsInputName]; ok {
 		return
 	}
@@ -513,29 +503,46 @@ func (p *Plugin) addProjectionArgs(b *schema.Builder, t *introspect.Table, cols 
 }
 
 // addDistanceOrdering adds <COLUMN>_DISTANCE_ASC/_DESC values to the table's
-// orderBy enum, a <field>Distance score field per readable spatial column,
-// and a `near:` argument to the fields that accept orderBy.
+// orderBy enum and a <field>Distance score field per readable spatial
+// column, and the column's reference geometry to the table's
+// <Type>NearInput (see [schema.Builder.NearInput]).
 //
 // The enum values and score fields carry the column binding; the reference
 // geometry comes from `near:` at query time, which is why they are generated
 // together. Scores are projections of the returned rows, so unlike the
 // ordering they ignore the indexed-only policy and @omit order.
-func (p *Plugin) addDistanceOrdering(b *schema.Builder, t *introspect.Table, cols []*introspect.Column, orderBy map[string][]*schema.Field) {
+func (p *Plugin) addDistanceOrdering(b *schema.Builder, t *introspect.Table, cols []*introspect.Column) {
 	enumName := b.Inflect(inflect.KindOrderByTypeName, inflect.Input{Schema: t.Schema, Table: t.Name})
 	en, ok := b.Enums[enumName]
-	if !ok {
+	obj := b.Objects[b.TypeForTable[t.Schema+"."+t.Name]]
+	if !ok || obj == nil {
 		return
 	}
 	allowed := filterableSet(b, t)
-	added := false
 	for _, c := range cols {
 		if omit.Column(c, omit.Read) {
 			continue
 		}
-		if addDistanceField(b, t, c) {
-			added = true
+		field := b.Inflect(inflect.KindFieldName, inflect.Input{Schema: t.Schema, Table: t.Name, Column: c.Name})
+		scored := obj.Field(field+"Distance") == nil
+		ordered := !omit.Column(c, omit.Order) && allowed[c.Name]
+		if !scored && !ordered {
+			continue
 		}
-		if omit.Column(c, omit.Order) || !allowed[c.Name] {
+		near := b.NearInput(t)
+		if near == nil {
+			return
+		}
+		near.AddField(&schema.InputField{
+			Name:        field,
+			Type:        postgis.TypeName,
+			Description: "Reference geometry for the " + c.Name + " distance orderBy values and distance field, as GeoJSON or WKT.",
+			Column:      c.Name,
+		})
+		if scored {
+			addDistanceField(obj, t, c, field)
+		}
+		if !ordered {
 			continue
 		}
 		base := coreinflect.EnumValue(c.Name)
@@ -550,34 +557,21 @@ func (p *Plugin) addDistanceOrdering(b *schema.Builder, t *introspect.Table, col
 			en.Values = append(en.Values, schema.EnumValue{
 				Name: value,
 				Desc: dir.desc,
-				Description: "Order by distance from the geometry given in the near: argument " +
-					"(nearest first for _ASC). Requires near:.",
+				Description: "Order by distance from the " + field + " geometry of the near: argument " +
+					"(nearest first for _ASC). Requires it.",
 				Column:   c.Name,
 				Distance: true,
 			})
-			added = true
 		}
-	}
-	if added {
-		addNearArg(orderBy[enumName])
 	}
 }
 
-// addDistanceField adds <field>Distance: Float, the distance of column c
-// from the list's near: geometry, reporting whether it was added (a real
-// column or another field may own the name). Geometry columns take
-// useSpheroid: to measure in metres.
-func addDistanceField(b *schema.Builder, t *introspect.Table, c *introspect.Column) bool {
-	obj := b.Objects[b.TypeForTable[t.Schema+"."+t.Name]]
-	if obj == nil {
-		return false
-	}
-	name := b.Inflect(inflect.KindFieldName, inflect.Input{Schema: t.Schema, Table: t.Name, Column: c.Name}) + "Distance"
-	if obj.Field(name) != nil {
-		return false
-	}
-	desc := "Distance of " + c.Name + " from the geometry in the near: argument of the list this row was read " +
-		"through; null without one. "
+// addDistanceField adds <field>Distance: Float to obj, the distance of
+// column c from its geometry in the list's near: argument. Geometry columns
+// take useSpheroid: to measure in metres.
+func addDistanceField(obj *schema.Object, t *introspect.Table, c *introspect.Column, field string) {
+	desc := "Distance of " + c.Name + " from the " + field + " geometry in the near: argument of the list this row was read " +
+		"through (required there); null for rows read elsewhere. "
 	var args []schema.Arg
 	if postgis.FlavourOf(c.PGType) == postgis.Geography {
 		desc += "In metres."
@@ -590,42 +584,22 @@ func addDistanceField(b *schema.Builder, t *introspect.Table, c *introspect.Colu
 		}}
 	}
 	obj.AddField(&schema.Field{
-		Name:        name,
+		Name:        field + "Distance",
 		Type:        "Float",
 		Args:        args,
 		Description: desc,
-		Meta:        &schema.FieldMeta{Kind: schema.KindScore, Table: t, Column: c, Score: &schema.Score{Arg: "near"}},
+		Meta:        &schema.FieldMeta{Kind: schema.KindScore, Table: t, Column: c, Score: &schema.Score{}},
 	})
-	return true
-}
-
-// addNearArg adds `near: NearInput` to every field that already takes the
-// table's orderBy enum, so distance ordering has a reference geometry.
-func addNearArg(fields []*schema.Field) {
-	for _, f := range fields {
-		if !hasArg(f, "near") {
-			f.Args = append(f.Args, schema.Arg{Name: "near", Type: nearInput})
-		}
-	}
-}
-
-func hasArg(f *schema.Field, name string) bool {
-	for _, a := range f.Args {
-		if a.Name == name {
-			return true
-		}
-	}
-	return false
 }
 
 // Raster type names.
 const (
-	rasterOpsInput = "RasterFilterOps"
+	rasterOpsInput = "RasterFilter"
 	rasterStats    = "RasterSummaryStats"
 )
 
 // rasterBuild is the per-TransformSchema state of the raster surface: the
-// shared RasterFilterOps and RasterSummaryStats types are declared on first
+// shared RasterFilter and RasterSummaryStats types are declared on first
 // use, or found taken.
 type rasterBuild struct {
 	p *Plugin
@@ -653,7 +627,7 @@ func (rb *rasterBuild) add(t *introspect.Table, cols []*introspect.Column) {
 // addFilters gives each raster column the indexed-only policy admits (an
 // allowlisted column under filters.indexed_only: the GiST index serving
 // intersects is an expression index on ST_ConvexHull, which leads no
-// column) a filter field typed RasterFilterOps, reporting whether any was
+// column) a filter field typed RasterFilter, reporting whether any was
 // added.
 func (rb *rasterBuild) addFilters(t *introspect.Table, cols []*introspect.Column) bool {
 	b := rb.b
@@ -678,11 +652,12 @@ func (rb *rasterBuild) addFilters(t *introspect.Table, cols []*introspect.Column
 	return added
 }
 
-// ensureOps declares RasterFilterOps once per schema, reporting false when
+// ensureOps declares RasterFilter once per schema, reporting false when
 // another type took the name.
 func (rb *rasterBuild) ensureOps() bool {
 	if rb.ops == "" {
 		rb.ops = "taken"
+		rb.b.ClaimOperatorInput(rasterOpsInput)
 		if typeTaken(rb.b, rasterOpsInput) {
 			rb.b.Options.Logger.Warn("postgis: type name already taken, raster filters disabled", "type", rasterOpsInput)
 			return false

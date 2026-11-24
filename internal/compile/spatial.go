@@ -188,24 +188,13 @@ func toFloat(v any) (float64, error) {
 	return 0, fmt.Errorf("not a number")
 }
 
-// nearExpr resolves the `near:` argument into a parameterized geometry
-// expression for distance ordering over col.
-//
-// Returns "" when the argument is absent: the distance orderBy value is then
-// silently dropped, because sorting by distance from nothing is not a
-// meaningful order and a fabricated one would be worse than none.
+// nearExpr resolves column col's reference geometry in the list field f's
+// near: argument into a parameterized geometry expression, or "" when the
+// argument holds none for col.
 func (s *stmt) nearExpr(t *introspect.Table, col string, f *ast.Field) (string, error) {
-	v, ok := s.argValue(f, "near")
-	if !ok {
+	geom, _ := s.nearValue(f, col)
+	if geom == nil {
 		return "", nil
-	}
-	m, ok := v.(map[string]any)
-	if !ok {
-		return "", errUser("near must be an object with a geometry")
-	}
-	geom, ok := m["geometry"]
-	if !ok || geom == nil {
-		return "", errUser("near requires a geometry")
 	}
 	c := t.Column(col)
 	if c == nil {
@@ -359,7 +348,7 @@ func (s *stmt) rasterSummaryStatsSQL(alias string, c *introspect.Column, f *ast.
 		buildJSONObject(pairs), postgis.RasterSummaryStatsJSONSQL(alias+"."+quoteIdent(c.Name), band), v, j), nil
 }
 
-// rasterOp compiles one operator of RasterFilterOps: isNull, or intersects
+// rasterOp compiles one operator of RasterFilter: isNull, or intersects
 // with a geometry in the raster's SRID (ST_Intersects).
 func (s *stmt) rasterOp(ref, op string, val any) (string, error) {
 	switch op {

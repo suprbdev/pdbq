@@ -11,8 +11,8 @@ GROUP BY ()
 -- args: ["(1, 2)","(1, 2)","(0, 0),(1, 1)","(1, 2)","(1, 2)","(1, 2)","(0, 0),(1, 1)","(0, 0),(1, 1)",2,"(0, 0),(10, 10)","(1, 2)","(1, 2)",5,"(1, 1), (2, 2)",5]
 
 -- field: allLocations
--- error: compile: orderBy POS_L1_DISTANCE_ASC requires a nearVector: reference for the same column
+-- error: compile: orderBy POS_L1_DISTANCE_ASC requires near: {pos: …}
 
 -- field: allLocations
--- error: compile: nearVector: cube value must be a list of numbers, a pair of such lists or a cube literal string
+-- error: compile: near: cube value must be a list of numbers, a pair of such lists or a cube literal string
 

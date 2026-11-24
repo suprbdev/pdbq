@@ -89,7 +89,7 @@ func TestTemporalSchema(t *testing.T) {
 		"bookingNotesByRoomIdAndValidAt(",
 		"userByAuthorId: User\n",
 		"roomBookingsByRoomIdAndValidAt: RoomBookingToManyFilter",
-		"roomBookingsByRoomIdAndValidAtExist: Boolean",
+		"roomBookingsByRoomIdAndValidAtExists: Boolean",
 		"bookingNotesByRoomIdAndValidAt: BookingNoteToManyFilter",
 		"ROOM_BOOKINGS_BY_ROOM_ID_AND_VALID_AT__ROOM_ID_ASC",
 		"updateRoomBookingByRoomIdAndValidAt(", "deleteRoomBookingByRoomIdAndValidAt(",

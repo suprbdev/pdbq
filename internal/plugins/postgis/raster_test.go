@@ -105,7 +105,7 @@ func fieldType(b *schema.Builder, input, field string) string {
 func TestRasterFilterAndNoGenericSurface(t *testing.T) {
 	b := buildTiles(t, nil, false, nil, nil)
 	for _, c := range []string{"rast", "mask"} {
-		if got := fieldType(b, "TileFilter", c); got != "RasterFilterOps" {
+		if got := fieldType(b, "TileFilter", c); got != "RasterFilter" {
 			t.Errorf("TileFilter.%s = %q", c, got)
 		}
 		if fieldType(b, "TileCondition", c) != "" {
@@ -120,13 +120,13 @@ func TestRasterFilterAndNoGenericSurface(t *testing.T) {
 			t.Errorf("%s in distinctOn", c)
 		}
 	}
-	ops := b.Inputs["RasterFilterOps"]
+	ops := b.Inputs["RasterFilter"]
 	if len(ops.Fields) != 2 || ops.Field("isNull") == nil || ops.Field("intersects").Type != "GeoJSON" {
-		t.Errorf("RasterFilterOps fields: %+v", ops.Fields)
+		t.Errorf("RasterFilter fields: %+v", ops.Fields)
 	}
 
 	policy := buildTiles(t, nil, true, map[string][]string{"public.tiles": {"rast"}}, nil)
-	if got := fieldType(policy, "TileFilter", "rast"); got != "RasterFilterOps" {
+	if got := fieldType(policy, "TileFilter", "rast"); got != "RasterFilter" {
 		t.Errorf("allowlisted rast = %q", got)
 	}
 	if got := fieldType(policy, "TileFilter", "mask"); got != "" {
@@ -143,7 +143,7 @@ func TestRasterSettingsAndOmit(t *testing.T) {
 		t.Error("derived: false removed the raster filter")
 	}
 	noFilters := buildTiles(t, func(s *Settings) { s.Filters = false }, false, nil, nil)
-	if fieldType(noFilters, "TileFilter", "rast") != "" || noFilters.Inputs["RasterFilterOps"] != nil {
+	if fieldType(noFilters, "TileFilter", "rast") != "" || noFilters.Inputs["RasterFilter"] != nil {
 		t.Error("filters: false kept the raster filter")
 	}
 
@@ -174,7 +174,7 @@ func TestRasterOnlyCatalog(t *testing.T) {
 	if !strings.Contains(sdl, "scalar GeoJSON") {
 		t.Error("raster surface without the GeoJSON scalar")
 	}
-	for _, typ := range []string{"BBoxInput", "GeometryFilterOps", "NearInput"} {
+	for _, typ := range []string{"BBoxInput", "GeoJSONFilter", "NearInput"} {
 		if strings.Contains(sdl, typ) {
 			t.Errorf("raster-only catalog declares %s", typ)
 		}
@@ -194,7 +194,7 @@ func TestRasterNamesTaken(t *testing.T) {
 	var logs bytes.Buffer
 	b := schema.New(cat, inflect.Next(inflect.Default), schema.Options{Logger: slog.New(slog.NewTextHandler(&logs, nil)), Functions: true})
 	b.Objects["RasterSummaryStats"] = &schema.Object{Name: "RasterSummaryStats"}
-	b.Inputs["RasterFilterOps"] = &schema.Input{Name: "RasterFilterOps"}
+	b.Inputs["RasterFilter"] = &schema.Input{Name: "RasterFilter"}
 	if err := New(DefaultSettings()).TransformSchema(context.Background(), b); err != nil {
 		t.Fatal(err)
 	}
@@ -202,9 +202,9 @@ func TestRasterNamesTaken(t *testing.T) {
 		t.Error("summary statistics added although RasterSummaryStats is taken")
 	}
 	if fieldType(b, "TileFilter", "rast") != "" {
-		t.Error("raster filter added although RasterFilterOps is taken")
+		t.Error("raster filter added although RasterFilter is taken")
 	}
-	for _, n := range []string{"RasterSummaryStats", "RasterFilterOps"} {
+	for _, n := range []string{"RasterSummaryStats", "RasterFilter"} {
 		if !strings.Contains(logs.String(), n) {
 			t.Errorf("no warning for %s: %s", n, logs.String())
 		}

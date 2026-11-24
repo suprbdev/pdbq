@@ -232,7 +232,7 @@ func (s *stmt) citextOp(ci contribtype.Column, ref, op string, val any) (string,
 	return "", false, nil
 }
 
-// fullTextOperand attaches the sibling config: of a FullTextFilterOps
+// fullTextOperand attaches the sibling config: of a FullTextFilter
 // object to a matches* operand.
 func fullTextOperand(ci contribtype.Column, op string, val, config any) any {
 	if config == nil {
@@ -438,50 +438,49 @@ func (s *stmt) rangeBound(ci contribtype.Column, ref string, f *ast.Field) strin
 }
 
 // exprTerm resolves an orderBy value sorting by a contrib expression of a
-// column against a per-column reference: pg_trgm similarity or Levenshtein
-// distance (spec.Similarity, referenced by similarTo:) or a pgvector, cube
-// or earthdistance distance (spec.Vector, referenced by the spec.Reference
-// argument, nearVector: or nearPoint:). The reference's parameters are
+// column against its reference in the list field's near: argument: pg_trgm
+// similarity or Levenshtein distance (spec.Similarity) or a pgvector, cube
+// or earthdistance distance (spec.Vector). The reference's parameters are
 // allocated here.
 func (s *stmt) exprTerm(t *introspect.Table, f *ast.Field, value string, spec schema.OrderSpec) (orderTerm, error) {
 	col := t.Column(spec.Column)
 	if col == nil {
 		return orderTerm{}, fmt.Errorf("compile: order column %q not found", spec.Column)
 	}
-	name, arg := spec.Similarity, "similarTo"
+	name := spec.Similarity
 	if spec.Vector != "" {
-		name, arg = spec.Vector, spec.Reference
+		name = spec.Vector
 	}
-	expr, err := s.referenceExpr(col, arg, name)
+	expr, err := s.referenceExpr(col, name)
 	if err != nil {
 		return orderTerm{}, err
 	}
-	ref := s.referenceValue(f, arg, spec.Column)
+	ref, field := s.nearValue(f, spec.Column)
 	if ref == nil {
-		return orderTerm{}, errUser("orderBy %s requires a %s: reference for the same column", value, arg)
+		return orderTerm{}, errNoReference("orderBy "+value, field)
 	}
 	params, err := expr.Params(ref)
 	if err != nil {
-		return orderTerm{}, errUser("%s: %s", arg, err.Error())
+		return orderTerm{}, errUser("near: %s", err.Error())
 	}
 	return orderTerm{col: spec.Column, expr: &expr, exprArgs: s.params(params), desc: spec.Desc}, nil
 }
 
-// referenceExpr resolves the contrib expression name measured against the
-// list argument arg: a pg_trgm expression or the fuzzystrmatch Levenshtein
-// distance for similarTo:, a distance of the column's
-// [contribtype.Column.Distances] vocabulary for nearVector: (pgvector,
-// cube) and nearPoint: (earthdistance).
-func (s *stmt) referenceExpr(col *introspect.Column, arg, name string) (pgcontrib.Expr, error) {
+// referenceExpr resolves the contrib expression name measured against a
+// column's near: reference: a distance of the column's
+// [contribtype.Column.Distances] vocabulary (pgvector, cube,
+// earthdistance), or else a pg_trgm expression or the fuzzystrmatch
+// Levenshtein distance.
+func (s *stmt) referenceExpr(col *introspect.Column, name string) (pgcontrib.Expr, error) {
 	ci := s.contrib(col)
-	vocab, ok := ci.Trgm()
-	if fz, fok := ci.Fuzzy(); fok {
-		if _, has := fz.Expr(name); has {
-			vocab, ok = fz, true
+	vocab, ok := ci.Distances()
+	if !ok {
+		vocab, ok = ci.Trgm()
+		if fz, fok := ci.Fuzzy(); fok {
+			if _, has := fz.Expr(name); has {
+				vocab, ok = fz, true
+			}
 		}
-	}
-	if arg != "similarTo" {
-		vocab, ok = ci.Distances()
 	}
 	if !ok {
 		return pgcontrib.Expr{}, fmt.Errorf("compile: column %q has no vocabulary for %s", col.Name, name)
@@ -493,21 +492,20 @@ func (s *stmt) referenceExpr(col *introspect.Column, arg, name string) (pgcontri
 	return expr, nil
 }
 
-// referenceValue returns the reference the list field f's argument arg
-// (similarTo:, nearVector:, nearPoint:) holds for column col; nil when
-// absent.
-func (s *stmt) referenceValue(f *ast.Field, arg, col string) any {
-	v, ok := s.argValue(f, arg)
-	if !ok {
-		return nil
+// nearValue returns the reference the list field f's near: argument holds
+// for column col (nil when absent) and the name of col's field in it (the
+// column name when f takes no near: argument binding col).
+func (s *stmt) nearValue(f *ast.Field, col string) (any, string) {
+	m := map[string]any{}
+	if v, ok := s.argValue(f, schema.NearArg); ok {
+		m, _ = v.(map[string]any)
 	}
-	m, _ := v.(map[string]any)
-	for field, colName := range s.c.Built.InputColumns[argTypeName(f, arg)] {
+	for field, colName := range s.c.Built.InputColumns[argTypeName(f, schema.NearArg)] {
 		if colName == col {
-			return m[field]
+			return m[field], field
 		}
 	}
-	return nil
+	return nil, col
 }
 
 // contribLiteral renders an input value of a contrib-owned type as the text

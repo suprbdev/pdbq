@@ -118,13 +118,13 @@ func TestValueFiltersAndOrdering(t *testing.T) {
 			t.Errorf("indexed_only without allowlist: %s exposed", v)
 		}
 	}
-	if b.Inputs["DocumentHstoreKeyInput"] != nil {
-		t.Error("hstoreKey input declared without value ordering")
+	if in := b.Inputs["DocumentNearInput"]; in != nil && in.Field("attrs") != nil {
+		t.Error("hstore key reference declared without value ordering")
 	}
 
 	allowed := buildValues(t, contribfixture.Catalog(), nil, true, valuesAllow)
 	for field, want := range map[string]string{
-		"pathNlevel": "IntFilterOps", "tagIdsIcount": "IntFilterOps", "attrsValue": "KeyValueHashValueFilter",
+		"pathNlevel": "IntFilter", "tagIdsIcount": "IntFilter", "attrsValue": "KeyValueHashValueFilter",
 	} {
 		if got := fieldType(t, allowed, "DocumentFilter", field); got != want {
 			t.Errorf("DocumentFilter.%s = %q, want %s", field, got, want)
@@ -140,11 +140,11 @@ func TestValueFiltersAndOrdering(t *testing.T) {
 			t.Errorf("%s missing", v)
 		}
 	}
-	if fieldType(t, allowed, "DocumentHstoreKeyInput", "attrs") != "String" {
-		t.Error("DocumentHstoreKeyInput.attrs missing")
+	if fieldType(t, allowed, "DocumentNearInput", "attrs") != "String" {
+		t.Error("DocumentNearInput.attrs missing")
 	}
-	if !strings.Contains(allowed.SDL(), "hstoreKey: DocumentHstoreKeyInput") {
-		t.Error("list fields lack hstoreKey:")
+	if !strings.Contains(allowed.SDL(), "near: DocumentNearInput") {
+		t.Error("list fields lack near:")
 	}
 
 	cat := contribfixture.Catalog()
@@ -163,7 +163,7 @@ func TestValueFiltersAndOrdering(t *testing.T) {
 		t.Error("filters: false must drop value filters only")
 	}
 	noOrdering := buildValues(t, contribfixture.Catalog(), func(s *Settings) { s.Ordering = false }, true, valuesAllow)
-	if hasEnumValue(noOrdering, "DocumentsOrderBy", "PATH_NLEVEL_ASC") || noOrdering.Inputs["DocumentHstoreKeyInput"] != nil ||
+	if hasEnumValue(noOrdering, "DocumentsOrderBy", "PATH_NLEVEL_ASC") || noOrdering.Inputs["DocumentNearInput"] != nil ||
 		fieldType(t, noOrdering, "DocumentFilter", "pathNlevel") == "" {
 		t.Error("ordering: false must drop value orderings only")
 	}
@@ -178,22 +178,22 @@ func TestValueFiltersAndOrdering(t *testing.T) {
 }
 
 func TestDefinedKeyOperator(t *testing.T) {
-	if got := fieldType(t, buildValues(t, contribfixture.Catalog(), nil, true, valuesAllow), "KeyValueHashFilterOps", "containsDefinedKey"); got != "" {
+	if got := fieldType(t, buildValues(t, contribfixture.Catalog(), nil, true, valuesAllow), "KeyValueHashFilter", "containsDefinedKey"); got != "" {
 		t.Error("containsDefinedKey exposed under indexed_only")
 	}
-	if got := fieldType(t, buildValues(t, contribfixture.Catalog(), nil, false, nil), "KeyValueHashFilterOps", "containsDefinedKey"); got != "String" {
+	if got := fieldType(t, buildValues(t, contribfixture.Catalog(), nil, false, nil), "KeyValueHashFilter", "containsDefinedKey"); got != "String" {
 		t.Errorf("containsDefinedKey = %q without indexed_only", got)
 	}
 }
 
 func TestIntarraySurface(t *testing.T) {
 	b := buildValues(t, contribfixture.Catalog(), nil, true, nil)
-	if got := fieldType(t, b, "DocumentFilter", "tagIds"); got != "IntListIntarrayFilterOps" {
-		t.Errorf("GIN-indexed tag_ids = %s, want IntListIntarrayFilterOps", got)
+	if got := fieldType(t, b, "DocumentFilter", "tagIds"); got != "IntListIntarrayFilter" {
+		t.Errorf("GIN-indexed tag_ids = %s, want IntListIntarrayFilter", got)
 	}
 	for _, op := range []string{"contains", "overlaps", "matchesQueryInt"} {
-		if fieldType(t, b, "IntListIntarrayFilterOps", op) == "" {
-			t.Errorf("IntListIntarrayFilterOps.%s missing", op)
+		if fieldType(t, b, "IntListIntarrayFilter", op) == "" {
+			t.Errorf("IntListIntarrayFilter.%s missing", op)
 		}
 	}
 	cat := contribfixture.Catalog()
@@ -204,10 +204,10 @@ func TestIntarraySurface(t *testing.T) {
 		}
 	}
 	btree := buildValues(t, cat, nil, true, nil)
-	if got := fieldType(t, btree, "DocumentFilter", "tagIds"); got != "IntListFilterOps" {
-		t.Errorf("btree-indexed tag_ids = %s, want IntListFilterOps", got)
+	if got := fieldType(t, btree, "DocumentFilter", "tagIds"); got != "IntListFilter" {
+		t.Errorf("btree-indexed tag_ids = %s, want IntListFilter", got)
 	}
-	if got := fieldType(t, buildValues(t, cat, nil, true, valuesAllow), "DocumentFilter", "tagIds"); got != "IntListIntarrayFilterOps" {
+	if got := fieldType(t, buildValues(t, cat, nil, true, valuesAllow), "DocumentFilter", "tagIds"); got != "IntListIntarrayFilter" {
 		t.Errorf("allowlisted tag_ids = %s", got)
 	}
 	if strings.Contains(buildValues(t, contribfixture.Catalog(), func(s *Settings) { s.Filters = false }, true, nil).SDL(), "matchesQueryInt") {
@@ -218,18 +218,18 @@ func TestIntarraySurface(t *testing.T) {
 func TestFuzzySurface(t *testing.T) {
 	ops := []string{"levenshteinDistanceLessThan", "soundexEqualTo", "metaphoneEqualTo", "doubleMetaphoneEqualTo"}
 	b := buildValues(t, contribfixture.Catalog(), nil, true, valuesAllow)
-	if got := fieldType(t, b, "DocumentFilter", "notes"); got != "StringTrgmUnaccentFuzzyFilterOps" {
+	if got := fieldType(t, b, "DocumentFilter", "notes"); got != "StringTrgmUnaccentFuzzyFilter" {
 		t.Errorf("allowlisted notes = %s", got)
 	}
-	if got := fieldType(t, b, "DocumentFilter", "title"); got != "StringTrgmFilterOps" {
-		t.Errorf("title = %s, want StringTrgmFilterOps", got)
+	if got := fieldType(t, b, "DocumentFilter", "title"); got != "StringTrgmFilter" {
+		t.Errorf("title = %s, want StringTrgmFilter", got)
 	}
 	for _, op := range ops {
-		if fieldType(t, b, "StringTrgmUnaccentFuzzyFilterOps", op) == "" {
-			t.Errorf("StringTrgmUnaccentFuzzyFilterOps.%s missing", op)
+		if fieldType(t, b, "StringTrgmUnaccentFuzzyFilter", op) == "" {
+			t.Errorf("StringTrgmUnaccentFuzzyFilter.%s missing", op)
 		}
 	}
-	if got := fieldType(t, b, "StringTrgmUnaccentFuzzyFilterOps", "levenshteinDistanceLessThan"); got != "TextDistanceInput" {
+	if got := fieldType(t, b, "StringTrgmUnaccentFuzzyFilter", "levenshteinDistanceLessThan"); got != "TextDistanceInput" {
 		t.Errorf("levenshteinDistanceLessThan operand = %s", got)
 	}
 	if !hasEnumValue(b, "DocumentsOrderBy", "NOTES_LEVENSHTEIN_DISTANCE_ASC") || hasEnumValue(b, "DocumentsOrderBy", "TITLE_LEVENSHTEIN_DISTANCE_ASC") {
@@ -238,15 +238,15 @@ func TestFuzzySurface(t *testing.T) {
 	if f := objectField(b, "Document", "notesLevenshteinDistance"); f == nil || f.Type != "Int" {
 		t.Errorf("notesLevenshteinDistance = %+v", f)
 	}
-	if fieldType(t, b, "DocumentSimilarToInput", "notes") != "String" {
+	if fieldType(t, b, "DocumentNearInput", "notes") != "String" {
 		t.Error("similarTo: lacks notes")
 	}
 
 	noTrgm := buildValues(t, withoutExtension(withoutExtension(contribfixture.Catalog(), "pg_trgm"), "unaccent"), nil, false, nil)
-	if got := fieldType(t, noTrgm, "DocumentFilter", "notes"); got != "StringFuzzyFilterOps" {
-		t.Errorf("notes without pg_trgm and unaccent = %s, want StringFuzzyFilterOps", got)
+	if got := fieldType(t, noTrgm, "DocumentFilter", "notes"); got != "StringFuzzyFilter" {
+		t.Errorf("notes without pg_trgm and unaccent = %s, want StringFuzzyFilter", got)
 	}
-	if fieldType(t, noTrgm, "DocumentSimilarToInput", "notes") != "String" || !hasEnumValue(noTrgm, "DocumentsOrderBy", "NOTES_LEVENSHTEIN_DISTANCE_DESC") {
+	if fieldType(t, noTrgm, "DocumentNearInput", "notes") != "String" || !hasEnumValue(noTrgm, "DocumentsOrderBy", "NOTES_LEVENSHTEIN_DISTANCE_DESC") {
 		t.Error("Levenshtein ordering without pg_trgm missing")
 	}
 	if strings.Contains(buildValues(t, withoutExtension(contribfixture.Catalog(), "fuzzystrmatch"), nil, false, nil).SDL(), "evenshtein") {

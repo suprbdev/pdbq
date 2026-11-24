@@ -104,17 +104,17 @@ func TestSchemaSurface(t *testing.T) {
 		"type PostAverageAggregates {\n  \"\"\"Mean average of id across the matching connection.\"\"\"\n  id: BigFloat",
 		"createdAt: Datetime",
 		"enum PostGroupBy {\n  AUTHOR_ID\n  TITLE\n}",
-		"input PostHavingInput {\n  AND: [PostHavingInput!]\n  OR: [PostHavingInput!]\n  sum: PostHavingSumInput",
-		"input HavingBigintFilter {\n  equalTo: BigInt",
+		"input PostHavingInput {\n  and: [PostHavingInput!]\n  or: [PostHavingInput!]\n  not: PostHavingInput\n  sum: PostHavingSumInput",
+		"input HavingBigIntFilter {\n  equalTo: BigInt",
 		"input HavingIntFilter {\n  equalTo: Int",
-		"POSTS_BY_AUTHOR_ID_COUNT_ASC",
-		"POSTS_BY_AUTHOR_ID_SUM_ID_DESC",
-		"POSTS_BY_AUTHOR_ID_DISTINCT_COUNT_TITLE_ASC",
-		"POSTS_BY_AUTHOR_ID_STDDEV_SAMPLE_AUTHOR_ID_DESC",
+		"POSTS_BY_AUTHOR_ID__COUNT_ASC",
+		"POSTS_BY_AUTHOR_ID__SUM_ID_DESC",
+		"POSTS_BY_AUTHOR_ID__DISTINCT_COUNT_TITLE_ASC",
+		"POSTS_BY_AUTHOR_ID__STDDEV_SAMPLE_AUTHOR_ID_DESC",
 		"aggregates: PostAggregatesFilter",
 		"input PostAggregatesFilter {",
 		"filter: PostFilter",
-		"input PostSumAggregateFilter {\n  id: BigIntFilterOps",
+		"input PostSumAggregateFilter {\n  id: BigIntFilter",
 		"stExtent: PlaceStExtentAggregates",
 		"stCentroid: PlaceStCentroidAggregates",
 		"type PlaceStCentroidAggregates {",
@@ -123,7 +123,7 @@ func TestSchemaSurface(t *testing.T) {
 		"PostSumAggregates {\n  \"\"\"Sum of title",
 		"_ST_EXTENT_", "PlaceStExtentAggregateFilter", "PlaceHavingStExtentInput",
 		"PlaceStUnionAggregates", "PlaceStCollectAggregates",
-		"POSTS_BY_AUTHOR_ID_DISTINCT_COUNT_BODY_ASC",
+		"POSTS_BY_AUTHOR_ID__DISTINCT_COUNT_BODY_ASC",
 	})
 	requireSDL(t, sdl, []string{"enum UserGroupBy {\n  MOOD\n  SETTINGS\n  TAGS\n  MOODS\n}"}, nil)
 }
@@ -149,7 +149,7 @@ func TestTimestampDerivatives(t *testing.T) {
 func TestSettings(t *testing.T) {
 	sdl := enabled(t, testutil.FixtureCatalog(), func(s *aggregates.Settings) { s.Grouped, s.Order, s.Filters, s.Spatial = false, false, false, false })
 	requireSDL(t, sdl, []string{"aggregates: PostAggregates"}, []string{
-		"groupedAggregates(", "PostGroupBy", "PostHavingInput", "POSTS_BY_AUTHOR_ID_COUNT_ASC",
+		"groupedAggregates(", "PostGroupBy", "PostHavingInput", "POSTS_BY_AUTHOR_ID__COUNT_ASC",
 		"PostAggregatesFilter", "stExtent",
 	})
 }
@@ -158,7 +158,7 @@ func TestSettings(t *testing.T) {
 func TestSmartTags(t *testing.T) {
 	cat := tagTable(testutil.FixtureCatalog(), "posts", "@aggregates")
 	sdl := build(t, cat, true, nil, nil).SDL
-	requireSDL(t, sdl, []string{"aggregates: PostAggregates", "POSTS_BY_AUTHOR_ID_COUNT_ASC"},
+	requireSDL(t, sdl, []string{"aggregates: PostAggregates", "POSTS_BY_AUTHOR_ID__COUNT_ASC"},
 		[]string{"UserAggregates", "PlaceAggregates"})
 
 	cat = tagTable(testutil.FixtureCatalog(), "posts", "@aggregates off")
@@ -167,7 +167,7 @@ func TestSmartTags(t *testing.T) {
 	sdl = enabled(t, cat, nil)
 	requireSDL(t, sdl, []string{"aggregates: UserAggregates", "aggregates: CommentAggregates"},
 		[]string{"PostAggregates", "PlaceAggregates", "UserGroupBy", "USERS_BY"})
-	if strings.Contains(sdl, "POSTS_BY_AUTHOR_ID_COUNT") {
+	if strings.Contains(sdl, "POSTS_BY_AUTHOR_ID__COUNT") {
 		t.Error("an opted-out child table must not drive relational ordering")
 	}
 
@@ -176,8 +176,8 @@ func TestSmartTags(t *testing.T) {
 	posts.Column("author_id").Comment = "@omit aggregates"
 	posts.Column("title").Comment = "@behavior -groupBy"
 	sdl = enabled(t, cat, nil)
-	requireSDL(t, sdl, []string{"POSTS_BY_AUTHOR_ID_DISTINCT_COUNT_TITLE_ASC", "Distinct count of title"},
-		[]string{"POSTS_BY_AUTHOR_ID_SUM_AUTHOR_ID", "Sum of authorId", "PostGroupBy"})
+	requireSDL(t, sdl, []string{"POSTS_BY_AUTHOR_ID__DISTINCT_COUNT_TITLE_ASC", "Distinct count of title"},
+		[]string{"POSTS_BY_AUTHOR_ID__SUM_AUTHOR_ID", "Sum of authorId", "PostGroupBy"})
 }
 
 // TestBindings checks the metadata the compiler reads.
@@ -199,7 +199,7 @@ func TestBindings(t *testing.T) {
 	if a := built.InputAggregates["PostSumAggregateFilter"]["id"]; a == nil || a.Spec != "sum" {
 		t.Errorf("relation filter binding: %+v", a)
 	}
-	spec := built.OrderBy["UsersOrderBy"]["POSTS_BY_AUTHOR_ID_COUNT_DESC"]
+	spec := built.OrderBy["UsersOrderBy"]["POSTS_BY_AUTHOR_ID__COUNT_DESC"]
 	if spec.Relation == nil || spec.Relation.Aggregate == nil || spec.Relation.Aggregate.SQL("") != "count(*)" || !spec.Desc {
 		t.Errorf("count order binding: %+v", spec)
 	}
@@ -210,7 +210,7 @@ func TestBindings(t *testing.T) {
 	if loc := built.Meta["PlaceStExtentAggregates"]["location"]; loc.Aggregate.SQL(`t."location"`) != `ST_SetSRID(ST_Extent(t."location")::geometry, 4326)` {
 		t.Errorf("typmod SRID extent: %s", loc.Aggregate.SQL(`t."location"`))
 	}
-	if order := built.OrderBy["UsersOrderBy"]["POSTS_BY_AUTHOR_ID_SUM_ID_ASC"]; order.Relation == nil || order.Relation.Aggregate.Cost != 7 {
+	if order := built.OrderBy["UsersOrderBy"]["POSTS_BY_AUTHOR_ID__SUM_ID_ASC"]; order.Relation == nil || order.Relation.Aggregate.Cost != 7 {
 		t.Errorf("relational aggregate order cost: %+v", order.Relation)
 	}
 }
@@ -273,14 +273,14 @@ func TestColumnPolicies(t *testing.T) {
 		t.Fatal(err)
 	}
 	requireSDL(t, built.SDL, []string{
-		"POSTS_BY_AUTHOR_ID_SUM_AUTHOR_ID_ASC",
-		"input PostSumAggregateFilter {\n  id: BigIntFilterOps\n}",
-		"input PostHavingSumInput {\n  id: HavingBigintFilter\n}",
-		"input PostDistinctCountAggregateFilter {\n  id: BigIntFilterOps\n  title: BigIntFilterOps",
+		"POSTS_BY_AUTHOR_ID__SUM_AUTHOR_ID_ASC",
+		"input PostSumAggregateFilter {\n  id: BigIntFilter\n}",
+		"input PostHavingSumInput {\n  id: HavingBigIntFilter\n}",
+		"input PostDistinctCountAggregateFilter {\n  id: BigIntFilter\n  title: BigIntFilter",
 		"fee: BigFloat!",
 		"enum UserGroupBy {\n  MOOD\n  SETTINGS\n  TAGS\n  CREATED_AT\n  CREATED_AT_TRUNCATED_TO_HOUR\n  MOODS\n  FEE\n  CREATED_AT_TRUNCATED_TO_DAY\n}",
 	}, []string{
-		"POSTS_BY_AUTHOR_ID_DISTINCT_COUNT_TITLE", "USER_BY_AUTHOR_ID__TITLE_ASC",
+		"POSTS_BY_AUTHOR_ID__DISTINCT_COUNT_TITLE", "USER_BY_AUTHOR_ID__TITLE_ASC",
 		"Distinct count of doc",
 	})
 	if gb := built.GroupBy["UserGroupBy"]["CREATED_AT_TRUNCATED_TO_DAY"]; gb == nil || gb.SQL != nil {
@@ -309,16 +309,33 @@ func TestRelationsOptIn(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	requireSDL(t, built.SDL, []string{"PLACES_BY_OWNER_ID_COUNT_ASC"}, []string{"POSTS_BY_AUTHOR_ID_COUNT_ASC", "COMMENTS_BY_POST_ID_COUNT_ASC"})
+	requireSDL(t, built.SDL, []string{"PLACES_BY_OWNER_ID__COUNT_ASC"}, []string{"POSTS_BY_AUTHOR_ID__COUNT_ASC", "COMMENTS_BY_POST_ID__COUNT_ASC"})
 }
 
 func TestHavingFilterNameClash(t *testing.T) {
 	cat := testutil.FixtureCatalog()
 	cat.Tables = append(cat.Tables, &introspect.Table{
-		Schema: "public", Name: "having_bigint_filters", Kind: "r",
+		Schema: "public", Name: "having_big_int_filters", Kind: "r",
 		Columns: []*introspect.Column{{Name: "id", Position: 1, PGType: "int4", TypeSchema: "pg_catalog", NotNull: true}},
 	})
 	sdl := enabled(t, cat, nil)
-	requireSDL(t, sdl, []string{"type HavingBigintFilter {", "input PostHavingMaxInput {\n  id: HavingIntFilter"},
-		[]string{"input HavingBigintFilter", "PostHavingSumInput"})
+	requireSDL(t, sdl, []string{"type HavingBigIntFilter {", "input PostHavingMaxInput {\n  id: HavingIntFilter"},
+		[]string{"input HavingBigIntFilter", "PostHavingSumInput"})
+}
+
+func TestHavingFilterCollidesWithTableFilter(t *testing.T) {
+	cat := testutil.FixtureCatalog()
+	cat.Tables = append(cat.Tables, &introspect.Table{
+		Schema: "public", Name: "having_big_ints", Kind: "r",
+		Columns:    []*introspect.Column{{Name: "id", Position: 1, PGType: "int4", TypeSchema: "pg_catalog", NotNull: true}},
+		PrimaryKey: &introspect.Constraint{Name: "having_big_ints_pkey", Columns: []string{"id"}},
+	})
+	b := schema.New(cat, inflect.Default, schema.Options{FilterIndexedOnly: true})
+	if err := aggregates.New(enabledSettings(), true).TransformSchema(context.Background(), b); err != nil {
+		t.Fatal(err)
+	}
+	_, err := b.Build()
+	if err == nil || !strings.Contains(err.Error(), "public.having_big_ints") || !strings.Contains(err.Error(), "HavingBigIntFilter") {
+		t.Fatalf("Build error = %v, want the HavingBigIntFilter collision", err)
+	}
 }

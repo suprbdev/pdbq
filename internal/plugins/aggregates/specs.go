@@ -49,7 +49,7 @@ func (sp spec) bind(c *introspect.Column, eq bool, cost int) *schema.Aggregate {
 	return &schema.Aggregate{Spec: sp.id, Column: c, SQL: render, ResultType: rt, Cost: cost}
 }
 
-// countAggregate counts the related rows (<REL>_COUNT_* ordering).
+// countAggregate counts the related rows (<REL>__COUNT_* ordering).
 func countAggregate(cost int) *schema.Aggregate {
 	return &schema.Aggregate{
 		Spec:       "count",

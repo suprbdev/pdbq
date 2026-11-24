@@ -24,7 +24,7 @@ func withOpClass(t *testing.T, table, index, opClass string) *introspect.Catalog
 }
 
 func TestIndexedOnlyMatchesOpClass(t *testing.T) {
-	for opClass, want := range map[string]string{"gist_trgm_ops": "StringTrgmFilterOps", "gist_text_ops": "StringFilterOps"} {
+	for opClass, want := range map[string]string{"gist_trgm_ops": "StringTrgmFilter", "gist_text_ops": "StringFilter"} {
 		b := buildWith(t, withOpClass(t, "documents", "documents_label_idx", opClass), nil, true, true)
 		if got := fieldType(t, b, "DocumentFilter", "label"); got != want {
 			t.Errorf("label led by a %s index: DocumentFilter.label = %s, want %s", opClass, got, want)
