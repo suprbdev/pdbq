@@ -12,6 +12,8 @@ becomes the release notes of the next tag.
 
 ## [Unreleased]
 
+## [1.0.0-rc.1] - 2026-11-24
+
 ### Changed
 
 - **Breaking:** the result list of a volatile `SETOF` function exposed as a
