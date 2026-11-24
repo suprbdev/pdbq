@@ -151,6 +151,35 @@ func TestCostDefaultMaxCostAdmitsTwoLevels(t *testing.T) {
 	}
 }
 
+// TestCostSetReturningListsPricedAtPageSize charges a SETOF root function
+// and a SETOF computed column like a connection without first: the page-size
+// cap rows the compiled LIMIT fetches, each with its nested connection (the
+// connection also charges each row's nodes field).
+func TestCostSetReturningListsPricedAtPageSize(t *testing.T) {
+	for _, tc := range []struct{ name, list, conn string }{
+		{"root function",
+			`{ searchPosts(term: "") { id commentsByPostId { nodes { id body } } } }`,
+			`{ allPosts { nodes { id commentsByPostId { nodes { id body } } } } }`},
+		{"computed column",
+			`{ userById(id: 1) { recentPosts(n: 5) { id commentsByPostId { nodes { id body } } } } }`,
+			`{ userById(id: 1) { postsByAuthorId { nodes { id commentsByPostId { nodes { id body } } } } } }`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			list, conn := cost(t, tc.list, nil), cost(t, tc.conn, nil)
+			if want := conn - 100; list != want {
+				t.Errorf("set-returning list costs %d, want %d like the same rows through a connection (less its nodes fields)", list, want)
+			}
+			if list <= defaultMaxCost/100 {
+				t.Errorf("set-returning list costs %d, priced below a page of rows", list)
+			}
+		})
+	}
+	deeper := cost(t, `{ searchPosts(term: "") { id userByAuthorId { postsByAuthorId { nodes { id commentsByPostId { nodes { id } } } } } } }`, nil)
+	if deeper <= defaultMaxCost {
+		t.Errorf("two nested connections below a set-returning list cost %d, within the default max_cost %d", deeper, defaultMaxCost)
+	}
+}
+
 func TestCostNestedPaginationCompounds(t *testing.T) {
 	flat := cost(t, `{ allUsers(first: 100) { nodes { id } } }`, nil)
 	nested := cost(t, `{ allUsers(first: 100) { nodes { postsByAuthorId(first: 100) { nodes { id } } } } }`, nil)

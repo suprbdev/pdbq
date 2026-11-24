@@ -1,35 +1,64 @@
 package server
 
 import (
+	"container/list"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 
 	"github.com/vektah/gqlparser/v2/gqlerror"
 
 	"github.com/suprbdev/pdbq/internal/errcode"
+	"github.com/suprbdev/pdbq/internal/exec"
 )
 
-// apqCacheSize bounds the client-registered APQ cache (FIFO eviction);
-// file-loaded persisted queries are never evicted.
-const apqCacheSize = 1024
+// Defaults of persisted_queries.max_bytes and max_entry_bytes, used when the
+// configured value is not positive.
+const (
+	defaultAPQBytes      = 8 << 20
+	defaultAPQEntryBytes = 64 << 10
+)
+
+// apqEntryOverhead approximates the bookkeeping one APQ registration holds
+// besides its hash and query text (map slot, list element, entry).
+const apqEntryOverhead = 128
 
 // pqStore holds persisted queries: static entries preloaded from a file plus
-// APQ-registered entries.
+// APQ-registered entries. The registered entries are a least recently used
+// cache of at most maxBytes (see apqEntryOverhead); a document heavier than
+// maxEntry is never registered. Static entries are never evicted and do not
+// count.
 type pqStore struct {
-	mu     sync.Mutex
-	static map[string]string
-	apq    map[string]string
-	order  []string
+	mu       sync.Mutex
+	static   map[string]string
+	apq      map[string]*list.Element
+	order    list.List
+	bytes    int
+	maxBytes int
+	maxEntry int
 }
 
-// newPQStore loads the optional hash->document JSON file.
-func newPQStore(path string) (*pqStore, error) {
-	s := &pqStore{static: map[string]string{}, apq: map[string]string{}}
+type apqEntry struct {
+	hash, query string
+	size        int
+}
+
+// newPQStore loads the optional hash->document JSON file; APQ registrations
+// are bounded by maxBytes and maxEntry (defaultAPQBytes and
+// defaultAPQEntryBytes when not positive).
+func newPQStore(path string, maxBytes, maxEntry int) (*pqStore, error) {
+	if maxBytes <= 0 {
+		maxBytes = defaultAPQBytes
+	}
+	if maxEntry <= 0 {
+		maxEntry = defaultAPQEntryBytes
+	}
+	s := &pqStore{static: map[string]string{}, apq: map[string]*list.Element{}, maxBytes: maxBytes, maxEntry: min(maxEntry, maxBytes)}
 	if path != "" {
 		b, err := os.ReadFile(path)
 		if err != nil {
@@ -53,11 +82,22 @@ func (s *pqStore) get(hash string) (string, bool) {
 	if q, ok := s.static[hash]; ok {
 		return q, true
 	}
-	q, ok := s.apq[hash]
-	return q, ok
+	el, ok := s.apq[hash]
+	if !ok {
+		return "", false
+	}
+	s.order.MoveToFront(el)
+	return el.Value.(*apqEntry).query, true
 }
 
+// put registers query under hash, evicting the least recently used
+// registrations beyond the byte budget. A document heavier than the entry
+// bound is not registered.
 func (s *pqStore) put(hash, query string) {
+	size := len(hash) + len(query) + apqEntryOverhead
+	if size > s.maxEntry {
+		return
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if _, ok := s.static[hash]; ok {
@@ -66,12 +106,22 @@ func (s *pqStore) put(hash, query string) {
 	if _, ok := s.apq[hash]; ok {
 		return
 	}
-	if len(s.order) >= apqCacheSize {
-		delete(s.apq, s.order[0])
-		s.order = s.order[1:]
+	s.apq[hash] = s.order.PushFront(&apqEntry{hash: strings.Clone(hash), query: strings.Clone(query), size: size})
+	s.bytes += size
+	for s.bytes > s.maxBytes {
+		oldest := s.order.Back()
+		e := oldest.Value.(*apqEntry)
+		s.order.Remove(oldest)
+		delete(s.apq, e.hash)
+		s.bytes -= e.size
 	}
-	s.apq[hash] = query
-	s.order = append(s.order, hash)
+}
+
+// size returns the bytes the registered entries hold and their number.
+func (s *pqStore) size() (bytes, entries int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.bytes, len(s.apq)
 }
 
 func hashQuery(q string) string {
@@ -109,10 +159,13 @@ type persistedError struct {
 	err    *gqlerror.Error
 }
 
-// applyPersisted resolves req's persistedQuery extension into req.Query,
-// registers APQ documents, and enforces persisted_queries.only. It is shared
-// by HTTP and WebSocket requests. With persisted queries off it only
-// answers a hash-only request, with PersistedQueryNotSupported.
+// applyPersisted resolves req's persistedQuery extension into req.Query and
+// enforces persisted_queries.only. A query sent with its hash for APQ
+// registration is only marked (req.apqHash): the caller registers it with
+// registerPersisted once the request authenticated and the document passed
+// the document limits and validation. It is shared by HTTP and WebSocket
+// requests. With persisted queries off it only answers a hash-only request,
+// with PersistedQueryNotSupported.
 func (s *Server) applyPersisted(req *gqlHTTPRequest) *persistedError {
 	fail := func(status int, code errcode.Code, msg string) *persistedError {
 		return &persistedError{status: status, err: errcode.Errorf(code, "%s", msg)}
@@ -157,6 +210,16 @@ func (s *Server) applyPersisted(req *gqlHTTPRequest) *persistedError {
 		// Static allowlist deployments do not accept client registrations.
 		return fail(http.StatusBadRequest, errcode.PersistedQueryNotSupported, "persisted query registration is disabled")
 	}
-	s.pq.put(pq.Sha256Hash, req.Query)
+	req.apqHash = pq.Sha256Hash
 	return nil
+}
+
+// registerPersisted registers the document applyPersisted marked for APQ
+// registration, unless ex rejects it (parse, document limits, validation).
+// Call it only after the request authenticated.
+func (s *Server) registerPersisted(ex *exec.Executor, req *gqlHTTPRequest) {
+	if req.apqHash == "" || ex.CheckDocument(req.Query) != nil {
+		return
+	}
+	s.pq.put(req.apqHash, req.Query)
 }

@@ -229,19 +229,19 @@ func (s *stmt) function(meta *schema.FieldMeta, f *ast.Field) (string, error) {
 			}
 			sub := s.alias("s")
 			return fmt.Sprintf("SELECT coalesce(json_agg(%s.data), '[]'::json) AS data\nFROM (\n%s\n) AS %s",
-				sub, indent(fmt.Sprintf("SELECT %s AS data\nFROM %s AS %s%s", jsonExpr, call, alias, joinLaterals(laterals))), sub), nil
+				sub, indent(fmt.Sprintf("SELECT %s AS data\nFROM %s AS %s%s\nLIMIT %d", jsonExpr, call, alias, joinLaterals(laterals), s.maxPageSize)), sub), nil
 		case fnComposite:
 			expr, err := s.fnCompositeJSON("__v.v", fn, comp, f.SelectionSet, 1)
 			if err != nil {
 				return "", err
 			}
-			return fmt.Sprintf("SELECT coalesce(json_agg(%s), '[]'::json) AS data FROM (SELECT %s AS v) AS __v", expr, call), nil
+			return fmt.Sprintf("SELECT coalesce(json_agg(%s), '[]'::json) AS data FROM (SELECT %s AS v LIMIT %d) AS __v", expr, call, s.maxPageSize), nil
 		}
 		value, err := s.fnValueJSON("__v", fn, f)
 		if err != nil {
 			return "", err
 		}
-		return fmt.Sprintf("SELECT coalesce(json_agg(%s), '[]'::json) AS data FROM %s AS __v", value, call), nil
+		return fmt.Sprintf("SELECT coalesce(json_agg(%s), '[]'::json) AS data FROM (SELECT __v FROM %s AS __v LIMIT %d) AS __v(__v)", value, call, s.maxPageSize), nil
 	}
 	switch shape {
 	case fnRows:
@@ -653,7 +653,7 @@ func (s *stmt) computedJSON(meta *schema.FieldMeta, f *ast.Field, alias string, 
 		sub := s.alias("s")
 		return fmt.Sprintf("(SELECT coalesce(json_agg(%s.data), '[]'::json) FROM (\n%s\n) AS %s)",
 			sub,
-			indent(fmt.Sprintf("SELECT %s AS data\nFROM %s AS %s%s", jsonExpr, call, rowAlias, joinLaterals(laterals))),
+			indent(fmt.Sprintf("SELECT %s AS data\nFROM %s AS %s%s\nLIMIT %d", jsonExpr, call, rowAlias, joinLaterals(laterals), s.maxPageSize)),
 			sub), nil
 	case fnComposite:
 		sub := s.alias("c")
@@ -662,7 +662,7 @@ func (s *stmt) computedJSON(meta *schema.FieldMeta, f *ast.Field, alias string, 
 			return "", err
 		}
 		if fn.ReturnsSet {
-			return fmt.Sprintf("(SELECT coalesce(json_agg(%s), '[]'::json) FROM (SELECT %s AS v) AS %s)", expr, call, sub), nil
+			return fmt.Sprintf("(SELECT coalesce(json_agg(%s), '[]'::json) FROM (SELECT %s AS v LIMIT %d) AS %s)", expr, call, s.maxPageSize, sub), nil
 		}
 		return fmt.Sprintf("(SELECT %s FROM (SELECT %s AS v) AS %s)", expr, call, sub), nil
 	}
@@ -678,8 +678,8 @@ func (s *stmt) computedJSON(meta *schema.FieldMeta, f *ast.Field, alias string, 
 		case !ok:
 			value = s.exprJSON(elem+".v", ret)
 		}
-		return fmt.Sprintf("(SELECT coalesce(json_agg(%s), '[]'::json) FROM %s AS %s(v))",
-			value, call, elem), nil
+		return fmt.Sprintf("(SELECT coalesce(json_agg(%s), '[]'::json) FROM (SELECT * FROM %s AS %s(v) LIMIT %d) AS %s)",
+			value, call, elem, s.maxPageSize, elem), nil
 	}
 	if typed {
 		return s.typedGeometrySQL(call, gt, f.SelectionSet, depth)

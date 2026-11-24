@@ -76,6 +76,8 @@ func configFlags(cmd *cobra.Command) {
 	fs.Bool("persisted_queries.apq", false, "enable Apollo automatic persisted queries")
 	fs.String("persisted_queries.path", "", "JSON file of persisted queries (sha256 hex hash to document)")
 	fs.Bool("persisted_queries.only", false, "reject requests that do not reference a persisted query")
+	fs.Int("persisted_queries.max_bytes", 8<<20, "memory the APQ-registered documents may hold")
+	fs.Int("persisted_queries.max_entry_bytes", 64<<10, "size above which a document is not registered for APQ")
 	fs.Bool("incremental.enabled", false, "serve the defer and stream directives (multipart/mixed over HTTP, next messages over WebSocket)")
 	fs.Duration("incremental.write_timeout", 10*time.Second, "longest one incremental payload write may block before the response is aborted")
 	fs.Int("incremental.max_responses", 5, "incremental responses holding a transaction at once (below database.max_conns)")

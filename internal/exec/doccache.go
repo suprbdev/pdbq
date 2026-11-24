@@ -164,6 +164,14 @@ func estimateDocumentBytes(query string, astBytes int, err error) int {
 	return n
 }
 
+// CheckDocument parses query, checks it against the document limits and
+// validates it against the schema, as Execute does before anything else,
+// through the document cache. It returns the error Execute would report.
+func (e *Executor) CheckDocument(query string) error {
+	_, err := e.document(query)
+	return err
+}
+
 // document returns the parsed and validated document for query, consulting
 // and filling the executor's document cache when one is configured.
 func (e *Executor) document(query string) (*ast.QueryDocument, error) {

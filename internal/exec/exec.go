@@ -543,8 +543,9 @@ func (e *Executor) executeOperation(ctx context.Context, op *Operation, res *Res
 
 // errTxAborted is the error PostgreSQL reports for a statement sent after
 // an earlier statement of the same transaction failed. batchTx gives it to
-// the query fields that pgexec.QueryTx skipped after a failure, which is the
-// error they got when every field ran as its own round trip.
+// the query fields that pgexec.QueryTx skipped after a failure it does not
+// re-run them for (see rerunInSavepoints), which is the error they got when
+// every field ran as its own round trip.
 var errTxAborted = &pgconn.PgError{
 	Severity: "ERROR",
 	Code:     "25P02",
@@ -633,10 +634,12 @@ func (e *Executor) txOptions(op *Operation) (pgexec.TxOptions, pgexec.Identity) 
 // A query runs in the pipeline's implicit transaction (no BEGIN/COMMIT unless
 // transactions.isolation is stricter than read committed). A field error
 // raised in Go is recorded and the batch goes on. Once a statement fails,
-// PostgreSQL skips the rest of the batch: the skipped fields get the 25P02
-// error, and the response the "commit unexpectedly resulted in rollback"
-// error, that they got when the transaction ran statement by statement
-// (except after a serialization failure, as before).
+// PostgreSQL skips the rest of the batch. When a query field failed in the
+// database (other than a serialization failure) and later fields were
+// skipped, the operation runs again with each field in its own savepoint
+// (see partialTx), so the failing field reports its own error and the others
+// their values. Fields skipped otherwise (a lost connection, an expired
+// request) get the 25P02 error.
 //
 // A mutation holds COMMIT back until its result was read
 // (ScanBeforeCommit), so a Go-side field error such as "no row matched" or
@@ -696,6 +699,15 @@ func (e *Executor) batchTx(ctx context.Context, op *Operation, fields []txField,
 			"attempt", attempt+1, "max_retries", maxRetries)
 	}
 
+	if !mutation && rerunInSavepoints(ctx, scanErr, fields) {
+		for i := range fields {
+			if fields[i].stmt != nil {
+				fields[i].raw, fields[i].err = nil, nil
+			}
+		}
+		e.partialTx(ctx, op, fields, res)
+		return
+	}
 	if err == nil || scanErr != nil || scannedAny {
 		for i := range fields {
 			tf := &fields[i]
@@ -713,15 +725,26 @@ func (e *Executor) batchTx(ctx context.Context, op *Operation, fields []txField,
 			res.Set(tf.field.Alias, tf.raw)
 		}
 	}
-	switch {
-	case err == nil:
-	case scanErr != nil:
-		if !mutation && !pgexec.IsSerializationFailure(scanErr) {
-			res.Errors = append(res.Errors, e.gqlError(pgx.ErrTxCommitRollback, nil))
-		}
-	default:
+	if err != nil && scanErr == nil {
 		res.Errors = append(res.Errors, e.gqlError(err, nil))
 	}
+}
+
+// rerunInSavepoints reports whether a query batch that failed with scanErr
+// must run again with each field in its own savepoint: a field's statement
+// failed in the database with an error other than a serialization failure,
+// and PostgreSQL skipped the fields after it.
+func rerunInSavepoints(ctx context.Context, scanErr error, fields []txField) bool {
+	var pgErr *pgconn.PgError
+	if scanErr == nil || ctx.Err() != nil || !errors.As(scanErr, &pgErr) || pgexec.IsSerializationFailure(scanErr) {
+		return false
+	}
+	for _, tf := range fields {
+		if tf.stmt != nil && !tf.scanned {
+			return true
+		}
+	}
+	return false
 }
 
 // interactiveTx runs a mutation's fields one statement at a time in a
@@ -764,11 +787,12 @@ func (e *Executor) interactiveTx(ctx context.Context, op *Operation, fields []tx
 	res.Errors = append(res.Errors, e.gqlError(err, nil))
 }
 
-// partialTx runs a mutation's fields one statement at a time in a
+// partialTx runs an operation's fields one statement at a time in a
 // pgexec.RunTx transaction, each field (with its Then statement) in its own
-// savepoint. A field that fails, in the database or in Go, is rolled back to
-// its savepoint and reported with a null value while the other fields run
-// and commit.
+// savepoint: a mutation with partial success, or a query whose batch a
+// field's database error cut short (see batchTx). A field that fails, in the
+// database or in Go, is rolled back to its savepoint and reported with a
+// null value while the other fields run and commit.
 //
 // A serialization failure or deadlock is not a field error: it aborts the
 // transaction, which RunTx re-runs up to transactions.max_retries times, and
@@ -911,8 +935,10 @@ func (e *Executor) fieldResult(op *Operation, f *ast.Field, stmt *compile.Statem
 // that is what the compiled LIMIT fetches: a list its whole subtree, a
 // connection its nodes and edges, while totalCount, pageInfo and the
 // aggregates count once; the direct list children (nodes/edges) are not
-// multiplied again; list fields without page arguments outside a paginated
-// container multiply by 10; a field with a ScanCost adds it, and
+// multiplied again; a list returned by a set-returning function multiplies
+// by the page-size cap, the rows its compiled LIMIT fetches; other list
+// fields without page arguments outside a paginated container multiply by
+// 10; a field with a ScanCost adds it, and
 // multiplies its subtree by the page-size cap when list-typed, e.g.
 // groupedAggregates; aggregate orderBy values and relation-aggregate filters
 // add their aggregates' Cost, tripled under a cursor).
@@ -1077,7 +1103,9 @@ func (m *measurer) fragment(name string, depth int, paginated bool) measured {
 
 func (m *measurer) field(v *ast.Field, depth int, paginated bool) measured {
 	mult, childPaginated := 1, false
-	if n, ok := pageArg(v, m.vars); ok {
+	if setReturningList(v, m.meta) {
+		mult = m.pageCap
+	} else if n, ok := pageArg(v, m.vars); ok {
 		// first/last drive how many rows this subtree repeats for;
 		// clamp to the page-size cap the compiler enforces anyway.
 		mult = min(max(n, 1), m.pageCap)
@@ -1168,6 +1196,20 @@ func (m *measurer) connection(sel ast.SelectionSet, depth int) (rows, once measu
 		}
 	}
 	return rows, once
+}
+
+// setReturningList reports whether f is a list returned by a set-returning
+// function (a root function or a computed column), which the compiler cuts
+// at the page-size cap.
+func setReturningList(f *ast.Field, meta schema.Meta) bool {
+	if meta == nil || f.ObjectDefinition == nil || f.Definition == nil || f.Definition.Type.NamedType != "" {
+		return false
+	}
+	fm := meta[f.ObjectDefinition.Name][f.Name]
+	if fm == nil || fm.Function == nil || !fm.Function.ReturnsSet {
+		return false
+	}
+	return fm.Kind == schema.KindFunction || fm.Kind == schema.KindComputed
 }
 
 // fieldCostMultiplier returns the @costMultiplier override bound to a field,

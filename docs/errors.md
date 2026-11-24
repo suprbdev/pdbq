@@ -70,7 +70,7 @@ WebSocket close codes, not GraphQL errors (`4400`, `4401`, `4403`, `4406`,
 | `partial_mutations_disabled` | 200 | `extensions.partialMutations` while `transactions.partial.enabled` is off |
 | `operation_not_supported` | 200 | a subscription sent over HTTP; a subscription or live query while that feature is off; a subscription selecting more than one root field or one that is not `listen` |
 | `operation_rejected` | 200 | a `RequestHook`'s `BeforeOperation` refused the operation with an error that carries no code of its own (the hook's message is the message) |
-| `invalid_argument` | 200 | an argument value the compiler rejects: a negative `first` / `offset`, `first` with `last`, an empty patch or bulk-create list, an upsert input without its key field, a malformed `nodeId`, a filter of the wrong shape, an unknown operator, an invalid geometry, interval or vector value, a distance or similarity orderBy value or score field without its `near:` reference (`orderBy LOCATION_DISTANCE_ASC requires near: {location: …}`), a nested-mutation input that is not allowed, more than `plugins.settings.nested_mutations.max_operations` nested operations, a subscription topic that is invalid or not allowed, ... |
+| `invalid_argument` | 200 | an argument value the compiler rejects: a negative `first` / `offset`, `first` with `last`, an empty patch or bulk-create list, an upsert input without its key field, a malformed `nodeId`, a filter of the wrong shape, an unknown operator, an invalid geometry, interval or vector value, an EWKT geometry whose SRID differs from the column's typmod SRID (filters and `near:`), a distance or similarity orderBy value or score field without its `near:` reference (`orderBy LOCATION_DISTANCE_ASC requires near: {location: …}`), a nested-mutation input that is not allowed, more than `plugins.settings.nested_mutations.max_operations` nested operations, a subscription topic that is invalid or not allowed, ... |
 | `invalid_cursor` | 200 | an `after` / `before` cursor that cannot be decoded, has the wrong number of key values or belongs to another type |
 | `not_found` | 200; 404 for a path | a keyed update or delete matched no row (`no row matched "<alias>"`), or a nested `connectBy…` / `updateBy…` / `deleteBy…` (or the key of an update with nested fields) matched no row (`nested_mutations: <path> matched 0 rows`; the whole mutation is rolled back); an HTTP path pdbq does not serve |
 | `auth_required` | 401 | no credentials and `roles.anonymous` is empty; `WWW-Authenticate: Bearer` |
@@ -106,6 +106,15 @@ verbatim: `pg:23505` (unique violation), `pg:23503` (foreign key),
 after `transactions.max_retries`), `pg:57014` (`database.statement_timeout`),
 `pg:P0001` (`RAISE EXCEPTION`). A function can pick the code with
 `RAISE … USING ERRCODE = '<state>'`.
+
+A query whose root fields run in one transaction (role switching, claims,
+`transactions.per_request`) keeps its fields independent: when one field's
+statement fails, the operation runs again with each root field in its own
+savepoint, so only that field reports its error. `pg:25P02` (current
+transaction is aborted) is left for the fields that could not run after a
+failure that was not a field's own database error, such as a dropped
+connection or an expired `server.request_timeout`, and for serialization
+failures that exhausted `transactions.max_retries`.
 
 There is one exception: the `22P02` that the nested-mutation guard raises
 when a keyed nested operation matches no row is reported as `not_found`

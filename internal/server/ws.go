@@ -655,6 +655,7 @@ func (c *wsSession) execute(ctx context.Context, id string, req gqlHTTPRequest, 
 		c.sendErrors(ctx, id, errorList(err))
 		return
 	}
+	c.s.registerPersisted(ex, &req)
 	if fields, ok := c.s.liveFields(ex, op); ok {
 		c.executeLive(ctx, pctx, id, ex, op, fields)
 		return

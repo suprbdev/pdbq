@@ -172,8 +172,8 @@ var MovedKeys = map[string]string{
 type Server struct {
 	Addr           string        `koanf:"addr" doc:"Listen address for the HTTP server."`
 	GraphiQL       bool          `koanf:"graphiql" doc:"Serve the GraphiQL playground at / (off by default; enable for development)."`
-	Introspection  bool          `koanf:"introspection" doc:"Answer __schema / __type introspection queries, serve the generated SDL at /schema.graphql and add \"Did you mean\" suggestions to validation errors. On by default, like pdbr's OpenAPI document; it reveals every table, column and relation to unauthenticated callers, so disable it in production to hide the schema shape (__typename keeps working)."`
-	RequestTimeout time.Duration `koanf:"request_timeout" doc:"Overall HTTP request timeout."`
+	Introspection  bool          `koanf:"introspection" doc:"Answer __schema / __type introspection queries, serve the generated SDL at /schema.graphql (authenticated like /graphql) and add \"Did you mean\" suggestions to validation errors. On by default, like pdbr's OpenAPI document; it reveals every table, column and relation to every caller /graphql accepts (unauthenticated ones when roles.anonymous is set), so disable it in production to hide the schema shape (__typename keeps working)."`
+	RequestTimeout time.Duration `koanf:"request_timeout" doc:"Overall HTTP request timeout; must be at least 1s."`
 	ReadyzTimeout  time.Duration `koanf:"readyz_timeout" doc:"Timeout of the database ping behind GET /readyz; an unreachable or slow database answers 503. /healthz stays a liveness check."`
 	CORSOrigins    []string      `koanf:"cors_origins" doc:"Allowed CORS origins for /graphql (exact match, or '*' for any). Empty disables CORS headers entirely."`
 	Compression    bool          `koanf:"compression" doc:"Gzip responses for clients that send Accept-Encoding: gzip (off by default)."`
@@ -194,8 +194,8 @@ type DocumentCache struct {
 type Limits struct {
 	MaxBodyBytes          int64 `koanf:"max_body_bytes" doc:"Maximum accepted request body size in bytes."`
 	MaxDepth              int   `koanf:"max_depth" doc:"Maximum GraphQL selection depth per operation."`
-	MaxCost               int   `koanf:"max_cost" doc:"Maximum estimated cost per operation: each selected field costs 1 (plus its surcharges), and a list multiplies its selections by the rows it can fetch: its first/last, else max_page_size (the page a connection or list fetches when given neither), and 10 for a list without page arguments. @costMultiplier smart comments tune the estimate."`
-	MaxPageSize           int   `koanf:"max_page_size" doc:"Maximum rows per page; first/last above this are rejected and it is the default page size when neither is given."`
+	MaxCost               int   `koanf:"max_cost" doc:"Maximum estimated cost per operation: each selected field costs 1 (plus its surcharges), and a list multiplies its selections by the rows it can fetch: its first/last, else max_page_size (the page a connection or list fetches when given neither, and the rows of a list a set-returning function returns), and 10 for other lists without page arguments. @costMultiplier smart comments tune the estimate."`
+	MaxPageSize           int   `koanf:"max_page_size" doc:"Maximum rows per page; first/last above this are rejected and it is the default page size when neither is given. A list returned by a set-returning function (root function or computed column) holds at most this many items."`
 	MaxHeadlineDocument   int   `koanf:"max_headline_document" doc:"Characters of a document a full-text headline (<field>Headline) reads: text is cut to its first max_headline_document characters, a longer json/jsonb document gets a null headline. ts_headline's work grows with the document, and the cost estimate charges each headline by this bound."`
 	MaxQueryTokens        int   `koanf:"max_query_tokens" doc:"Maximum lexical tokens (names, punctuation, values, comments) in a GraphQL document; parsing stops at the first token beyond it. Bounds the parse and validation work of one request."`
 	MaxInputDepth         int   `koanf:"max_input_depth" doc:"Maximum nesting of input values (list and input object literals, and variable values of list and input object types), e.g. filter not/and/or chains."`
@@ -206,9 +206,11 @@ type Limits struct {
 
 // PersistedQueries is the persisted_queries section.
 type PersistedQueries struct {
-	APQ  bool   `koanf:"apq" doc:"Enable Apollo automatic persisted queries: clients send a sha256 hash in the persistedQuery extension and register the document once on a miss (in-memory cache)."`
-	Path string `koanf:"path" doc:"JSON file mapping sha256 hex hashes to GraphQL documents, preloaded as persisted queries (never evicted)."`
-	Only bool   `koanf:"only" doc:"Reject requests that do not reference a persisted query via the persistedQuery extension (requires apq or path)."`
+	APQ           bool   `koanf:"apq" doc:"Enable Apollo automatic persisted queries: clients send a sha256 hash in the persistedQuery extension and register the document once on a miss (in-memory cache)."`
+	Path          string `koanf:"path" doc:"JSON file mapping sha256 hex hashes to GraphQL documents, preloaded as persisted queries (never evicted)."`
+	Only          bool   `koanf:"only" doc:"Reject requests that do not reference a persisted query via the persistedQuery extension (requires apq or path)."`
+	MaxBytes      int    `koanf:"max_bytes" doc:"Memory the APQ-registered documents may hold (query text plus hash and bookkeeping); least recently used registrations are evicted beyond it. Documents preloaded from path do not count."`
+	MaxEntryBytes int    `koanf:"max_entry_bytes" doc:"Size above which a document sent for APQ registration is executed but not registered."`
 }
 
 // Subscriptions is the subscriptions section.
@@ -304,6 +306,10 @@ func DefaultConfig() Config {
 			MaxSelections:         10000,
 			MaxIntrospectionBytes: 16 << 20,
 			MaxFieldComparisons:   100000,
+		},
+		PersistedQueries: PersistedQueries{
+			MaxBytes:      8 << 20,
+			MaxEntryBytes: 64 << 10,
 		},
 		Subscriptions: Subscriptions{
 			MaxPerConnection: 100,
@@ -403,6 +409,9 @@ func (c *Config) Validate() error {
 	if c.Server.ReadyzTimeout <= 0 {
 		errs = append(errs, "server.readyz_timeout must be > 0")
 	}
+	if c.Server.RequestTimeout < time.Second {
+		errs = append(errs, fmt.Sprintf("server.request_timeout must be >= 1s (got %s)", c.Server.RequestTimeout))
+	}
 	if c.Limits.MaxBodyBytes < 1 {
 		errs = append(errs, "limits.max_body_bytes must be >= 1")
 	}
@@ -424,6 +433,8 @@ func (c *Config) Validate() error {
 		{"limits.max_selections", c.Limits.MaxSelections},
 		{"limits.max_introspection_bytes", c.Limits.MaxIntrospectionBytes},
 		{"limits.max_field_comparisons", c.Limits.MaxFieldComparisons},
+		{"persisted_queries.max_bytes", c.PersistedQueries.MaxBytes},
+		{"persisted_queries.max_entry_bytes", c.PersistedQueries.MaxEntryBytes},
 	} {
 		if l.v < 1 {
 			errs = append(errs, l.name+" must be >= 1")

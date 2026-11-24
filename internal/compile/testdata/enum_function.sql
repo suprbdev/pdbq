@@ -7,7 +7,7 @@ SELECT CASE WHEN __fn.v IS NULL THEN NULL ELSE (SELECT coalesce(json_agg(CASE (_
 -- args: null
 
 -- field: moodMoods
-SELECT coalesce(json_agg(to_json(CASE __v WHEN 'happy' THEN 'HAPPY' WHEN 'ok' THEN 'OK' WHEN 'sad' THEN 'SAD' END)), '[]'::json) AS data FROM "public"."mood_moods"() AS __v
+SELECT coalesce(json_agg(to_json(CASE __v WHEN 'happy' THEN 'HAPPY' WHEN 'ok' THEN 'OK' WHEN 'sad' THEN 'SAD' END)), '[]'::json) AS data FROM (SELECT __v FROM "public"."mood_moods"() AS __v LIMIT 100) AS __v(__v)
 -- args: null
 
 -- field: describeMood

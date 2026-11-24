@@ -183,6 +183,14 @@ func TestAPQMutationOverGETRejected(t *testing.T) {
 		t.Fatalf("GET APQ register mutation: %d %s, want 405", rec.Code, rec.Body.String())
 	}
 	rec = getGraphQL(t, h, url.Values{"extensions": {apqExt(csrfMutation)}})
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "PersistedQueryNotFound") {
+		t.Fatalf("GET APQ hash-only mutation after a refused registration: %d %s, want PersistedQueryNotFound", rec.Code, rec.Body.String())
+	}
+	rec = postGraphQL(t, h, "application/json", fmt.Sprintf(`{"query":%q,"extensions":%s}`, csrfMutation, apqExt(csrfMutation)))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "read-only mode") {
+		t.Fatalf("POST APQ register mutation: %d %s, want it to reach the executor", rec.Code, rec.Body.String())
+	}
+	rec = getGraphQL(t, h, url.Values{"extensions": {apqExt(csrfMutation)}})
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("GET APQ hash-only mutation: %d %s, want 405", rec.Code, rec.Body.String())
 	}
