@@ -54,7 +54,7 @@ becomes the release notes of the next tag.
   a `*pflag.FlagSet`.
 - The `@omit` / `@behavior` checks use pdbcore's shared smart-tag
   vocabulary, so pdbq and pdbr warn about the same comments.
-- pdbcore with the API hygiene changes.
+- Built against pdbcore's API hygiene changes (see its changelog).
 
 ## [0.30.0] - 2026-11-24
 
